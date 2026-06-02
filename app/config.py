@@ -1,0 +1,114 @@
+"""
+AppConfig — master config object.
+
+`config` is a lazy proxy: safe to import at module level anywhere.
+Call `init_config()` once after QApplication is created (in main.py);
+all attribute access on `config` then forwards to the real object.
+
+Usage anywhere:
+    from app.config import config
+    config.team_changed.connect(my_slot)
+    config.set_team(3937)
+"""
+
+from PyQt6.QtCore import QObject, pyqtSignal
+from app.teams import Team, get_team, all_teams
+
+SCREENS = ["presentation_a", "presentation_b", "project", "control"]
+MODES   = ["standard", "judges", "lunch"]
+
+
+class _AppConfig(QObject):
+
+    # Emitted when the active team changes — all screens should re-brand
+    team_changed = pyqtSignal(object)  # Team
+
+    # Emitted when the display mode changes — screens adjust behavior accordingly
+    mode_changed = pyqtSignal(str)     # "standard" | "judges" | "lunch"
+
+    # Emitted when any per-screen setting changes
+    # args: screen_id (str), key (str), value (object)
+    screen_setting_changed = pyqtSignal(str, str, object)
+
+    def __init__(self):
+        super().__init__()
+        self._active_team: Team = get_team(3937) or all_teams()[0]
+        self._mode: str = "standard"
+        self._screen_settings: dict[str, dict] = {
+            screen: {"theme": "dark"} for screen in SCREENS
+        }
+
+    # ── Team ─────────────────────────────────────────────────────────────
+
+    @property
+    def active_team(self) -> Team:
+        return self._active_team
+
+    def set_team(self, team_number: int) -> None:
+        team = get_team(team_number)
+        if team is None or team.number == self._active_team.number:
+            return
+        self._active_team = team
+        self.team_changed.emit(team)
+
+    # ── Mode ─────────────────────────────────────────────────────────────
+
+    @property
+    def mode(self) -> str:
+        return self._mode
+
+    def set_mode(self, mode: str) -> None:
+        if mode not in MODES or mode == self._mode:
+            return
+        self._mode = mode
+        self.mode_changed.emit(mode)
+
+    # ── Per-screen settings ───────────────────────────────────────────────
+
+    def get(self, screen: str, key: str, default=None):
+        return self._screen_settings.get(screen, {}).get(key, default)
+
+    def set(self, screen: str, key: str, value) -> None:
+        if screen not in self._screen_settings:
+            self._screen_settings[screen] = {}
+        if self._screen_settings[screen].get(key) == value:
+            return
+        self._screen_settings[screen][key] = value
+        self.screen_setting_changed.emit(screen, key, value)
+
+    def screen_theme(self, screen: str) -> str:
+        return self.get(screen, "theme", "dark")
+
+
+# ── Lazy proxy ────────────────────────────────────────────────────────────────
+
+class _Proxy:
+    """
+    Forwards all attribute access to the real _AppConfig once it's created.
+    Safe to import before QApplication exists; raises clearly if accessed too early.
+    """
+    _real: "_AppConfig | None" = None
+
+    def __getattr__(self, name: str):
+        if self._real is None:
+            raise RuntimeError(
+                f"config.{name} accessed before init_config() was called. "
+                "Call init_config() in main() right after QApplication()."
+            )
+        return getattr(self._real, name)
+
+    def __setattr__(self, name: str, value):
+        if name == "_real":
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._real, name, value)
+
+
+config: _AppConfig = _Proxy()  # type: ignore[assignment]
+
+
+def init_config() -> _AppConfig:
+    """Call exactly once in main(), after QApplication is created."""
+    real = _AppConfig()
+    config._real = real  # type: ignore[attr-defined]
+    return real

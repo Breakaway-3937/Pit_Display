@@ -1,0 +1,278 @@
+/* ── Global ─────────────────────────────────────────────────────────── */
+QWidget {
+    background-color: #0d0d0d;
+    color: #e8e8e8;
+    font-family: "Inter", "Segoe UI", "Helvetica Neue", sans-serif;
+    font-size: 13px;
+}
+
+QMainWindow {
+    background-color: #0d0d0d;
+}
+
+/* ── Panel / card containers ─────────────────────────────────────────── */
+QFrame#panel {
+    background-color: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+}
+
+QFrame#panel_accent {
+    background-color: #1a1a1a;
+    border: 1px solid #c8102e;
+    border-radius: 6px;
+}
+
+/* ── Section headers ─────────────────────────────────────────────────── */
+QLabel#section_header {
+    color: #c8102e;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+}
+
+QLabel#screen_title {
+    color: #ffffff;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+QLabel#match_label {
+    color: #ffffff;
+    font-size: 36px;
+    font-weight: 800;
+}
+
+QLabel#score_red {
+    color: #ff4444;
+    font-size: 48px;
+    font-weight: 900;
+}
+
+QLabel#score_blue {
+    color: #4488ff;
+    font-size: 48px;
+    font-weight: 900;
+}
+
+QLabel#rank_number {
+    color: #ffd700;
+    font-size: 72px;
+    font-weight: 900;
+}
+
+QLabel#team_number {
+    color: #c8102e;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+QLabel#stat_value {
+    color: #ffffff;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+QLabel#stat_label {
+    color: #888888;
+    font-size: 11px;
+}
+
+QLabel#status_ok {
+    color: #44cc66;
+    font-weight: 600;
+}
+
+QLabel#status_warn {
+    color: #ffaa00;
+    font-weight: 600;
+}
+
+QLabel#status_error {
+    color: #ff4444;
+    font-weight: 600;
+}
+
+/* ── Tables ──────────────────────────────────────────────────────────── */
+QTableWidget {
+    background-color: #111111;
+    border: none;
+    gridline-color: #222222;
+    selection-background-color: #c8102e;
+    selection-color: #ffffff;
+}
+
+QTableWidget::item {
+    padding: 6px 10px;
+    border: none;
+}
+
+QTableWidget::item:alternate {
+    background-color: #181818;
+}
+
+QHeaderView::section {
+    background-color: #1e1e1e;
+    color: #888888;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    padding: 8px 10px;
+    border: none;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+QPushButton {
+    background-color: #2a2a2a;
+    color: #e8e8e8;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background-color: #333333;
+    border-color: #555555;
+}
+
+QPushButton:pressed {
+    background-color: #1a1a1a;
+}
+
+QPushButton#btn_primary {
+    background-color: #c8102e;
+    color: #ffffff;
+    border: none;
+    font-weight: 700;
+}
+
+QPushButton#btn_primary:hover {
+    background-color: #e01535;
+}
+
+QPushButton#btn_primary:pressed {
+    background-color: #a00c25;
+}
+
+QPushButton#btn_success {
+    background-color: #1a5c2e;
+    color: #44cc66;
+    border: 1px solid #2a8c46;
+    font-weight: 600;
+}
+
+QPushButton#btn_success:hover {
+    background-color: #206835;
+}
+
+/* ── Alliance color badges ───────────────────────────────────────────── */
+QFrame#alliance_red {
+    background-color: #3a0a0a;
+    border: 1px solid #c83030;
+    border-radius: 4px;
+}
+
+QFrame#alliance_blue {
+    background-color: #0a0a3a;
+    border: 1px solid #3060c8;
+    border-radius: 4px;
+}
+
+/* ── Separator lines ─────────────────────────────────────────────────── */
+QFrame[frameShape="4"],
+QFrame[frameShape="5"] {
+    color: #2a2a2a;
+}
+
+/* ── ScrollBars ──────────────────────────────────────────────────────── */
+QScrollBar:vertical {
+    background: #111111;
+    width: 8px;
+    border: none;
+}
+
+QScrollBar::handle:vertical {
+    background: #333333;
+    border-radius: 4px;
+    min-height: 20px;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+/* ── ComboBox ────────────────────────────────────────────────────────── */
+QComboBox {
+    background-color: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: #e8e8e8;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    selection-background-color: #c8102e;
+}
+
+/* ── Tab bar (control screen) ────────────────────────────────────────── */
+QTabWidget::pane {
+    border: 1px solid #2a2a2a;
+    background-color: #111111;
+}
+
+QTabBar::tab {
+    background-color: #1a1a1a;
+    color: #888888;
+    padding: 10px 20px;
+    border: none;
+    border-bottom: 2px solid transparent;
+}
+
+QTabBar::tab:selected {
+    color: #ffffff;
+    border-bottom: 2px solid #c8102e;
+}
+
+QTabBar::tab:hover {
+    color: #cccccc;
+    background-color: #222222;
+}
+
+/* ── Progress bar ────────────────────────────────────────────────────── */
+QProgressBar {
+    background-color: #1a1a1a;
+    border: none;
+    border-radius: 3px;
+    height: 6px;
+    text-align: center;
+    color: transparent;
+}
+
+QProgressBar::chunk {
+    background-color: #c8102e;
+    border-radius: 3px;
+}
+
+/* ── LineEdit ────────────────────────────────────────────────────────── */
+QLineEdit {
+    background-color: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: #e8e8e8;
+}
+
+QLineEdit:focus {
+    border-color: #c8102e;
+}
