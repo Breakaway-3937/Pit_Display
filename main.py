@@ -4,6 +4,8 @@ from pathlib import Path
 from PyQt6.QtWidgets import QApplication
 
 from app.config import init_config
+from app.judges_slides import init_judges_slides
+from app.rotation import init_rotation
 from app.windows.control_screen import ControlScreen
 from app.windows.presentation_a import PresentationScreenA
 from app.windows.presentation_b import PresentationScreenB
@@ -22,6 +24,8 @@ def main():
     app.setOrganizationName("FRC Pit")
 
     init_config()
+    init_rotation()
+    init_judges_slides()
     _load_stylesheet(app)
 
     # Create all windows — only control is shown on boot

@@ -9,13 +9,17 @@ Layout:
 Only the control screen boots. Other screens are opened/closed via power toggles.
 """
 
+from pathlib import Path
+
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QFrame, QPushButton, QComboBox, QSizePolicy,
+    QLabel, QFrame, QPushButton, QComboBox, QSizePolicy, QScrollArea,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap
 
 from app.config import config, SCREENS, MODES
+from app.judges_slides import judges_slides
 from app.teams import all_teams
 from app.widgets.toggle_switch import ToggleSwitch
 
@@ -285,6 +289,162 @@ class SettingRow(QWidget):
         layout.addWidget(control, alignment=Qt.AlignmentFlag.AlignVCenter)
 
 
+# ── Judges slide thumbnail ────────────────────────────────────────────────────
+
+class _Thumbnail(QFrame):
+    """Clickable slide thumbnail used inside _SlidePicker."""
+
+    _W, _H = 96, 54  # 16:9 display size
+
+    def __init__(self, index: int, path: Path):
+        super().__init__()
+        self._index = index
+        self.setFixedWidth(self._W + 8)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 2)
+        layout.setSpacing(2)
+
+        img_lbl = QLabel()
+        img_lbl.setFixedSize(self._W, self._H)
+        img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pm = QPixmap(str(path)).scaled(
+            self._W, self._H,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        img_lbl.setPixmap(pm)
+        layout.addWidget(img_lbl)
+
+        num = QLabel(str(index + 1))
+        num.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        num.setStyleSheet("font-size: 10px; color: #888888; border: none;")
+        layout.addWidget(num)
+
+        self.set_active(False)
+
+    def set_active(self, active: bool):
+        accent = config.active_team.primary_color
+        border = accent if active else "#333333"
+        self.setStyleSheet(
+            f"QFrame {{ border: 2px solid {border}; border-radius: 3px;"
+            f" background-color: #1a1a1a; }}"
+        )
+
+    def mousePressEvent(self, _event):
+        judges_slides.go_to(self._index)
+
+
+# ── Judges slide picker ───────────────────────────────────────────────────────
+
+class _SlidePicker(QWidget):
+    """
+    Thumbnail strip + nav buttons for judges slides.
+    Shown in the settings panel for presentation screens.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._thumbs: list[_Thumbnail] = []
+        self._build_ui()
+        judges_slides.slides_reloaded.connect(self._rebuild)
+        judges_slides.slide_changed.connect(self._on_slide_changed)
+        config.team_changed.connect(lambda _: self._refresh_active())
+        self._rebuild()
+
+    def _build_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+
+        # Folder path hint so students know where to drop files
+        hint = _label("Drop images in:  assets/judges_slides/", "stat_label")
+        hint.setStyleSheet("font-family: monospace; font-size: 11px;")
+        outer.addWidget(hint)
+
+        # Scrollable thumbnail strip
+        self._scroll = QScrollArea()
+        self._scroll.setFixedHeight(96)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setStyleSheet("QScrollArea { background: transparent; }")
+
+        self._strip = QWidget()
+        self._strip.setStyleSheet("background: transparent;")
+        self._thumb_layout = QHBoxLayout(self._strip)
+        self._thumb_layout.setContentsMargins(0, 4, 0, 4)
+        self._thumb_layout.setSpacing(8)
+        self._scroll.setWidget(self._strip)
+        outer.addWidget(self._scroll)
+
+        # Nav row: Prev | counter | Next | Reload
+        nav = QWidget()
+        nav_row = QHBoxLayout(nav)
+        nav_row.setContentsMargins(0, 0, 0, 0)
+        nav_row.setSpacing(8)
+
+        self._prev_btn = QPushButton("◀  Prev")
+        self._prev_btn.setObjectName("btn_primary")
+        self._prev_btn.clicked.connect(judges_slides.prev)
+        nav_row.addWidget(self._prev_btn)
+
+        self._counter_lbl = _label("— / —", "stat_label", Qt.AlignmentFlag.AlignCenter)
+        nav_row.addWidget(self._counter_lbl, stretch=1)
+
+        self._next_btn = QPushButton("Next  ▶")
+        self._next_btn.setObjectName("btn_primary")
+        self._next_btn.clicked.connect(judges_slides.next)
+        nav_row.addWidget(self._next_btn)
+
+        reload_btn = QPushButton("↺  Reload")
+        reload_btn.clicked.connect(judges_slides.reload)
+        nav_row.addWidget(reload_btn)
+
+        outer.addWidget(nav)
+
+    # ── Rebuild from disk ─────────────────────────────────────────────────
+
+    def _rebuild(self):
+        while self._thumb_layout.count():
+            item = self._thumb_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._thumbs.clear()
+
+        paths = judges_slides.paths
+        if not paths:
+            self._thumb_layout.addWidget(_label("No images found — add files and click Reload", "stat_label"))
+        else:
+            for i, path in enumerate(paths):
+                thumb = _Thumbnail(i, path)
+                thumb.set_active(i == judges_slides.index)
+                self._thumbs.append(thumb)
+                self._thumb_layout.addWidget(thumb)
+        self._thumb_layout.addStretch()
+        self._update_counter()
+
+    # ── Signal handlers ───────────────────────────────────────────────────
+
+    def _on_slide_changed(self, index: int, _pixmap):
+        self._refresh_active(index)
+        self._update_counter()
+
+    def _refresh_active(self, index: int | None = None):
+        active = index if index is not None else judges_slides.index
+        for i, thumb in enumerate(self._thumbs):
+            thumb.set_active(i == active)
+
+    def _update_counter(self):
+        count = judges_slides.count
+        has = count > 0
+        self._counter_lbl.setText(f"{judges_slides.index + 1} / {count}" if has else "— / —")
+        self._prev_btn.setEnabled(has)
+        self._next_btn.setEnabled(has)
+
+
 # ── Per-screen settings panel ─────────────────────────────────────────────────
 
 class ScreenSettingsPanel(QWidget):
@@ -339,15 +499,13 @@ class ScreenSettingsPanel(QWidget):
         outer.addWidget(_divider())
         outer.addSpacing(12)
 
-        # Placeholder for future settings
-        placeholder = _panel()
-        ph_layout = QVBoxLayout(placeholder)
-        ph_layout.setContentsMargins(16, 12, 16, 12)
-        ph_layout.addWidget(_label(
-            "More settings coming soon", "stat_label",
-            Qt.AlignmentFlag.AlignCenter,
-        ))
-        outer.addWidget(placeholder)
+        # Judges slide picker — only relevant for presentation screens
+        if screen_id in ("presentation_a", "presentation_b"):
+            outer.addWidget(_label("Judges Slides", "screen_title"))
+            outer.addSpacing(8)
+            outer.addWidget(_SlidePicker())
+            outer.addSpacing(12)
+
         outer.addStretch()
 
         config.team_changed.connect(self._on_team_changed)
@@ -368,7 +526,7 @@ class ControlScreen(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Pit Display — Control")
-        self.setMinimumSize(1100, 680)
+        self.setMinimumSize(480, 400)
         self._screen_cards: dict[str, ScreenCard] = {}
         self._settings_panels: dict[str, ScreenSettingsPanel] = {}
         self._managed_windows: dict[str, QMainWindow] = {}

@@ -11,7 +11,7 @@ class ProjectScreen(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Pit Display — Project")
-        self.setMinimumSize(1280, 720)
+        self.setMinimumSize(320, 240)
         self._build_ui()
         config.team_changed.connect(self._on_team_changed)
         config.screen_setting_changed.connect(self._on_setting_changed)
