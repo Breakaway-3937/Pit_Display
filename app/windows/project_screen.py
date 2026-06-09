@@ -1,9 +1,16 @@
-"""Project Screen — shell. Observes AppConfig for team/theme changes."""
+"""
+Project Screen — 3D CAD interactive display (use case 1).
 
-from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel
-from PyQt6.QtCore import Qt
+Shows the robot model in interactive mode: free orbit, tap/click a
+sub-assembly to isolate it with an animated transition and facts overlay.
+The subsystem button bar at the bottom is driven by subsystems.json.
+"""
 
+from PyQt6.QtWidgets import QMainWindow
+
+from app.cad_assets import cad_assets
 from app.config import config
+from app.widgets.cad_viewer import CADViewerWidget
 
 
 class ProjectScreen(QMainWindow):
@@ -13,18 +20,17 @@ class ProjectScreen(QMainWindow):
         self.setWindowTitle("Pit Display — Project")
         self.setMinimumSize(320, 240)
         self._build_ui()
+        cad_assets.model_changed.connect(self._viewer.reload_model)
         config.team_changed.connect(self._on_team_changed)
         config.screen_setting_changed.connect(self._on_setting_changed)
 
     def _build_ui(self):
-        root = QWidget()
-        self.setCentralWidget(root)
-        layout = QVBoxLayout(root)
+        self._viewer = CADViewerWidget()
+        self.setCentralWidget(self._viewer)
 
-        self._label = QLabel("Project Screen")
-        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._label.setObjectName("screen_title")
-        layout.addWidget(self._label)
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._viewer.set_mode("interactive")
 
     def _on_team_changed(self, team):
         pass

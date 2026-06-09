@@ -7,6 +7,7 @@ requires-python = ">=3.9"
 dependencies = [
     "pyqt6>=6.7.0",
     "PyQt6-Qt6>=6.7.0",
+    "pyqt6-webengine>=6.10.0",
 ]
 
 [project.scripts]

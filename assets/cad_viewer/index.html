@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAD Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root { --accent: #ffffff; }
+
+  body {
+    background: #080808;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #ffffff;
+  }
+
+  canvas {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* ── Subsystem name label (top-left) ── */
+  #subsystem-label {
+    position: absolute;
+    top: 32px;
+    left: 32px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  #subsystem-label .sub-tag {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2.5px;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  #subsystem-label .sub-name {
+    font-size: 32px;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: -0.5px;
+    text-shadow: 0 2px 20px rgba(0,0,0,0.8);
+  }
+
+  /* ── Facts panel (right side) ── */
+  #facts-panel {
+    position: absolute;
+    top: 50%;
+    right: 32px;
+    width: 300px;
+    opacity: 0;
+    background: rgba(8, 8, 8, 0.88);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+    padding: 24px 22px;
+    pointer-events: none;
+    backdrop-filter: blur(16px);
+  }
+  #facts-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+  #facts-list {
+    list-style: none;
+  }
+  #facts-list li {
+    font-size: 14px;
+    color: #cccccc;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    line-height: 1.45;
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+  }
+  #facts-list li::before {
+    content: '▸';
+    color: var(--accent);
+    flex-shrink: 0;
+    font-size: 10px;
+    margin-top: 3px;
+  }
+  #facts-list li:last-child { border-bottom: none; }
+
+  /* ── Interactive-mode subsystem bar (bottom) ── */
+  #sub-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 72px;
+    background: rgba(8, 8, 8, 0.88);
+    border-top: 1px solid rgba(255,255,255,0.06);
+    backdrop-filter: blur(10px);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 8px;
+    overflow-x: auto;
+  }
+  #sub-bar.hidden {
+    display: none;
+  }
+  .sub-btn {
+    height: 40px;
+    padding: 0 18px;
+    border: 1px solid rgba(255,255,255,0.11);
+    border-radius: 7px;
+    background: rgba(255,255,255,0.04);
+    color: #999999;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    outline: none;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+  }
+  .sub-btn:hover {
+    border-color: var(--btn-accent, #ffffff);
+    color: #ffffff;
+    background: rgba(255,255,255,0.08);
+  }
+  .sub-btn.active {
+    background: var(--btn-accent, #ffffff);
+    border-color: transparent;
+    color: #000000;
+    font-weight: 700;
+  }
+  .sub-btn.reset-btn {
+    color: #555555;
+    border-color: rgba(255,255,255,0.08);
+    margin-right: 4px;
+  }
+  .sub-btn.reset-btn:hover {
+    color: #aaaaaa;
+    border-color: rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.06);
+  }
+  .sub-bar-spacer { flex: 1; }
+
+  /* ── Status overlay (no model / loading / error) ── */
+  #status-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    pointer-events: none;
+  }
+  #status-overlay.hidden { display: none; }
+  #status-icon { font-size: 52px; opacity: 0.25; }
+  #status-title { font-size: 18px; font-weight: 600; color: rgba(255,255,255,0.45); }
+  #status-sub {
+    font-size: 13px;
+    color: rgba(255,255,255,0.22);
+    text-align: center;
+    max-width: 320px;
+    line-height: 1.55;
+  }
+
+  /* ── Missing libs banner ── */
+  #libs-error {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: #080808;
+  }
+  #libs-error.visible { display: flex; }
+  #libs-error p {
+    font-size: 14px;
+    color: rgba(255,255,255,0.4);
+    text-align: center;
+    max-width: 400px;
+    line-height: 1.6;
+  }
+  #libs-error code {
+    font-family: monospace;
+    font-size: 13px;
+    background: rgba(255,255,255,0.07);
+    padding: 8px 16px;
+    border-radius: 5px;
+    color: #aaaaaa;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="subsystem-label">
+  <div class="sub-tag">SUBSYSTEM</div>
+  <div class="sub-name"></div>
+</div>
+
+<div id="facts-panel">
+  <div id="facts-title">KEY FACTS</div>
+  <ul id="facts-list"></ul>
+</div>
+
+<div id="sub-bar" class="hidden"></div>
+
+<div id="status-overlay">
+  <div id="status-icon">⬡</div>
+  <div id="status-title">No Model Loaded</div>
+  <div id="status-sub">Upload a .glb file using the Control Screen to get started.</div>
+</div>
+
+<div id="libs-error">
+  <div id="status-icon" style="font-size:48px;opacity:0.25;">⚠</div>
+  <p style="color:rgba(255,255,255,0.5);font-size:16px;font-weight:600;">3D libraries not found</p>
+  <p>Run the setup script from the project root to download Three.js and GSAP:</p>
+  <code>uv run scripts/setup_cad_assets.py</code>
+  <p>Then reload the control screen.</p>
+</div>
+
+<script>
+  // Check for lib files before loading — show error banner if missing
+  (function() {
+    function checkLibs(cb) {
+      var req = new XMLHttpRequest();
+      req.open('HEAD', './lib/three.min.js', true);
+      req.onload = function() { cb(req.status === 200); };
+      req.onerror = function() { cb(false); };
+      req.send();
+    }
+    checkLibs(function(ok) {
+      if (!ok) {
+        document.getElementById('libs-error').classList.add('visible');
+        document.getElementById('status-overlay').classList.add('hidden');
+      }
+    });
+  })();
+</script>
+
+<script src="./lib/three.min.js"></script>
+<script src="./lib/GLTFLoader.js"></script>
+<script src="./lib/OrbitControls.js"></script>
+<script src="./lib/gsap.min.js"></script>
+<script src="./viewer.js"></script>
+</body>
+</html>

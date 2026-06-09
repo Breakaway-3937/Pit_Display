@@ -18,7 +18,7 @@ def _light_qss() -> str:
     QWidget {
         background-color: #f2f2f7;
         color: #1c1c1e;
-        font-family: "SF Pro Display", "Segoe UI", "Helvetica Neue", sans-serif;
+        font-family: "Roboto";
         font-size: 13px;
     }
 

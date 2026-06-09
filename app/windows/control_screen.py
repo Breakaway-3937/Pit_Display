@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 
+from app.cad_assets import cad_assets
 from app.config import config, SCREENS, MODES
 from app.judges_slides import judges_slides
 from app.teams import all_teams
@@ -360,7 +361,7 @@ class _SlidePicker(QWidget):
 
         # Folder path hint so students know where to drop files
         hint = _label("Drop images in:  assets/judges_slides/", "stat_label")
-        hint.setStyleSheet("font-family: monospace; font-size: 11px;")
+        hint.setStyleSheet("font-family: Roboto; font-size: 11px;")
         outer.addWidget(hint)
 
         # Scrollable thumbnail strip
@@ -445,6 +446,107 @@ class _SlidePicker(QWidget):
         self._next_btn.setEnabled(has)
 
 
+# ── CAD judges picker ─────────────────────────────────────────────────────────
+
+class _CADJudgesPicker(QWidget):
+    """
+    Subsystem selector shown in the judges settings for presentation screens.
+    Activates the CAD page on the presentation screens and drives subsystem focus.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._sub_btns: dict[str, QPushButton] = {}
+        self._build_ui()
+        cad_assets.config_changed.connect(self._rebuild)
+        cad_assets.subsystem_focused.connect(self._on_focused)
+        config.team_changed.connect(lambda _: self._refresh_colors())
+        self._rebuild()
+
+    def _build_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+
+        hint = _label("Subsystems map to Onshape node names in assets/cad/subsystems.json.", "stat_label")
+        hint.setWordWrap(True)
+        outer.addWidget(hint)
+
+        self._btn_area = QWidget()
+        self._btn_layout = QVBoxLayout(self._btn_area)
+        self._btn_layout.setContentsMargins(0, 0, 0, 0)
+        self._btn_layout.setSpacing(4)
+        outer.addWidget(self._btn_area)
+
+        nav = QWidget()
+        nav_row = QHBoxLayout(nav)
+        nav_row.setContentsMargins(0, 0, 0, 0)
+        nav_row.setSpacing(8)
+
+        back_btn = QPushButton("◀  Back to Slides")
+        back_btn.clicked.connect(lambda: cad_assets.activate_cad(False))
+        nav_row.addWidget(back_btn)
+
+        full_btn = QPushButton("↩  Full View")
+        full_btn.setObjectName("btn_primary")
+        full_btn.clicked.connect(lambda: cad_assets.focus_subsystem(""))
+        nav_row.addWidget(full_btn)
+
+        outer.addWidget(nav)
+
+    def _rebuild(self):
+        while self._btn_layout.count():
+            item = self._btn_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._sub_btns.clear()
+
+        cfg = cad_assets.load_config()
+        subs = cfg.get("subsystems", [])
+
+        if not subs:
+            self._btn_layout.addWidget(
+                _label("No subsystems configured — add them in the Project panel.", "stat_label")
+            )
+            return
+
+        color = config.active_team.primary_color
+        for sub in subs:
+            btn = QPushButton(sub["display_name"])
+            btn.setFixedHeight(38)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            accent = sub.get("accent_color", color)
+            btn.setProperty("accent", accent)
+            sub_id = sub["id"]
+            btn.clicked.connect(lambda checked, sid=sub_id: cad_assets.focus_subsystem(sid))
+            self._sub_btns[sub_id] = btn
+            self._btn_layout.addWidget(btn)
+
+        self._btn_layout.addStretch()
+        self._refresh_colors()
+
+    def _on_focused(self, sub_id: str):
+        for sid, btn in self._sub_btns.items():
+            accent = btn.property("accent") or config.active_team.primary_color
+            if sid == sub_id:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {accent};
+                        color: #ffffff;
+                        border: none;
+                        border-radius: 6px;
+                        font-size: 13px;
+                        font-weight: 700;
+                        padding: 0 14px;
+                    }}
+                """)
+            else:
+                btn.setStyleSheet("")
+
+    def _refresh_colors(self):
+        self._on_focused(cad_assets.focused_id)
+
+
 # ── Per-screen settings panel ─────────────────────────────────────────────────
 
 class ScreenSettingsPanel(QWidget):
@@ -499,12 +601,29 @@ class ScreenSettingsPanel(QWidget):
         outer.addWidget(_divider())
         outer.addSpacing(12)
 
-        # Judges slide picker — only relevant for presentation screens
+        # Judges content — only relevant for presentation screens
         if screen_id in ("presentation_a", "presentation_b"):
             outer.addWidget(_label("Judges Slides", "screen_title"))
             outer.addSpacing(8)
             outer.addWidget(_SlidePicker())
+            outer.addSpacing(16)
+
+            outer.addWidget(_divider())
             outer.addSpacing(12)
+
+            outer.addWidget(_label("Judges CAD", "screen_title"))
+            outer.addSpacing(8)
+            outer.addWidget(_CADJudgesPicker())
+            outer.addSpacing(12)
+
+        # CAD management — project screen hosts the interactive touch viewer
+        if screen_id == "project":
+            outer.addWidget(_divider())
+            outer.addSpacing(12)
+            outer.addWidget(_label("CAD Viewer Config", "screen_title"))
+            outer.addSpacing(8)
+            from app.widgets.cad_upload_panel import CADSettingsPanel
+            outer.addWidget(CADSettingsPanel(), stretch=1)
 
         outer.addStretch()
 
@@ -640,7 +759,7 @@ class ControlScreen(QMainWindow):
         layout.addStretch()
         return sidebar
 
-    def _right_panel(self) -> QWidget:
+    def _right_panel(self) -> QScrollArea:
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -654,8 +773,14 @@ class ControlScreen(QMainWindow):
 
         layout.addStretch()
 
+        scroll = QScrollArea()
+        scroll.setWidget(container)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
         self._select_screen(SCREENS[0])
-        return container
+        return scroll
 
     # ── Interaction ───────────────────────────────────────────────────────
 
