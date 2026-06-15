@@ -9,6 +9,7 @@ QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
 from app.cad_assets import init_cad_assets
 from app.config import init_config
+from app.db import init_db
 from app.judges_slides import init_judges_slides
 from app.rotation import init_rotation
 from app.windows.control_screen import ControlScreen
@@ -37,6 +38,7 @@ def main():
     _load_fonts()
 
     init_config()
+    init_db()
     init_rotation()
     init_judges_slides()
     init_cad_assets()
