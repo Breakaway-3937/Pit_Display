@@ -29,7 +29,7 @@
     renderer.shadowMap.enabled = false;
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x080808);
+    scene.background = new THREE.Color(0x121013);
 
     camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 1000);
     camera.position.copy(defaultCamPos);
@@ -368,6 +368,29 @@
     }
   }
 
+  // ── Theme / accent ─────────────────────────────────────────────────────────
+  var DEFAULT_ACCENT = '#C82027';
+  var themeBg = { dark: 0x121013, light: 0xFAF9F8 };
+
+  function setTheme(name) {
+    var t = (name === 'light') ? 'light' : 'dark';
+    if (t === 'light') {
+      document.documentElement.setAttribute('data-theme', 'light');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    if (scene) scene.background = new THREE.Color(themeBg[t]);
+  }
+
+  function setAccent(hex) {
+    DEFAULT_ACCENT = hex || '#C82027';
+    // Only override the live accent when nothing is focused; a focused
+    // subsystem keeps its own accent_color.
+    if (focusedId === null) {
+      document.documentElement.style.setProperty('--accent', DEFAULT_ACCENT);
+    }
+  }
+
   // ── Reload ─────────────────────────────────────────────────────────────────
   function reload() {
     focusedId = null;
@@ -459,7 +482,7 @@
     gsap.to('#facts-panel', {
       x: 340, opacity: 0, yPercent: -50, duration: 0.3, ease: 'power2.in',
       onComplete: function () {
-        document.documentElement.style.setProperty('--accent', '#ffffff');
+        document.documentElement.style.setProperty('--accent', DEFAULT_ACCENT);
       }
     });
   }
@@ -502,6 +525,8 @@
     resetView:      resetView,
     setMode:        setMode,
     reload:         reload,
+    setTheme:       setTheme,
+    setAccent:      setAccent,
   };
 
   // Boot

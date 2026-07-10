@@ -18,10 +18,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 
+from app import brand
 from app.cad_assets import cad_assets
 from app.config import config, SCREENS, MODES
 from app.judges_slides import judges_slides
 from app.teams import all_teams
+from app.widgets.brand_widgets import ChamferButton, ChamferFrame, eyebrow
 from app.widgets.toggle_switch import ToggleSwitch
 
 
@@ -65,69 +67,28 @@ MODE_LABELS = {
 }
 
 
-class ModeButton(QPushButton):
+class ModeButton(ChamferButton):
     """
-    One of the three mode selector buttons in the top bar.
-    Active state: solid fill with team primary color.
-    Inactive state: dark/muted with hover feedback.
-    Recolors automatically when the team changes.
+    One of the three mode selector buttons in the top bar. Built on The Cut:
+    active = red fill (team accent), inactive = ghost. Recolors with the team.
     """
 
     def __init__(self, mode: str, team_color: str):
-        super().__init__(MODE_LABELS.get(mode, mode.title()))
+        super().__init__(
+            MODE_LABELS.get(mode, mode.title()),
+            variant="ghost",
+            accent=team_color,
+            cut=brand.CUT_SMALL,
+        )
         self.mode = mode
-        self._team_color = team_color
-        self._active = False
-        self.setMinimumWidth(110)
+        self.setMinimumWidth(124)
         self.setFixedHeight(42)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._refresh()
-
-    def set_active(self, active: bool):
-        self._active = active
-        self._refresh()
+        f = self.font()
+        f.setPixelSize(15)
+        self.setFont(f)
 
     def update_color(self, hex_color: str):
-        self._team_color = hex_color
-        self._refresh()
-
-    def _refresh(self):
-        if self._active:
-            self.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {self._team_color};
-                    color: #ffffff;
-                    border: none;
-                    border-radius: 6px;
-                    font-size: 14px;
-                    font-weight: 700;
-                    letter-spacing: 0.3px;
-                    padding: 0 20px;
-                }}
-                QPushButton:pressed {{
-                    opacity: 0.85;
-                }}
-            """)
-        else:
-            self.setStyleSheet("""
-                QPushButton {
-                    background-color: #222222;
-                    color: #666666;
-                    border: 1px solid #333333;
-                    border-radius: 6px;
-                    font-size: 14px;
-                    font-weight: 500;
-                    padding: 0 20px;
-                }
-                QPushButton:hover {
-                    background-color: #2e2e2e;
-                    color: #aaaaaa;
-                    border-color: #444444;
-                }
-                QPushButton:pressed {
-                    background-color: #1a1a1a;
-                }
-            """)
+        self.set_accent(hex_color)
 
 
 # ── Screen card (sidebar row) ─────────────────────────────────────────────────
@@ -179,7 +140,7 @@ class ScreenCard(QFrame):
             row.addWidget(self._toggle, alignment=Qt.AlignmentFlag.AlignVCenter)
         else:
             always_on = _label("Always On", "stat_label")
-            always_on.setStyleSheet("color: #44cc66; font-size: 11px;")
+            always_on.setStyleSheet(f"color: {brand.STATUS_ONLINE}; font-size: 11px;")
             row.addWidget(always_on, alignment=Qt.AlignmentFlag.AlignVCenter)
             self._toggle = None
 
@@ -210,21 +171,23 @@ class ScreenCard(QFrame):
                 font-weight: 600;
             }
         """
-        name_style_inactive = """
-            QPushButton {
+        name_style_inactive = f"""
+            QPushButton {{
                 background-color: transparent;
-                color: #888888;
+                color: {brand.MUTED_DARK};
                 border: none;
                 border-left: 3px solid transparent;
                 border-radius: 0;
                 text-align: left;
                 padding-left: 16px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #1a1a1a;
-                color: #cccccc;
-            }
+                font-family: "{brand.FONT_DISPLAY}";
+                font-size: 15px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background-color: {brand.CARBON_SURF};
+                color: {brand.INK_DARK};
+            }}
         """
         # Store color for apply later
         self._active_style = name_style_active
@@ -238,33 +201,36 @@ class ScreenCard(QFrame):
         if self._active:
             self._name_btn.setStyleSheet(f"""
                 QPushButton {{
-                    background-color: #1e1e1e;
-                    color: #ffffff;
+                    background-color: {brand.CARBON_SURF};
+                    color: #FFFFFF;
                     border: none;
                     border-left: 3px solid {hex_color};
                     border-radius: 0;
                     text-align: left;
                     padding-left: 16px;
-                    font-size: 14px;
+                    font-family: "{brand.FONT_DISPLAY}";
+                    font-size: 15px;
                     font-weight: 600;
                 }}
             """)
         else:
-            self._name_btn.setStyleSheet("""
-                QPushButton {
+            self._name_btn.setStyleSheet(f"""
+                QPushButton {{
                     background-color: transparent;
-                    color: #888888;
+                    color: {brand.MUTED_DARK};
                     border: none;
                     border-left: 3px solid transparent;
                     border-radius: 0;
                     text-align: left;
                     padding-left: 16px;
-                    font-size: 14px;
-                }
-                QPushButton:hover {
-                    background-color: #1a1a1a;
-                    color: #cccccc;
-                }
+                    font-family: "{brand.FONT_DISPLAY}";
+                    font-size: 15px;
+                    font-weight: 500;
+                }}
+                QPushButton:hover {{
+                    background-color: {brand.CARBON_SURF};
+                    color: {brand.INK_DARK};
+                }}
             """)
         if self._toggle:
             self._toggle.set_color_on(hex_color)
@@ -327,10 +293,10 @@ class _Thumbnail(QFrame):
 
     def set_active(self, active: bool):
         accent = config.active_team.primary_color
-        border = accent if active else "#333333"
+        border = accent if active else brand.CARBON_LINE
         self.setStyleSheet(
-            f"QFrame {{ border: 2px solid {border}; border-radius: 3px;"
-            f" background-color: #1a1a1a; }}"
+            f"QFrame {{ border: 2px solid {border}; border-radius: 4px;"
+            f" background-color: {brand.CARBON_SURF}; }}"
         )
 
     def mousePressEvent(self, _event):
@@ -616,8 +582,36 @@ class ScreenSettingsPanel(QWidget):
             outer.addWidget(_CADJudgesPicker())
             outer.addSpacing(12)
 
-        # CAD management — project screen hosts the interactive touch viewer
+        # Project screen: pick which interactive view is shown, then CAD config.
         if screen_id == "project":
+            outer.addWidget(_label("Display Content", "screen_title"))
+            outer.addSpacing(8)
+
+            self._content_toggle = ToggleSwitch(
+                color_on=config.active_team.primary_color
+            )
+            current_content = config.get(screen_id, "content", "cad")
+            self._content_toggle.setChecked(current_content == "board")
+            self._content_toggle.toggled.connect(self._on_content_toggled)
+
+            self._content_label = _label(
+                "Impact Board" if current_content == "board" else "CAD Viewer",
+                "stat_value",
+            )
+            content_row = QWidget()
+            content_row_layout = QHBoxLayout(content_row)
+            content_row_layout.setContentsMargins(0, 0, 0, 0)
+            content_row_layout.addWidget(self._content_toggle)
+            content_row_layout.addSpacing(10)
+            content_row_layout.addWidget(self._content_label)
+            content_row_layout.addStretch()
+
+            outer.addWidget(SettingRow(
+                label="CAD Viewer / Impact Board",
+                description="Choose what the project touchscreen shows.",
+                control=content_row,
+            ))
+
             outer.addWidget(_divider())
             outer.addSpacing(12)
             outer.addWidget(_label("CAD Viewer Config", "screen_title"))
@@ -634,8 +628,14 @@ class ScreenSettingsPanel(QWidget):
         self._theme_label.setText("Light" if light else "Dark")
         config.set(self._screen_id, "theme", theme)
 
+    def _on_content_toggled(self, board: bool):
+        self._content_label.setText("Impact Board" if board else "CAD Viewer")
+        config.set(self._screen_id, "content", "board" if board else "cad")
+
     def _on_team_changed(self, team):
         self._theme_toggle.set_color_on(team.primary_color)
+        if hasattr(self, "_content_toggle"):
+            self._content_toggle.set_color_on(team.primary_color)
 
 
 # ── Control screen ────────────────────────────────────────────────────────────
@@ -679,24 +679,46 @@ class ControlScreen(QMainWindow):
 
     def _top_bar(self) -> QFrame:
         bar = QFrame()
-        bar.setFixedHeight(72)
+        bar.setFixedHeight(76)
         bar.setStyleSheet(
-            "QFrame { background-color: #111111; border: none;"
-            " border-bottom: 1px solid #2a2a2a; }"
+            f"QFrame {{ background-color: {brand.CARBON_SURF}; border: none;"
+            f" border-bottom: 1px solid {brand.CARBON_LINE}; }}"
         )
 
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(20, 0, 20, 0)
-        layout.setSpacing(12)
+        layout.setContentsMargins(18, 0, 20, 0)
+        layout.setSpacing(14)
 
-        # Left: app title
-        self._title_label = _label("PIT DISPLAY", "section_header")
-        self._title_label.setStyleSheet(
-            f"color: {config.active_team.primary_color}; font-size: 11px;"
-            " font-weight: 700; letter-spacing: 1.5px;"
+        # Left: brand mark — chamfered red chip with the team number + wordmark
+        self._brand_chip = ChamferFrame(
+            fill=config.active_team.primary_color,
+            border=None,
+            cut=brand.CUT_SMALL,
         )
-        self._title_label.setFixedWidth(110)
-        layout.addWidget(self._title_label)
+        self._brand_chip.setFixedSize(58, 44)
+        chip_l = QVBoxLayout(self._brand_chip)
+        chip_l.setContentsMargins(0, 0, 0, 0)
+        self._chip_num = _label(str(config.active_team.number), "",
+                                Qt.AlignmentFlag.AlignCenter)
+        self._chip_num.setStyleSheet(
+            f'color: #FFFFFF; background: transparent;'
+            f' font-family: "{brand.FONT_DISPLAY}"; font-size: 17px; font-weight: 700;'
+        )
+        chip_l.addWidget(self._chip_num)
+        layout.addWidget(self._brand_chip)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(0)
+        self._title_label = eyebrow("Pit Display")
+        wordmark = _label("BREAKAWAY", "screen_title")
+        wordmark.setStyleSheet(
+            f'color: #FFFFFF; background: transparent;'
+            f' font-family: "{brand.FONT_DISPLAY}"; font-size: 20px;'
+            f' font-weight: 700; letter-spacing: 1px;'
+        )
+        title_col.addWidget(self._title_label)
+        title_col.addWidget(wordmark)
+        layout.addLayout(title_col)
 
         layout.addStretch()
 
@@ -712,14 +734,15 @@ class ControlScreen(QMainWindow):
         layout.addStretch()
 
         # Right: team selector
-        layout.addWidget(_label("Team:", "stat_label"))
-        layout.addSpacing(4)
-
+        team_col = QVBoxLayout()
+        team_col.setSpacing(2)
+        team_col.addWidget(eyebrow("Team", brand.MUTED_DARK))
         self._team_combo = QComboBox()
         self._team_combo.setMinimumWidth(190)
         self._populate_team_combo()
         self._team_combo.currentIndexChanged.connect(self._on_team_selected)
-        layout.addWidget(self._team_combo)
+        team_col.addWidget(self._team_combo)
+        layout.addLayout(team_col)
 
         return bar
 
@@ -736,16 +759,16 @@ class ControlScreen(QMainWindow):
         sidebar = QFrame()
         sidebar.setFixedWidth(220)
         sidebar.setStyleSheet(
-            "QFrame { background-color: #111111; border: none;"
-            " border-right: 1px solid #2a2a2a; }"
+            f"QFrame {{ background-color: {brand.CARBON_SURF}; border: none;"
+            f" border-right: 1px solid {brand.CARBON_LINE}; }}"
         )
 
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(0, 16, 0, 16)
+        layout.setContentsMargins(0, 18, 0, 16)
         layout.setSpacing(0)
 
-        hdr = _label("  SCREENS", "section_header")
-        hdr.setContentsMargins(0, 0, 0, 8)
+        hdr = eyebrow("Screens")
+        hdr.setContentsMargins(18, 0, 0, 10)
         layout.addWidget(hdr)
 
         team_color = config.active_team.primary_color
@@ -811,11 +834,9 @@ class ControlScreen(QMainWindow):
             btn.set_active(m == mode)
 
     def _on_team_changed(self, team):
-        # Title bar accent
-        self._title_label.setStyleSheet(
-            f"color: {team.primary_color}; font-size: 11px;"
-            " font-weight: 700; letter-spacing: 1.5px;"
-        )
+        # Brand chip follows the active team
+        self._brand_chip.set_fill(team.primary_color)
+        self._chip_num.setText(str(team.number))
         # Mode buttons recolor
         for btn in self._mode_buttons.values():
             btn.update_color(team.primary_color)

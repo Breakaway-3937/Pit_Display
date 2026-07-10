@@ -44,7 +44,20 @@ class CADViewerWidget(QWebEngineView):
         page.subsystem_selected.connect(self.subsystem_selected)
         page.view_reset.connect(self.view_reset)
         self.setPage(page)
+        # Theme / accent requested before the page finished loading; re-applied
+        # on loadFinished so the viewer boots in the right look.
+        self._pending_theme: str | None = None
+        self._pending_accent: str | None = None
+        self.loadFinished.connect(self._on_load_finished)
         self.setUrl(QUrl(cad_assets.viewer_url))
+
+    def _on_load_finished(self, ok: bool):
+        if not ok:
+            return
+        if self._pending_theme is not None:
+            self.set_theme(self._pending_theme)
+        if self._pending_accent is not None:
+            self.set_accent(self._pending_accent)
 
     # ── Python → JS ───────────────────────────────────────────────────────
 
@@ -60,6 +73,15 @@ class CADViewerWidget(QWebEngineView):
 
     def reload_model(self) -> None:
         self._js("window.cadViewer && window.cadViewer.reload()")
+
+    def set_theme(self, theme: str) -> None:
+        """theme: 'dark' | 'light'"""
+        self._pending_theme = theme
+        self._js(f"window.cadViewer && window.cadViewer.setTheme({json.dumps(theme)})")
+
+    def set_accent(self, hex_color: str) -> None:
+        self._pending_accent = hex_color
+        self._js(f"window.cadViewer && window.cadViewer.setAccent({json.dumps(hex_color)})")
 
     def _js(self, script: str) -> None:
         self.page().runJavaScript(script)

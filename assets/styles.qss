@@ -1,278 +1,259 @@
-/* ── Global ─────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════
+   Breakaway 3937 — dark (Carbon) theme, app-wide default.
+   Carbon surfaces carry the layout; one red used with intent.
+   Chakra Petch = display/headline/numeric · Roboto = body/UI.
+   Tokens mirror app/brand.py — keep them in sync.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Global ─────────────────────────────────────────────────────────────── */
 QWidget {
-    background-color: #0d0d0d;
-    color: #e8e8e8;
+    background-color: #121013;      /* CARBON_BG */
+    color: #F3F1F0;                 /* INK_DARK  */
     font-family: "Roboto";
     font-size: 13px;
 }
 
-QMainWindow {
-    background-color: #0d0d0d;
+QMainWindow { background-color: #121013; }
+
+/* Labels are transparent so they never paint the page background over a card
+   (ChamferFrame / QFrame#panel use a lighter surface fill). */
+QLabel { background: transparent; }
+
+QToolTip {
+    background-color: #1D1A1C;
+    color: #F3F1F0;
+    border: 1px solid #332F32;
+    padding: 4px 8px;
 }
 
-/* ── Panel / card containers ─────────────────────────────────────────── */
+/* ── Panel / card containers ─────────────────────────────────────────────── */
 QFrame#panel {
-    background-color: #1a1a1a;
-    border: 1px solid #2a2a2a;
-    border-radius: 6px;
+    background-color: #1D1A1C;      /* CARBON_SURF */
+    border: 1px solid #332F32;      /* CARBON_LINE */
+    border-radius: 12px;
 }
 
 QFrame#panel_accent {
-    background-color: #1a1a1a;
-    border: 1px solid #c8102e;
-    border-radius: 6px;
+    background-color: #1D1A1C;
+    border: 1px solid #C82027;      /* RED */
+    border-radius: 12px;
 }
 
-/* ── Section headers ─────────────────────────────────────────────────── */
+/* ── Type roles ──────────────────────────────────────────────────────────── */
+/* Eyebrow — Chakra Petch, tracked caps, red */
 QLabel#section_header {
-    color: #c8102e;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 1.5px;
-    text-transform: uppercase;
+    color: #C82027;
+    font-family: "Chakra Petch";
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 2px;
 }
 
 QLabel#screen_title {
-    color: #ffffff;
+    color: #FFFFFF;
+    font-family: "Chakra Petch";
     font-size: 22px;
     font-weight: 700;
 }
 
 QLabel#match_label {
-    color: #ffffff;
+    color: #FFFFFF;
+    font-family: "Chakra Petch";
     font-size: 36px;
-    font-weight: 800;
-}
-
-QLabel#score_red {
-    color: #ff4444;
-    font-size: 48px;
-    font-weight: 900;
-}
-
-QLabel#score_blue {
-    color: #4488ff;
-    font-size: 48px;
-    font-weight: 900;
+    font-weight: 700;
 }
 
 QLabel#rank_number {
-    color: #ffd700;
+    color: #C82027;
+    font-family: "Chakra Petch";
     font-size: 72px;
-    font-weight: 900;
+    font-weight: 700;
 }
 
 QLabel#team_number {
-    color: #c8102e;
+    color: #C82027;
+    font-family: "Chakra Petch";
     font-size: 18px;
     font-weight: 700;
 }
 
 QLabel#stat_value {
-    color: #ffffff;
+    color: #F3F1F0;
+    font-family: "Chakra Petch";
     font-size: 20px;
     font-weight: 600;
 }
 
 QLabel#stat_label {
-    color: #888888;
-    font-size: 11px;
+    color: #A6A19E;                 /* N400 muted */
+    font-size: 12px;
 }
 
-QLabel#status_ok {
-    color: #44cc66;
-    font-weight: 600;
-}
+QLabel#status_ok    { color: #2E8B7F; font-weight: 600; }
+QLabel#status_warn  { color: #E08A1E; font-weight: 600; }
+QLabel#status_error { color: #C82027; font-weight: 600; }
 
-QLabel#status_warn {
-    color: #ffaa00;
-    font-weight: 600;
-}
-
-QLabel#status_error {
-    color: #ff4444;
-    font-weight: 600;
-}
-
-/* ── Tables ──────────────────────────────────────────────────────────── */
+/* ── Tables ──────────────────────────────────────────────────────────────── */
 QTableWidget {
-    background-color: #111111;
+    background-color: #1D1A1C;
     border: none;
-    gridline-color: #222222;
-    selection-background-color: #c8102e;
-    selection-color: #ffffff;
+    gridline-color: #332F32;
+    selection-background-color: #C82027;
+    selection-color: #FFFFFF;
 }
 
-QTableWidget::item {
-    padding: 6px 10px;
-    border: none;
-}
-
-QTableWidget::item:alternate {
-    background-color: #181818;
-}
+QTableWidget::item { padding: 6px 10px; border: none; }
+QTableWidget::item:alternate { background-color: #272327; }
 
 QHeaderView::section {
-    background-color: #1e1e1e;
-    color: #888888;
+    background-color: #272327;
+    color: #A6A19E;
+    font-family: "Chakra Petch";
     font-size: 11px;
-    font-weight: 700;
+    font-weight: 600;
     letter-spacing: 1px;
     padding: 8px 10px;
     border: none;
-    border-bottom: 1px solid #2a2a2a;
+    border-bottom: 1px solid #332F32;
 }
 
-/* ── Buttons ─────────────────────────────────────────────────────────── */
+/* ── Buttons (brand system §7) ───────────────────────────────────────────── */
 QPushButton {
-    background-color: #2a2a2a;
-    color: #e8e8e8;
-    border: 1px solid #3a3a3a;
-    border-radius: 4px;
+    background-color: #272327;      /* CARBON_SURF2 */
+    color: #F3F1F0;
+    border: 1px solid #332F32;
+    border-radius: 8px;
     padding: 8px 16px;
     font-weight: 500;
 }
-
-QPushButton:hover {
-    background-color: #333333;
-    border-color: #555555;
-}
-
-QPushButton:pressed {
-    background-color: #1a1a1a;
-}
+QPushButton:hover   { background-color: #322D31; border-color: #443F3D; }
+QPushButton:pressed { background-color: #1D1A1C; }
+QPushButton:disabled { color: #6A6462; border-color: #272327; }
 
 QPushButton#btn_primary {
-    background-color: #c8102e;
-    color: #ffffff;
+    background-color: #C82027;
+    color: #FFFFFF;
     border: none;
-    font-weight: 700;
-}
-
-QPushButton#btn_primary:hover {
-    background-color: #e01535;
-}
-
-QPushButton#btn_primary:pressed {
-    background-color: #a00c25;
-}
-
-QPushButton#btn_success {
-    background-color: #1a5c2e;
-    color: #44cc66;
-    border: 1px solid #2a8c46;
+    font-family: "Chakra Petch";
     font-weight: 600;
 }
+QPushButton#btn_primary:hover   { background-color: #B01C22; }
+QPushButton#btn_primary:pressed { background-color: #8E1519; }   /* Ember */
 
-QPushButton#btn_success:hover {
-    background-color: #206835;
+QPushButton#btn_secondary {
+    background-color: transparent;
+    color: #C82027;
+    border: 1.5px solid #C82027;
+    font-weight: 600;
 }
+QPushButton#btn_secondary:hover { background-color: #C82027; color: #FFFFFF; }
 
-/* ── Alliance color badges ───────────────────────────────────────────── */
+QPushButton#btn_success {
+    background-color: transparent;
+    color: #2E8B7F;
+    border: 1.5px solid #2E8B7F;
+    font-weight: 600;
+}
+QPushButton#btn_success:hover { background-color: #2E8B7F; color: #FFFFFF; }
+
+QPushButton#btn_danger {
+    background-color: transparent;
+    color: #C82027;
+    border: 1px solid #443F3D;
+    font-weight: 600;
+}
+QPushButton#btn_danger:hover { background-color: #C82027; color: #FFFFFF; border-color: #C82027; }
+
+/* ── Alliance color badges ───────────────────────────────────────────────── */
 QFrame#alliance_red {
-    background-color: #3a0a0a;
-    border: 1px solid #c83030;
-    border-radius: 4px;
+    background-color: #2A1214;
+    border: 1px solid #C82027;
+    border-radius: 8px;
 }
-
 QFrame#alliance_blue {
-    background-color: #0a0a3a;
-    border: 1px solid #3060c8;
-    border-radius: 4px;
+    background-color: #14182A;
+    border: 1px solid #2B3A67;
+    border-radius: 8px;
 }
 
-/* ── Separator lines ─────────────────────────────────────────────────── */
-QFrame[frameShape="4"],
-QFrame[frameShape="5"] {
-    color: #2a2a2a;
-}
+/* ── Separators ──────────────────────────────────────────────────────────── */
+QFrame[frameShape="4"], QFrame[frameShape="5"] { color: #332F32; }
 
-/* ── ScrollBars ──────────────────────────────────────────────────────── */
-QScrollBar:vertical {
-    background: #111111;
-    width: 8px;
-    border: none;
-}
+/* ── ScrollBars ──────────────────────────────────────────────────────────── */
+QScrollBar:vertical { background: #121013; width: 8px; border: none; }
+QScrollBar::handle:vertical { background: #443F3D; border-radius: 4px; min-height: 20px; }
+QScrollBar::handle:vertical:hover { background: #6A6462; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar:horizontal { background: #121013; height: 8px; border: none; }
+QScrollBar::handle:horizontal { background: #443F3D; border-radius: 4px; min-width: 20px; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 
-QScrollBar::handle:vertical {
-    background: #333333;
-    border-radius: 4px;
-    min-height: 20px;
-}
-
-QScrollBar::add-line:vertical,
-QScrollBar::sub-line:vertical {
-    height: 0;
-}
-
-/* ── ComboBox ────────────────────────────────────────────────────────── */
+/* ── ComboBox ────────────────────────────────────────────────────────────── */
 QComboBox {
-    background-color: #1e1e1e;
-    border: 1px solid #3a3a3a;
-    border-radius: 4px;
-    padding: 6px 10px;
-    color: #e8e8e8;
+    background-color: #272327;
+    border: 1px solid #332F32;
+    border-radius: 8px;
+    padding: 7px 12px;
+    color: #F3F1F0;
+    font-family: "Chakra Petch";
+    font-weight: 500;
 }
-
-QComboBox::drop-down {
-    border: none;
-    width: 20px;
-}
-
+QComboBox:hover { border-color: #443F3D; }
+QComboBox::drop-down { border: none; width: 22px; }
 QComboBox QAbstractItemView {
-    background-color: #1e1e1e;
-    border: 1px solid #3a3a3a;
-    selection-background-color: #c8102e;
+    background-color: #1D1A1C;
+    border: 1px solid #332F32;
+    selection-background-color: #C82027;
+    selection-color: #FFFFFF;
+    outline: none;
 }
 
-/* ── Tab bar (control screen) ────────────────────────────────────────── */
-QTabWidget::pane {
-    border: 1px solid #2a2a2a;
-    background-color: #111111;
-}
-
+/* ── Tabs ────────────────────────────────────────────────────────────────── */
+QTabWidget::pane { border: 1px solid #332F32; background-color: #1D1A1C; }
 QTabBar::tab {
-    background-color: #1a1a1a;
-    color: #888888;
+    background-color: #1D1A1C;
+    color: #A6A19E;
+    font-family: "Chakra Petch";
+    font-weight: 500;
     padding: 10px 20px;
     border: none;
     border-bottom: 2px solid transparent;
 }
+QTabBar::tab:selected { color: #FFFFFF; border-bottom: 2px solid #C82027; }
+QTabBar::tab:hover    { color: #F3F1F0; background-color: #272327; }
 
-QTabBar::tab:selected {
-    color: #ffffff;
-    border-bottom: 2px solid #c8102e;
-}
-
-QTabBar::tab:hover {
-    color: #cccccc;
-    background-color: #222222;
-}
-
-/* ── Progress bar ────────────────────────────────────────────────────── */
+/* ── Progress bar ────────────────────────────────────────────────────────── */
 QProgressBar {
-    background-color: #1a1a1a;
+    background-color: #272327;
     border: none;
     border-radius: 3px;
     height: 6px;
     text-align: center;
     color: transparent;
 }
+QProgressBar::chunk { background-color: #C82027; border-radius: 3px; }
 
-QProgressBar::chunk {
-    background-color: #c8102e;
-    border-radius: 3px;
+/* ── Inputs ──────────────────────────────────────────────────────────────── */
+QLineEdit, QTextEdit {
+    background-color: #272327;
+    border: 1px solid #332F32;
+    border-radius: 8px;
+    padding: 7px 11px;
+    color: #F3F1F0;
+    selection-background-color: #C82027;
+    selection-color: #FFFFFF;
 }
+QLineEdit:focus, QTextEdit:focus { border-color: #C82027; }
 
-/* ── LineEdit ────────────────────────────────────────────────────────── */
-QLineEdit {
-    background-color: #1e1e1e;
-    border: 1px solid #3a3a3a;
+QCheckBox { spacing: 8px; }
+QCheckBox::indicator {
+    width: 16px; height: 16px;
+    border: 1px solid #443F3D;
     border-radius: 4px;
-    padding: 6px 10px;
-    color: #e8e8e8;
+    background: #272327;
 }
+QCheckBox::indicator:checked { background: #C82027; border-color: #C82027; }
 
-QLineEdit:focus {
-    border-color: #c8102e;
-}
+/* ── Dialogs ─────────────────────────────────────────────────────────────── */
+QDialog { background-color: #1D1A1C; }
+QMessageBox { background-color: #1D1A1C; }

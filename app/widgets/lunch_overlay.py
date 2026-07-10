@@ -16,11 +16,13 @@ from PyQt6.QtGui import (
     QPainter, QPixmap, QFont, QFontMetrics, QColor, QPen, QResizeEvent, QShowEvent,
 )
 
+from app import brand
 from app.config import config
 
 _LOGO_DIR   = Path(__file__).parent.parent.parent / "assets" / "logos"
 _LOGO_NAMES = ["2026 Wordmark.png", "breakaway_logo.png", "breakaway_logo.jpg"]
 
+_EYEBROW  = "BREAKAWAY 3937"
 _HEADLINE = "We'll Be Right Back"
 _SUB      = "Our team is on a lunch break and will return shortly.\nThank you for stopping by our pit!"
 
@@ -32,20 +34,20 @@ _HEADLINE_H_FRAC  = 0.20
 _SUB_Y_FRAC       = 0.64
 _SUB_H_FRAC       = 0.22
 
-# Dark / light color palettes
+# Dark / light color palettes — Breakaway brand tokens
 _DARK = {
-    "bg":           "#080808",
-    "headline":     "#ffffff",
-    "sub":          "#606060",
-    "ph_border":    "#2a2a2a",
-    "ph_fill":      "#0f0f0f",
+    "bg":           brand.CARBON_BG,
+    "headline":     brand.WHITE,
+    "sub":          brand.MUTED_DARK,
+    "ph_border":    brand.CARBON_LINE,
+    "ph_fill":      brand.CARBON_SURF,
 }
 _LIGHT = {
-    "bg":           "#f2f2f7",
-    "headline":     "#1c1c1e",
-    "sub":          "#636366",
-    "ph_border":    "#d1d1d6",
-    "ph_fill":      "#ffffff",
+    "bg":           brand.N50,
+    "headline":     brand.CARBON,
+    "sub":          brand.N500,
+    "ph_border":    brand.N200,
+    "ph_fill":      brand.WHITE,
 }
 
 
@@ -57,9 +59,10 @@ def _find_logo() -> Optional[Path]:
     return None
 
 
-def _fit_font(text: str, weight: QFont.Weight, max_w: int, max_h: int) -> QFont:
+def _fit_font(text: str, weight: QFont.Weight, max_w: int, max_h: int,
+              family: str = brand.FONT_DISPLAY) -> QFont:
     """Largest font pixel size where text fits within max_w × max_h."""
-    f = QFont()
+    f = QFont(family)
     f.setWeight(weight)
     size = max(8, min(max_h, max_w))
     f.setPixelSize(size)
@@ -71,8 +74,9 @@ def _fit_font(text: str, weight: QFont.Weight, max_w: int, max_h: int) -> QFont:
     return f
 
 
-def _font(pixel_size: int, weight: QFont.Weight = QFont.Weight.Normal) -> QFont:
-    f = QFont()
+def _font(pixel_size: int, weight: QFont.Weight = QFont.Weight.Normal,
+          family: str = brand.FONT_BODY) -> QFont:
+    f = QFont(family)
     f.setPixelSize(max(8, pixel_size))
     f.setWeight(weight)
     return f
@@ -137,13 +141,37 @@ class LunchOverlay(QWidget):
             pr = QRect((w - logo_max_w) // 2, int(h * 0.06), logo_max_w, logo_h)
             p.drawRoundedRect(pr, 12, 12)
 
-        # ── Accent divider ───────────────────────────────────────────────
-        div_color = QColor(config.active_team.primary_color)
-        div_w = max(200, min(400, w // 5))
-        div_bar_h = max(4, h // 135)
+        # ── Eyebrow (Chakra Petch, tracked caps, team red) ────────────────
+        accent = QColor(config.active_team.primary_color)
+        eb_font = _font(max(12, int(h * 0.028)), QFont.Weight.DemiBold, brand.FONT_DISPLAY)
+        eb_font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 130)
+        p.setFont(eb_font)
+        p.setPen(accent)
+        p.drawText(
+            QRect(40, int(h * (_DIVIDER_Y_FRAC - 0.055)), w - 80, int(h * 0.05)),
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+            _EYEBROW,
+        )
+
+        # ── Accent divider — The Cut chamfered bar ────────────────────────
+        div_w = max(160, min(320, w // 6))
+        div_bar_h = max(5, h // 120)
+        dx = (w - div_w) // 2
+        dy = int(h * _DIVIDER_Y_FRAC)
+        cut = min(div_bar_h * 2, 14)
+        from PyQt6.QtGui import QPolygon
+        from PyQt6.QtCore import QPoint
+        bar = QPolygon([
+            QPoint(dx, dy),
+            QPoint(dx + div_w - cut, dy),
+            QPoint(dx + div_w, dy + cut),
+            QPoint(dx + div_w, dy + div_bar_h),
+            QPoint(dx + cut, dy + div_bar_h),
+            QPoint(dx, dy + div_bar_h - cut),
+        ])
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(div_color)
-        p.drawRect((w - div_w) // 2, int(h * _DIVIDER_Y_FRAC), div_w, div_bar_h)
+        p.setBrush(accent)
+        p.drawPolygon(bar)
 
         # ── Headline ─────────────────────────────────────────────────────
         headline_rect = QRect(
@@ -154,7 +182,7 @@ class LunchOverlay(QWidget):
         )
         headline_font = _fit_font(
             _HEADLINE,
-            QFont.Weight.Black,
+            QFont.Weight.Bold,
             headline_rect.width(),
             headline_rect.height(),
         )

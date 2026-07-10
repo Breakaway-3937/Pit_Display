@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QSizePolicy, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from app import brand
 from app.cad_assets import cad_assets
 from app.config import config
 
@@ -81,7 +82,7 @@ class _SubsystemDialog(QDialog):
         self._node  = QLineEdit(d.get("node_name", ""))
         self._node.setPlaceholderText("Exact Onshape sub-assembly name (case-sensitive)")
 
-        self._color = QLineEdit(d.get("accent_color", "#FF6B35"))
+        self._color = QLineEdit(d.get("accent_color", brand.RED))
         self._color.setPlaceholderText("#RRGGBB")
         self._color.setMaximumWidth(120)
 
@@ -147,7 +148,7 @@ class _SubsystemDialog(QDialog):
             "id":           existing_id or _slug(self._name.text().strip()),
             "display_name": self._name.text().strip(),
             "node_name":    self._node.text().strip(),
-            "accent_color": self._color.text().strip() or "#FF6B35",
+            "accent_color": self._color.text().strip() or brand.RED,
             "facts":        facts,
         }
         if self._cam_box.isChecked():

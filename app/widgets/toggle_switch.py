@@ -7,10 +7,10 @@ from PyQt6.QtGui import QPainter, QColor
 
 class ToggleSwitch(QAbstractButton):
 
-    def __init__(self, color_on: str = "#c8102e", parent=None):
+    def __init__(self, color_on: str = "#C82027", parent=None):
         super().__init__(parent)
         self._color_on = QColor(color_on)
-        self._color_off = QColor("#3a3a3a")
+        self._color_off = QColor("#443F3D")
         self._thumb_x = 3
 
         self.setCheckable(True)

@@ -5,17 +5,59 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CAD Viewer</title>
 <style>
+  /* Breakaway 3937 — CAD viewer. Carbon ground, one red used with intent,
+     Chakra Petch display / Roboto body, The Cut on panels + buttons. */
+  @font-face {
+    font-family: "Chakra Petch";
+    src: url("../fonts/ChakraPetch-SemiBold.ttf");
+    font-weight: 600;
+  }
+  @font-face {
+    font-family: "Chakra Petch";
+    src: url("../fonts/ChakraPetch-Bold.ttf");
+    font-weight: 700;
+  }
+  @font-face {
+    font-family: "Roboto";
+    src: url("../fonts/Roboto-Regular.ttf");
+    font-weight: 400;
+  }
+  @font-face {
+    font-family: "Roboto";
+    src: url("../fonts/Roboto-Medium.ttf");
+    font-weight: 500;
+  }
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
-  :root { --accent: #ffffff; }
+  :root {
+    --accent: #C82027;               /* Breakaway Red — focus by default */
+    --carbon: #121013;
+    --surface: rgba(29, 26, 28, 0.9);
+    --line: rgba(243, 241, 240, 0.09);
+    --ink: #F3F1F0;
+    --muted: #A6A19E;
+    /* The Cut — 14px chamfer on TR + BL */
+    --cut: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+    --cut-btn: polygon(0 0, calc(100% - 9px) 0, 100% 9px, 100% 100%, 9px 100%, 0 calc(100% - 9px));
+  }
+
+  /* Light theme — red on white is the brand default; Carbon carries body copy. */
+  :root[data-theme="light"] {
+    --carbon: #FAF9F8;
+    --surface: rgba(255, 255, 255, 0.94);
+    --line: rgba(24, 20, 22, 0.10);
+    --ink: #181416;
+    --muted: #6A6462;
+  }
 
   body {
-    background: #080808;
+    background: var(--carbon);
     overflow: hidden;
     width: 100vw;
     height: 100vh;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    color: #ffffff;
+    font-family: "Roboto", system-ui, sans-serif;
+    color: var(--ink);
   }
 
   canvas {
@@ -35,39 +77,41 @@
     pointer-events: none;
   }
   #subsystem-label .sub-tag {
-    font-size: 11px;
-    font-weight: 700;
+    font-family: "Chakra Petch", sans-serif;
+    font-size: 12px;
+    font-weight: 600;
     letter-spacing: 2.5px;
     color: var(--accent);
     text-transform: uppercase;
     margin-bottom: 6px;
   }
   #subsystem-label .sub-name {
-    font-size: 32px;
+    font-family: "Chakra Petch", sans-serif;
+    font-size: 34px;
     font-weight: 700;
     color: #ffffff;
     letter-spacing: -0.5px;
     text-shadow: 0 2px 20px rgba(0,0,0,0.8);
   }
 
-  /* ── Facts panel (right side) ── */
+  /* ── Facts panel (right side) — The Cut container ── */
   #facts-panel {
     position: absolute;
     top: 50%;
     right: 32px;
     width: 300px;
     opacity: 0;
-    background: rgba(8, 8, 8, 0.88);
-    border: 1px solid rgba(255,255,255,0.07);
+    background: var(--surface);
     border-left: 3px solid var(--accent);
-    border-radius: 10px;
+    clip-path: var(--cut);
     padding: 24px 22px;
     pointer-events: none;
     backdrop-filter: blur(16px);
   }
   #facts-title {
-    font-size: 11px;
-    font-weight: 700;
+    font-family: "Chakra Petch", sans-serif;
+    font-size: 12px;
+    font-weight: 600;
     letter-spacing: 2px;
     color: var(--accent);
     text-transform: uppercase;
@@ -78,9 +122,9 @@
   }
   #facts-list li {
     font-size: 14px;
-    color: #cccccc;
+    color: var(--ink);
     padding: 7px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
+    border-bottom: 1px solid var(--line);
     line-height: 1.45;
     display: flex;
     align-items: flex-start;
@@ -102,13 +146,13 @@
     left: 0;
     right: 0;
     height: 72px;
-    background: rgba(8, 8, 8, 0.88);
-    border-top: 1px solid rgba(255,255,255,0.06);
+    background: var(--surface);
+    border-top: 1px solid var(--line);
     backdrop-filter: blur(10px);
     display: flex;
     align-items: center;
     padding: 0 20px;
-    gap: 8px;
+    gap: 10px;
     overflow-x: auto;
   }
   #sub-bar.hidden {
@@ -116,39 +160,36 @@
   }
   .sub-btn {
     height: 40px;
-    padding: 0 18px;
-    border: 1px solid rgba(255,255,255,0.11);
-    border-radius: 7px;
-    background: rgba(255,255,255,0.04);
-    color: #999999;
+    padding: 0 20px;
+    border: 1px solid var(--line);
+    clip-path: var(--cut-btn);
+    background: rgba(243, 241, 240, 0.04);
+    color: var(--muted);
+    font-family: "Chakra Petch", sans-serif;
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;
     outline: none;
-    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    transition: color 0.15s, background 0.15s;
   }
   .sub-btn:hover {
-    border-color: var(--btn-accent, #ffffff);
     color: #ffffff;
-    background: rgba(255,255,255,0.08);
+    background: rgba(243, 241, 240, 0.09);
   }
   .sub-btn.active {
-    background: var(--btn-accent, #ffffff);
-    border-color: transparent;
-    color: #000000;
+    background: var(--btn-accent, var(--accent));
+    color: #ffffff;
     font-weight: 700;
   }
   .sub-btn.reset-btn {
-    color: #555555;
-    border-color: rgba(255,255,255,0.08);
+    color: var(--muted);
     margin-right: 4px;
   }
   .sub-btn.reset-btn:hover {
-    color: #aaaaaa;
-    border-color: rgba(255,255,255,0.2);
-    background: rgba(255,255,255,0.06);
+    color: #ffffff;
+    background: rgba(243, 241, 240, 0.06);
   }
   .sub-bar-spacer { flex: 1; }
 
@@ -164,11 +205,14 @@
     pointer-events: none;
   }
   #status-overlay.hidden { display: none; }
-  #status-icon { font-size: 52px; opacity: 0.25; }
-  #status-title { font-size: 18px; font-weight: 600; color: rgba(255,255,255,0.45); }
+  #status-icon { font-size: 52px; opacity: 0.3; color: var(--accent); }
+  #status-title {
+    font-family: "Chakra Petch", sans-serif;
+    font-size: 20px; font-weight: 700; color: rgba(243,241,240,0.55);
+  }
   #status-sub {
     font-size: 13px;
-    color: rgba(255,255,255,0.22);
+    color: rgba(243,241,240,0.3);
     text-align: center;
     max-width: 320px;
     line-height: 1.55;
@@ -183,23 +227,23 @@
     align-items: center;
     justify-content: center;
     gap: 12px;
-    background: #080808;
+    background: var(--carbon);
   }
   #libs-error.visible { display: flex; }
   #libs-error p {
     font-size: 14px;
-    color: rgba(255,255,255,0.4);
+    color: rgba(243,241,240,0.45);
     text-align: center;
     max-width: 400px;
     line-height: 1.6;
   }
   #libs-error code {
-    font-family: monospace;
+    font-family: ui-monospace, monospace;
     font-size: 13px;
-    background: rgba(255,255,255,0.07);
+    background: rgba(243,241,240,0.07);
     padding: 8px 16px;
     border-radius: 5px;
-    color: #aaaaaa;
+    color: #F3F1F0;
   }
 </style>
 </head>

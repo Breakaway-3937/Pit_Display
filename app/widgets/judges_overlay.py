@@ -9,13 +9,14 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QSizePolicy
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 
+from app import brand
 from app.config import config
 from app.judges_slides import judges_slides
 
-_DARK_BG         = "#0a0a0a"
-_LIGHT_BG        = "#f2f2f7"
-_DARK_HEADER_BG  = "#111111"
-_LIGHT_HEADER_BG = "#ffffff"
+_DARK_BG         = brand.CARBON_BG
+_LIGHT_BG        = brand.N50
+_DARK_HEADER_BG  = brand.CARBON_SURF
+_LIGHT_HEADER_BG = brand.WHITE
 
 
 # ── Scaled image label ────────────────────────────────────────────────────────
@@ -85,7 +86,7 @@ class JudgesOverlay(QWidget):
         header_layout.setContentsMargins(32, 0, 32, 0)
         header_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        self._header_label = QLabel("JUDGES MODE")
+        self._header_label = QLabel("BREAKAWAY 3937  ·  JUDGING")
         self._header_label.setObjectName("section_header")
         header_layout.addWidget(self._header_label)
 
@@ -116,11 +117,11 @@ class JudgesOverlay(QWidget):
         if theme == "light":
             bg        = _LIGHT_BG
             header_bg = _LIGHT_HEADER_BG
-            hint_color = "#636366"
+            hint_color = brand.N500
         else:
             bg        = _DARK_BG
             header_bg = _DARK_HEADER_BG
-            hint_color = "#606060"
+            hint_color = brand.MUTED_DARK
 
         self.setStyleSheet(f"""
             JudgesOverlay {{
@@ -133,13 +134,15 @@ class JudgesOverlay(QWidget):
             }}
             QLabel#section_header {{
                 color: {accent};
-                font-size: 11px;
-                font-weight: 700;
+                font-family: "{brand.FONT_DISPLAY}";
+                font-size: 13px;
+                font-weight: 600;
                 letter-spacing: 2px;
             }}
             _ImageLabel {{
                 background-color: {bg};
                 color: {hint_color};
-                font-size: 14px;
+                font-family: "{brand.FONT_BODY}";
+                font-size: 15px;
             }}
         """)
