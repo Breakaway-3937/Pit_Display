@@ -201,7 +201,6 @@ _ABOUT_MISSION = (
     "Opportunity:"
 )
 # The "E's" from the team outline = Breakaway's 5 E's of Opportunity.
-_ABOUT_ES = ["Excite", "Engage", "Equip", "Empower", "Expand"]
 _ABOUT_ES_DETAIL = [
     ("Excite",  "Raise STEM awareness through events, robot demos, and partnerships."),
     ("Engage",  "Build relationships that make STEM accessible to more students."),
@@ -401,28 +400,38 @@ class InteractiveBoard(QWidget):
         config.team_changed.connect(lambda t: self.apply_team(t.primary_color))
 
     # ── Text factories (registered so they scale with the screen) ─────────
+    # Labels get NO Qt object names: the app QSS role rules (#screen_title …)
+    # carry font sizes, which override setFont() and freeze the responsive
+    # type. Colors are painted here instead, from a role resolved against the
+    # current palette ("title" | "ink" | "muted"; None = accent-managed).
 
-    def _reg(self, lbl: QLabel, base: int, weight, family: str, tracking: int = 0):
-        self._fonts.append((lbl, base, weight, family, tracking))
+    def _role_color(self, role: str) -> str:
+        return self._pal[role]
+
+    def _reg(self, lbl: QLabel, base: int, weight, family: str,
+             tracking: int = 0, role: str | None = None):
+        self._fonts.append((lbl, base, weight, family, tracking, role))
         f = QFont(family)
         f.setPixelSize(int(base * self._scale))
         f.setWeight(weight)
         if tracking:
             f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, tracking)
         lbl.setFont(f)
+        if role:
+            lbl.setStyleSheet(
+                f"color:{self._role_color(role)}; background:transparent;"
+            )
         return lbl
 
-    def _disp(self, text: str, base: int, weight=_Bold, obj: str = "") -> QLabel:
-        lbl = QLabel(text)
-        if obj:
-            lbl.setObjectName(obj)
-        return self._reg(lbl, base, weight, brand.FONT_DISPLAY)
+    def _disp(self, text: str, base: int, weight=_Bold,
+              role: str | None = None) -> QLabel:
+        return self._reg(QLabel(text), base, weight, brand.FONT_DISPLAY, role=role)
 
-    def _body(self, text: str, base: int = FS_BODY) -> QLabel:
+    def _body(self, text: str, base: int = FS_BODY,
+              role: str | None = "muted") -> QLabel:
         lbl = QLabel(text)
-        lbl.setObjectName("stat_label")
         lbl.setWordWrap(True)
-        return self._reg(lbl, base, QFont.Weight.Normal, brand.FONT_BODY)
+        return self._reg(lbl, base, QFont.Weight.Normal, brand.FONT_BODY, role=role)
 
     def _eyebrow(self, text: str, base: int = FS_EYEBROW) -> QLabel:
         lbl = QLabel(text.upper())
@@ -466,7 +475,7 @@ class InteractiveBoard(QWidget):
         bw = self._disp("BREAKAWAY", FS_WORDMARK)
         self._accent_labels.append(bw)
         bw.setStyleSheet(f"color:{self._accent}; background:transparent;")
-        num = self._disp("3937", FS_WORDMARK, obj="screen_title")
+        num = self._disp("3937", FS_WORDMARK, role="title")
         lay.addWidget(bw)
         lay.addWidget(num)
         lay.addStretch()
@@ -505,7 +514,7 @@ class InteractiveBoard(QWidget):
         self._back_btn.setFont(f)
         self._back_btn.clicked.connect(self._close_detail)
         lay.addWidget(self._back_btn)
-        self._back_title = self._disp("", FS_SECTION, obj="screen_title")
+        self._back_title = self._disp("", FS_SECTION, role="title")
         lay.addWidget(self._back_title, alignment=Qt.AlignmentFlag.AlignVCenter)
         lay.addStretch()
         return bar
@@ -527,12 +536,12 @@ class InteractiveBoard(QWidget):
     def _page(self, tab: dict) -> QWidget:
         scroll, col = self._scroll_page()
         col.addWidget(self._eyebrow(tab["eyebrow"]))
-        col.addWidget(self._disp(tab["title"], FS_PAGE_TITLE, obj="screen_title"))
+        col.addWidget(self._disp(tab["title"], FS_PAGE_TITLE, role="title"))
 
         if tab["kind"] == "about":
             self._build_about(col)
         else:
-            hint = self._body("Tap any card to learn more  ›", FS_HINT)
+            hint = self._body("Tap any card to learn more  ›", FS_HINT, role=None)
             hint.setStyleSheet(f"color:{self._accent}; background:transparent;")
             self._accent_labels.append(hint)
             col.addWidget(hint)
@@ -551,17 +560,8 @@ class InteractiveBoard(QWidget):
         m = QVBoxLayout(mission)
         m.setContentsMargins(26, 24, 26, 24)
         m.setSpacing(12)
-        m.addWidget(self._disp("Every Kid Can", FS_CARD_TITLE, obj="screen_title"))
+        m.addWidget(self._disp("Every Kid Can", FS_CARD_TITLE, role="title"))
         m.addWidget(self._body(_ABOUT_MISSION))
-
-        es_row = QHBoxLayout()
-        es_row.setSpacing(8)
-        for e in _ABOUT_ES:
-            chip = _Chip(e, self._accent, int(FS_CHIP * self._scale))
-            self._chips.append(chip)
-            es_row.addWidget(chip)
-        es_row.addStretch()
-        m.addLayout(es_row)
 
         for name, detail in _ABOUT_ES_DETAIL:
             row = QHBoxLayout()
@@ -583,19 +583,19 @@ class InteractiveBoard(QWidget):
         col.addLayout(stat_grid)
 
         # Departments — 2-column grid
-        col.addWidget(self._disp("Departments", FS_SECTION, obj="screen_title"))
+        col.addWidget(self._disp("Departments", FS_SECTION, role="title"))
         dept_grid = QGridLayout()
         dept_grid.setSpacing(10)
         for i, name in enumerate(_DEPARTMENTS):
             card = self._card()
             c = QVBoxLayout(card)
             c.setContentsMargins(18, 16, 18, 16)
-            c.addWidget(self._disp(name, FS_DEPT, weight=_Demi, obj="stat_value"))
+            c.addWidget(self._disp(name, FS_DEPT, weight=_Demi, role="ink"))
             dept_grid.addWidget(card, i // 2, i % 2)
         col.addLayout(dept_grid)
 
         # Strategic plan
-        col.addWidget(self._disp("Strategic Plan", FS_SECTION, obj="screen_title"))
+        col.addWidget(self._disp("Strategic Plan", FS_SECTION, role="title"))
         plan = self._card()
         p = QVBoxLayout(plan)
         p.setContentsMargins(26, 20, 26, 20)
@@ -617,7 +617,7 @@ class InteractiveBoard(QWidget):
         c.setSpacing(12)
 
         top = QHBoxLayout()
-        top.addWidget(self._disp(item["name"], FS_CARD_TITLE, obj="screen_title"),
+        top.addWidget(self._disp(item["name"], FS_CARD_TITLE, role="title"),
                       stretch=1)
         view = self._disp("View  ›", FS_ETAG, weight=_Demi)
         view.setStyleSheet(f"color:{self._accent}; background:transparent;")
@@ -652,7 +652,7 @@ class InteractiveBoard(QWidget):
         )
         scroll, col = self._scroll_page()
         col.addWidget(self._eyebrow(category))
-        col.addWidget(self._disp(item["name"], FS_PAGE_TITLE, obj="screen_title"))
+        col.addWidget(self._disp(item["name"], FS_PAGE_TITLE, role="title"))
         col.addWidget(self._image_block(300))
         col.addWidget(self._body(item.get("detail", item.get("blurb", "")),
                                  FS_BODY + 2))
@@ -778,7 +778,7 @@ class InteractiveBoard(QWidget):
 
     def _apply_scale(self):
         s = self._scale
-        for lbl, base, weight, family, tracking in self._fonts:
+        for lbl, base, weight, family, tracking, _role in self._fonts:
             f = QFont(family)
             f.setPixelSize(max(8, int(base * s)))
             f.setWeight(weight)
@@ -803,6 +803,11 @@ class InteractiveBoard(QWidget):
 
     def apply_theme(self, theme: str):
         self._pal = brand.palette(theme)
+        for lbl, _b, _w, _f, _t, role in self._fonts:
+            if role:
+                lbl.setStyleSheet(
+                    f"color:{self._role_color(role)}; background:transparent;"
+                )
         for card in self._cards:
             card.set_fill(self._pal["surface"])
             card.set_border(self._pal["line"])

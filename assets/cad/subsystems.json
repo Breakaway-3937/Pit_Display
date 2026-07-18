@@ -1,5 +1,6 @@
 {
   "_doc": "Season CAD config — edit each year. node_name must match the Onshape sub-assembly name exactly (case-sensitive). Reload the viewer after saving.",
   "season": "2026",
-  "subsystems": []
+  "subsystems": [],
+  "up_axis": "z"
 }

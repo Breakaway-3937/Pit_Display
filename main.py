@@ -19,18 +19,24 @@ from app.windows.presentation_b import PresentationScreenB
 from app.windows.project_screen import ProjectScreen
 
 
-def _load_fonts() -> None:
-    from PyQt6.QtGui import QFontDatabase
+def _load_fonts(app: QApplication) -> None:
+    from PyQt6.QtGui import QFont, QFontDatabase
     fonts_dir = Path(__file__).parent / "assets" / "fonts"
     for ttf in fonts_dir.glob("*.ttf"):
         QFontDatabase.addApplicationFont(str(ttf))
+    # App default font — set here, NOT via a universal QSS rule, so widgets
+    # that size their own type with setFont() (impact board, brand widgets)
+    # aren't overridden by the stylesheet.
+    default = QFont("Roboto")
+    default.setPixelSize(13)
+    app.setFont(default)
 
 
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Pit Display")
     app.setOrganizationName("FRC Pit")
-    _load_fonts()
+    _load_fonts(app)
 
     init_config()
     init_db()

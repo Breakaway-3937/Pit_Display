@@ -14,7 +14,7 @@ Usage:
 
 from PyQt6.QtWidgets import QWidget, QStackedWidget, QVBoxLayout, QLabel, QSizePolicy
 from PyQt6.QtCore import Qt, QPointF
-from PyQt6.QtGui import QPainter, QColor, QFont, QPolygonF
+from PyQt6.QtGui import QPainter, QColor, QPolygonF
 
 from app import brand
 from app.config import config
@@ -98,10 +98,9 @@ class _Slide(QWidget):
         self._title.setObjectName("screen_title")
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._title.setWordWrap(True)
-        tf = QFont(brand.FONT_DISPLAY)
-        tf.setPixelSize(46)
-        tf.setWeight(QFont.Weight.Bold)
-        self._title.setFont(tf)
+        # Own-stylesheet size wins over the app QSS #screen_title rule (22px)
+        # while family/weight/themed color still come from that rule.
+        self._title.setStyleSheet("font-size: 46px;")
         layout.addWidget(self._title)
 
         # The Break Line — one signature per slide, centered under the headline
@@ -113,9 +112,7 @@ class _Slide(QWidget):
         self._body.setObjectName("stat_label")
         self._body.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._body.setWordWrap(True)
-        bf = QFont(brand.FONT_BODY)
-        bf.setPixelSize(18)
-        self._body.setFont(bf)
+        self._body.setStyleSheet("font-size: 18px;")  # overrides #stat_label 12px
         self._body.setMaximumWidth(720)
         layout.addWidget(self._body, alignment=Qt.AlignmentFlag.AlignHCenter)
 

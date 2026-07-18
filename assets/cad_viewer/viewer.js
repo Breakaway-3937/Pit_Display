@@ -4,12 +4,17 @@
 
   // ── State ──────────────────────────────────────────────────────────────────
   var renderer, scene, camera, controls;
-  var model = null;
+  var model = null;            // the loaded gltf scene
+  var modelRoot = null;        // orientation/normalization wrapper around model
   var subsystems = [];
   var subsystemMeshMap = {};   // id → [Mesh]
   var mode = 'interactive';    // 'interactive' | 'judges'
   var focusedId = null;
   var animating = false;
+  var upAxis = 'y';            // from subsystems.json — corrects CAD exports
+  var allMeshesCache = null;   // rebuilt on (re)load; raycasting is hot
+  var materialList = [];       // unique materials — focus fades tween these
+  var needsRender = true;      // render-on-demand: skip frames when idle
 
   var defaultCamPos  = new THREE.Vector3(3, 2, 3);
   var defaultTarget  = new THREE.Vector3(0, 0, 0);
@@ -20,12 +25,19 @@
 
     var canvas = document.getElementById('c');
 
-    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer = new THREE.WebGLRenderer({
+      canvas: canvas,
+      antialias: true,
+      powerPreference: 'high-performance',
+    });
+    // Cap the pixel ratio: on 2x displays a full-DPR canvas is 4× the pixels,
+    // which large CAD models can't sustain.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setSize(window.innerWidth, window.innerHeight);
+    // Color-accurate pipeline: sRGB out, NO tone mapping — filmic curves and
+    // extra exposure shift/clip the appearance colors authored in CAD.
     renderer.outputEncoding = THREE.sRGBEncoding;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.2;
+    renderer.toneMapping = THREE.NoToneMapping;
     renderer.shadowMap.enabled = false;
 
     scene = new THREE.Scene();
@@ -33,24 +45,36 @@
 
     camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 1000);
     camera.position.copy(defaultCamPos);
+    scene.add(camera);
 
-    // Lighting
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    var key = new THREE.DirectionalLight(0xffffff, 1.4);
-    key.position.set(5, 8, 5);
-    scene.add(key);
-    var fill = new THREE.DirectionalLight(0x8899ff, 0.35);
-    fill.position.set(-5, 2, -3);
-    scene.add(fill);
-    var rim = new THREE.DirectionalLight(0xffffff, 0.4);
-    rim.position.set(0, -3, -5);
-    scene.add(rim);
+    // Neutral lighting that sums to ≈1 on a camera-facing surface, so
+    // authored colors render at their real values instead of clipping white.
+    // All lights are pure gray/white — no colored fills to shift hues.
+    scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x555555, 0.25));
+    // Headlight rides on the camera aimed at the model, so free-tumble never
+    // rotates into an unlit face.
+    var headlight = new THREE.DirectionalLight(0xffffff, 0.5);
+    headlight.position.set(0.3, 0.6, 1);
+    camera.add(headlight);
 
+    // OrbitControls handles zoom (wheel / pinch) and pan (right-drag /
+    // two-finger) only. Its turntable rotation is disabled — left-drag uses
+    // the free-tumble handler below, which has no pole limits and rotates
+    // 360° across all axes like a desktop CAD package.
     controls = new THREE.OrbitControls(camera, canvas);
     controls.enableDamping = true;
     controls.dampingFactor = 0.07;
     controls.minDistance = 0.1;
     controls.maxDistance = 100;
+    controls.enableRotate = false;
+    controls.touches = { ONE: -1, TWO: THREE.TOUCH.DOLLY_PAN };
+    controls.addEventListener('change', function () { needsRender = true; });
+
+    canvas.addEventListener('pointerdown',   onPointerDown);
+    canvas.addEventListener('pointermove',   onPointerMove);
+    canvas.addEventListener('pointerup',     onPointerUp);
+    canvas.addEventListener('pointercancel', onPointerUp);
 
     // Initial GSAP state for facts panel
     gsap.set('#facts-panel', { x: 340, opacity: 0, yPercent: -50 });
@@ -68,6 +92,7 @@
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    needsRender = true;
   }
 
   // ── Config ─────────────────────────────────────────────────────────────────
@@ -77,9 +102,23 @@
       .then(function (data) {
         if (!data) return;
         subsystems = data.subsystems || [];
+        upAxis = data.up_axis || 'y';
         buildSubBar();
       })
       .catch(function (e) { console.warn('subsystems.json load failed:', e); });
+  }
+
+  // Re-read config and re-apply orientation/subsystems without re-parsing the
+  // (potentially huge) model file.
+  function refreshConfig() {
+    return loadConfig().then(function () {
+      if (modelRoot) {
+        normalizeModel();
+        buildSubsystemMeshMap();
+        resetView();
+      }
+      needsRender = true;
+    });
   }
 
   // ── Model ──────────────────────────────────────────────────────────────────
@@ -93,8 +132,9 @@
           '/cad/robot.glb',
           onModelLoaded,
           function (prog) {
-            var pct = prog.total ? Math.round((prog.loaded / prog.total) * 100) : 0;
-            setStatusText('Loading model… ' + pct + '%');
+            var mb = (prog.loaded / 1048576).toFixed(0);
+            var pct = prog.total ? ' (' + Math.round((prog.loaded / prog.total) * 100) + '%)' : '';
+            setStatusText('Loading model… ' + mb + ' MB' + pct);
           },
           function (err) {
             console.error('GLTF error:', err);
@@ -106,39 +146,62 @@
   }
 
   function onModelLoaded(gltf) {
-    if (model) scene.remove(model);
+    if (modelRoot) scene.remove(modelRoot);
     model = gltf.scene;
-    scene.add(model);
+    modelRoot = new THREE.Group();
+    modelRoot.add(model);
+    scene.add(modelRoot);
 
-    // Normalize scale and center
-    var box = new THREE.Box3().setFromObject(model);
-    var center = box.getCenter(new THREE.Vector3());
-    var size = box.getSize(new THREE.Vector3());
-    var maxDim = Math.max(size.x, size.y, size.z);
-    var scale = 2.0 / maxDim;
+    normalizeModel();
 
-    model.scale.setScalar(scale);
-    model.position.sub(center.multiplyScalar(scale));
+    // The model never moves after normalization — freeze its (potentially
+    // thousands of) node matrices so the render loop skips recomposing them.
+    model.traverse(function (o) { o.matrixAutoUpdate = false; });
 
-    // Recompute after scale + center
-    var box2 = new THREE.Box3().setFromObject(model);
-    var center2 = box2.getCenter(new THREE.Vector3());
-    var size2 = box2.getSize(new THREE.Vector3());
-    var maxDim2 = Math.max(size2.x, size2.y, size2.z);
-
-    defaultTarget.copy(center2);
-    controls.target.copy(center2);
-
-    defaultCamPos.set(
-      center2.x + maxDim2 * 1.3,
-      center2.y + maxDim2 * 0.9,
-      center2.z + maxDim2 * 1.3
-    );
-    camera.position.copy(defaultCamPos);
-    camera.lookAt(center2);
-
+    allMeshesCache = null;
+    storeOriginalMaterials();
     buildSubsystemMeshMap();
     hideStatus();
+    needsRender = true;
+  }
+
+  // Group rotations that bring each possible CAD "up" axis to Three.js +Y.
+  var AXIS_ROTATIONS = {
+    'y':  [0, 0, 0],
+    'z':  [-Math.PI / 2, 0, 0],
+    '-z': [Math.PI / 2, 0, 0],
+    'x':  [0, 0, Math.PI / 2],
+    '-x': [0, 0, -Math.PI / 2],
+  };
+
+  // Orient (up_axis), center, and scale the model to a max dimension of 2,
+  // then park the camera at the default three-quarter view.
+  function normalizeModel() {
+    if (!modelRoot) return;
+    var rot = AXIS_ROTATIONS[upAxis] || AXIS_ROTATIONS.y;
+    modelRoot.rotation.set(rot[0], rot[1], rot[2]);
+    modelRoot.scale.setScalar(1);
+    modelRoot.position.set(0, 0, 0);
+    modelRoot.updateMatrixWorld(true);
+
+    var box = new THREE.Box3().setFromObject(modelRoot);
+    var center = box.getCenter(new THREE.Vector3());
+    var size = box.getSize(new THREE.Vector3());
+    var maxDim = Math.max(size.x, size.y, size.z) || 1;
+    var scale = 2.0 / maxDim;
+
+    modelRoot.scale.setScalar(scale);
+    modelRoot.position.copy(center.multiplyScalar(-scale));
+    modelRoot.updateMatrixWorld(true);
+
+    // Model is now centered at the origin with max dimension 2.
+    defaultTarget.set(0, 0, 0);
+    controls.target.copy(defaultTarget);
+    defaultCamPos.set(2.6, 1.8, 2.6);
+    camera.up.set(0, 1, 0);
+    camera.position.copy(defaultCamPos);
+    camera.lookAt(defaultTarget);
+    needsRender = true;
   }
 
   // ── Subsystem mesh map ─────────────────────────────────────────────────────
@@ -151,21 +214,7 @@
       model.traverse(function (obj) {
         if (obj.name === sub.node_name) {
           obj.traverse(function (child) {
-            if (child.isMesh) {
-              // Store original opacity so we can restore it
-              if (child.userData._origStored !== true) {
-                var mat = child.material;
-                if (Array.isArray(mat)) {
-                  child.userData._origOpacity = mat.map(function (m) { return m.opacity; });
-                  child.userData._origTransparent = mat.map(function (m) { return m.transparent; });
-                } else {
-                  child.userData._origOpacity = mat.opacity;
-                  child.userData._origTransparent = mat.transparent;
-                }
-                child.userData._origStored = true;
-              }
-              meshes.push(child);
-            }
+            if (child.isMesh) meshes.push(child);
           });
         }
       });
@@ -174,9 +223,119 @@
   }
 
   function getAllMeshes() {
-    var meshes = [];
-    if (model) model.traverse(function (obj) { if (obj.isMesh) meshes.push(obj); });
-    return meshes;
+    if (!allMeshesCache) {
+      allMeshesCache = [];
+      if (model) {
+        model.traverse(function (obj) {
+          if (obj.isMesh) allMeshesCache.push(obj);
+        });
+      }
+    }
+    return allMeshesCache;
+  }
+
+  // ── Materials (focus fades tween unique materials, not per-mesh) ───────────
+  function storeOriginalMaterials() {
+    materialList = [];
+    var seen = new Set();
+    getAllMeshes().forEach(function (mesh) {
+      var mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      mats.forEach(function (m) {
+        if (m && !seen.has(m)) {
+          seen.add(m);
+          m.userData._origOpacity = m.opacity;
+          m.userData._origTransparent = m.transparent;
+          // Keep the authored base color readable: without an environment
+          // map, high metalness renders near-black and low roughness throws
+          // blown-white speculars. Clamping both keeps parts looking like
+          // the color picked in CAD.
+          if (m.metalness !== undefined) m.metalness = Math.min(m.metalness, 0.4);
+          if (m.roughness !== undefined) m.roughness = Math.max(m.roughness, 0.35);
+          materialList.push(m);
+        }
+      });
+    });
+  }
+
+  function materialsOf(meshes) {
+    var s = new Set();
+    meshes.forEach(function (mesh) {
+      var mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      mats.forEach(function (m) { s.add(m); });
+    });
+    return s;
+  }
+
+  // ── Free tumble rotation (CAD-style, full 360° on all axes) ────────────────
+  var ROT_SPEED = 1.0;
+  var activePointers = 0;
+  var tumbling = false;
+  var lastPX = 0, lastPY = 0;
+  var dragDist = 0;              // suppresses the click that follows a drag
+  var tumblePivot = new THREE.Vector3();  // rotation center for current drag
+
+  // CAD convention: the rotation pivot is the point on the model under the
+  // cursor when the drag starts (empty space falls back to the view target).
+  function pickPivot(clientX, clientY) {
+    tumblePivot.copy(controls.target);
+    if (!model) return;
+    screenToNDC(clientX, clientY);
+    raycaster.setFromCamera(mouse2D, camera);
+    var hits = raycaster.intersectObjects(getAllMeshes());
+    for (var i = 0; i < hits.length; i++) {
+      // Skip parts faded out by a subsystem focus — they're invisible.
+      var mat = hits[i].object.material;
+      var op = Array.isArray(mat) ? mat[0].opacity : mat.opacity;
+      if (op >= 0.15) { tumblePivot.copy(hits[i].point); return; }
+    }
+  }
+
+  // Rotate the whole camera rig (position, target, up) around the pivot,
+  // about the camera's current screen axes. The up vector rides along, so
+  // there is no fixed "world up", no pole lock — full tumble in any
+  // direction — and the grabbed point stays put on screen.
+  function applyTumble(yaw, pitch) {
+    var upAxisV  = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+    var rightV   = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
+    var q = new THREE.Quaternion().setFromAxisAngle(upAxisV, yaw);
+    q.multiply(new THREE.Quaternion().setFromAxisAngle(rightV, pitch));
+    camera.position.sub(tumblePivot).applyQuaternion(q).add(tumblePivot);
+    controls.target.sub(tumblePivot).applyQuaternion(q).add(tumblePivot);
+    camera.up.applyQuaternion(q).normalize();
+    camera.lookAt(controls.target);
+    needsRender = true;
+  }
+
+  function onPointerDown(e) {
+    activePointers++;
+    if (activePointers > 1) { tumbling = false; return; }  // pinch → OrbitControls
+    if (!controls || !controls.enabled) return;            // judges mode
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    tumbling = true;
+    dragDist = 0;
+    pickPivot(e.clientX, e.clientY);
+    lastPX = e.clientX;
+    lastPY = e.clientY;
+    try { e.target.setPointerCapture(e.pointerId); } catch (err) { /* synthetic/expired pointer */ }
+  }
+
+  function onPointerMove(e) {
+    if (!tumbling || activePointers > 1) return;
+    var dx = e.clientX - lastPX;
+    var dy = e.clientY - lastPY;
+    lastPX = e.clientX;
+    lastPY = e.clientY;
+    dragDist += Math.abs(dx) + Math.abs(dy);
+    var h = renderer.domElement.clientHeight || 1;
+    applyTumble(
+      -2 * Math.PI * dx / h * ROT_SPEED,
+      -2 * Math.PI * dy / h * ROT_SPEED
+    );
+  }
+
+  function onPointerUp(e) {
+    activePointers = Math.max(0, activePointers - 1);
+    tumbling = false;
   }
 
   // ── Interaction ────────────────────────────────────────────────────────────
@@ -191,12 +350,14 @@
 
   function onCanvasClick(e) {
     if (mode !== 'interactive' || animating || !model) return;
+    if (dragDist > 8) return;   // was a rotate-drag, not a tap
     screenToNDC(e.clientX, e.clientY);
     pickAtPoint();
   }
 
   function onCanvasTouch(e) {
     if (mode !== 'interactive' || animating || !model) return;
+    if (dragDist > 8) return;
     if (!e.changedTouches.length) return;
     var t = e.changedTouches[0];
     screenToNDC(t.clientX, t.clientY);
@@ -238,13 +399,16 @@
     var ease        = isJudges ? 'power4.inOut' : 'power2.inOut';
     var fadeOpacity = isJudges ? 0.04 : 0.08;
 
-    var meshes    = subsystemMeshMap[id] || [];
-    var allMeshes = getAllMeshes();
+    var meshes = subsystemMeshMap[id] || [];
 
-    // Fade non-selected meshes
-    allMeshes.forEach(function (mesh) {
-      var inSub = meshes.indexOf(mesh) !== -1;
-      animateMeshOpacity(mesh, inSub ? 1.0 : fadeOpacity, fadeDur);
+    // Fade materials not used by the selected subsystem. Tweening unique
+    // materials (usually dozens) instead of every mesh (often thousands)
+    // keeps focus animations responsive on large CAD files.
+    var selected = materialsOf(meshes);
+    materialList.forEach(function (m) {
+      var target = selected.has(m) ? m.userData._origOpacity : fadeOpacity;
+      m.transparent = true;
+      gsap.to(m, { opacity: target, duration: fadeDur, ease: 'power2.inOut' });
     });
 
     // Compute camera destination
@@ -280,6 +444,8 @@
       x: camTarget.x, y: camTarget.y, z: camTarget.z,
       duration: camDuration, ease: ease
     });
+    // Presets are authored Y-up — roll the camera back upright.
+    gsap.to(camera.up, { x: 0, y: 1, z: 0, duration: camDuration, ease: ease });
 
     showSubsystemLabel(sub.display_name);
     showFactsPanel(sub);
@@ -299,8 +465,11 @@
     var dur  = isJudges ? 1.4 : 0.5;
     var ease = isJudges ? 'power3.inOut' : 'power2.out';
 
-    getAllMeshes().forEach(function (mesh) {
-      restoreMeshOpacity(mesh, 0.4);
+    materialList.forEach(function (m) {
+      gsap.to(m, {
+        opacity: m.userData._origOpacity, duration: 0.4, ease: 'power2.inOut',
+        onComplete: function () { m.transparent = m.userData._origTransparent; }
+      });
     });
 
     gsap.to(camera.position, {
@@ -312,47 +481,13 @@
       x: defaultTarget.x, y: defaultTarget.y, z: defaultTarget.z,
       duration: dur, ease: ease
     });
+    gsap.to(camera.up, { x: 0, y: 1, z: 0, duration: dur, ease: ease });
 
     hideSubsystemLabel();
     hideFactsPanel();
     updateSubBarActive(null);
 
     console.log(JSON.stringify({ type: 'view_reset' }));
-  }
-
-  // ── Mesh opacity helpers ───────────────────────────────────────────────────
-  function animateMeshOpacity(mesh, targetOpacity, duration) {
-    var mat = mesh.material;
-    if (Array.isArray(mat)) {
-      mat.forEach(function (m) {
-        m.transparent = true;
-        gsap.to(m, { opacity: targetOpacity, duration: duration, ease: 'power2.inOut' });
-      });
-    } else {
-      mat.transparent = true;
-      gsap.to(mat, { opacity: targetOpacity, duration: duration, ease: 'power2.inOut' });
-    }
-  }
-
-  function restoreMeshOpacity(mesh, duration) {
-    var mat      = mesh.material;
-    var origOp   = mesh.userData._origOpacity;
-    var origTr   = mesh.userData._origTransparent;
-    if (Array.isArray(mat)) {
-      mat.forEach(function (m, i) {
-        var o = Array.isArray(origOp) ? (origOp[i] !== undefined ? origOp[i] : 1.0) : 1.0;
-        var t = Array.isArray(origTr) ? (origTr[i] !== undefined ? origTr[i] : false) : false;
-        gsap.to(m, { opacity: o, duration: duration, ease: 'power2.inOut',
-          onComplete: function () { m.transparent = t; }
-        });
-      });
-    } else {
-      var o = (origOp !== undefined) ? origOp : 1.0;
-      var t = (origTr !== undefined) ? origTr : false;
-      gsap.to(mat, { opacity: o, duration: duration, ease: 'power2.inOut',
-        onComplete: function () { mat.transparent = t; }
-      });
-    }
   }
 
   // ── Mode ───────────────────────────────────────────────────────────────────
@@ -380,6 +515,7 @@
       document.documentElement.removeAttribute('data-theme');
     }
     if (scene) scene.background = new THREE.Color(themeBg[t]);
+    needsRender = true;
   }
 
   function setAccent(hex) {
@@ -397,9 +533,11 @@
     animating = false;
     hideSubsystemLabel();
     hideFactsPanel();
-    if (model) { scene.remove(model); model = null; }
-    getAllMeshes();
+    if (modelRoot) { scene.remove(modelRoot); modelRoot = null; model = null; }
+    allMeshesCache = null;
+    materialList = [];
     subsystemMeshMap = {};
+    needsRender = true;
     loadConfig().then(function () { loadModel(); });
   }
 
@@ -512,11 +650,25 @@
     document.getElementById('status-overlay').classList.add('hidden');
   }
 
-  // ── Render loop ────────────────────────────────────────────────────────────
+  // ── Render loop (on demand) ────────────────────────────────────────────────
+  // Only draw when the camera moved (controls.update() returns true while
+  // orbiting/damping), a GSAP tween is running, or something flagged a
+  // change. An idle 360 MB model no longer burns a core at 60 fps.
   function animate() {
     requestAnimationFrame(animate);
-    if (controls) controls.update();
-    if (renderer && scene && camera) renderer.render(scene, camera);
+    if (!renderer || !scene || !camera) return;
+    var moving = controls ? controls.update() : false;
+    if (moving || needsRender || gsap.globalTimeline.isActive()) {
+      renderer.render(scene, camera);
+      needsRender = false;
+    }
+  }
+
+  // Render one frame and return it as a PNG data-URL (the canvas has no
+  // preserveDrawingBuffer, so capture must happen right after a render).
+  function snapshot() {
+    renderer.render(scene, camera);
+    return renderer.domElement.toDataURL('image/png');
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -525,8 +677,10 @@
     resetView:      resetView,
     setMode:        setMode,
     reload:         reload,
+    refreshConfig:  refreshConfig,
     setTheme:       setTheme,
     setAccent:      setAccent,
+    snapshot:       snapshot,
   };
 
   // Boot

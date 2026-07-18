@@ -15,7 +15,7 @@ from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
     QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
     QScrollArea, QSizePolicy, QTextEdit, QVBoxLayout, QWidget,
 )
@@ -237,7 +237,8 @@ class CADSettingsPanel(QWidget):
         outer.addLayout(model_row)
 
         hint = _lbl(
-            "Export from Onshape: right-click assembly → Export → GLTF/GLB (single file, preserve hierarchy).",
+            "Export from Onshape: right-click assembly → Export → GLTF/GLB (single file, preserve hierarchy). "
+            "For faster loading, pick a coarser tessellation — fine detail balloons the file.",
             "stat_label",
         )
         hint.setWordWrap(True)
@@ -246,7 +247,7 @@ class CADSettingsPanel(QWidget):
         outer.addWidget(_divider())
         outer.addSpacing(10)
 
-        # ── Season ───────────────────────────────────────────────────────
+        # ── Season / orientation ─────────────────────────────────────────
         outer.addWidget(_lbl("Season", "screen_title"))
         outer.addSpacing(6)
 
@@ -259,6 +260,31 @@ class CADSettingsPanel(QWidget):
         season_row.addWidget(self._season_edit)
         season_row.addStretch()
         outer.addLayout(season_row)
+        outer.addSpacing(6)
+
+        axis_row = QHBoxLayout()
+        axis_row.setSpacing(10)
+        axis_row.addWidget(_lbl("Model up axis:", "stat_label"))
+        self._axis_combo = QComboBox()
+        for text, value in [
+            ("Y — glTF standard", "y"),
+            ("Z up — most CAD exports", "z"),
+            ("Z down", "-z"),
+            ("X up", "x"),
+            ("X down", "-x"),
+        ]:
+            self._axis_combo.addItem(text, userData=value)
+        axis_row.addWidget(self._axis_combo)
+        axis_row.addStretch()
+        outer.addLayout(axis_row)
+
+        axis_hint = _lbl(
+            "If the robot appears tipped on its side, pick the axis that points up "
+            "in your CAD export and Save — it re-orients instantly, no reload needed.",
+            "stat_label",
+        )
+        axis_hint.setWordWrap(True)
+        outer.addWidget(axis_hint)
         outer.addSpacing(12)
         outer.addWidget(_divider())
         outer.addSpacing(10)
@@ -318,14 +344,20 @@ class CADSettingsPanel(QWidget):
         data = cad_assets.load_config()
         self._subsystems = list(data.get("subsystems", []))
         self._season_edit.setText(str(data.get("season", "")))
+        idx = self._axis_combo.findData(data.get("up_axis", "y"))
+        if idx >= 0:
+            self._axis_combo.setCurrentIndex(idx)
         self._refresh_sub_list()
         self._refresh_model_status()
 
     def _refresh_model_status(self):
         if cad_assets.model_exists:
-            p = cad_assets.model_path
-            sz = p.stat().st_size // 1024
-            self._model_status.setText(f"✓  robot.glb  ({sz} KB)")
+            size_mb = cad_assets.model_path.stat().st_size / (1024 * 1024)
+            text = f"✓  robot.glb  ({size_mb:,.0f} MB)"
+            if size_mb > 150:
+                text += ("  —  very large; loads will be slow. Re-export with "
+                         "coarser tessellation.")
+            self._model_status.setText(text)
         else:
             self._model_status.setText("No model uploaded")
 
@@ -401,9 +433,10 @@ class CADSettingsPanel(QWidget):
     def _save(self):
         existing = cad_assets.load_config()
         existing["season"]     = self._season_edit.text().strip() or "YYYY"
+        existing["up_axis"]    = self._axis_combo.currentData()
         existing["subsystems"] = self._subsystems
         cad_assets.save_config(existing)
-        self._set_status("Config saved.")
+        self._set_status("Config saved — applied to open viewers.")
 
     def _reload_viewer(self):
         cad_assets.model_changed.emit()

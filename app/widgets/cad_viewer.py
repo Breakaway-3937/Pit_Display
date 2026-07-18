@@ -49,6 +49,8 @@ class CADViewerWidget(QWebEngineView):
         self._pending_theme: str | None = None
         self._pending_accent: str | None = None
         self.loadFinished.connect(self._on_load_finished)
+        # Saved config (subsystems, up-axis) applies live — no model re-parse.
+        cad_assets.config_changed.connect(self.refresh_config)
         self.setUrl(QUrl(cad_assets.viewer_url))
 
     def _on_load_finished(self, ok: bool):
@@ -73,6 +75,10 @@ class CADViewerWidget(QWebEngineView):
 
     def reload_model(self) -> None:
         self._js("window.cadViewer && window.cadViewer.reload()")
+
+    def refresh_config(self) -> None:
+        """Re-apply subsystems.json (orientation, subsystems) without reloading."""
+        self._js("window.cadViewer && window.cadViewer.refreshConfig()")
 
     def set_theme(self, theme: str) -> None:
         """theme: 'dark' | 'light'"""

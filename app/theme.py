@@ -18,11 +18,12 @@ def _qss(p: dict) -> str:
     """Render the shared QSS template with a brand palette bundle."""
     return f"""
     /* ── Global ─────────────────────────────────────────────────────────── */
+    /* No font rule here on purpose: a universal QSS font overrides every
+       programmatic setFont() (e.g. the impact board's responsive type).
+       The app default font is set via QApplication.setFont() in main(). */
     QWidget {{
         background-color: {p["bg"]};
         color: {p["ink"]};
-        font-family: "{brand.FONT_BODY}";
-        font-size: 13px;
     }}
     QMainWindow {{ background-color: {p["bg"]}; }}
 

@@ -2,7 +2,7 @@
 
 ## What this system does
 
-- **Project screen** — interactive 3D CAD touch display. Free orbit, tap any sub-assembly to isolate it with an animated transition and facts overlay.
+- **Project screen** — interactive 3D CAD touch display. Free 360° tumble rotation that pivots around the point you grab (like a desktop CAD package), pinch/scroll zoom, two-finger or right-drag pan; tap any sub-assembly to isolate it with an animated transition and facts overlay.
 - **Presentation A/B (judges mode)** — when the operator selects a subsystem from the control screen, both presentation screens switch to the CAD view and animate to that subsystem with cinematic timing and fact overlays.
 
 ---
@@ -22,7 +22,15 @@ uv run scripts/setup_cad_assets.py
 2. Right-click the assembly → **Export**
 3. Format: **GLTF** → check **"Export as single file (.glb)"**
 4. Check **"Export all configurations"** / **"Preserve hierarchy"** (exact option name varies by Onshape version — the goal is to keep sub-assembly names as named nodes in the output)
-5. Upload the `.glb` in the app: **Control Screen → Project → CAD Viewer Config → Upload Model (.glb)**
+5. **Choose a coarse/medium tessellation.** Fine tessellation balloons the file (hundreds of MB) and makes loading and orbiting slow. The pit display doesn't need machining-grade surfaces — coarse looks identical from a metre away.
+6. Upload the `.glb` in the app: **Control Screen → Project → CAD Viewer Config → Upload Model (.glb)**
+
+### Robot appears tipped on its side?
+
+CAD packages usually treat **Z** as up; the viewer (glTF standard) uses **Y**.
+If the robot loads lying on its back or side, set **Model up axis** in
+**CAD Viewer Config** (usually "Z up") and click **Save Config** — open viewers
+re-orient instantly, no reload needed.
 
 ### Finding your sub-assembly node names
 
