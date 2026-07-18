@@ -13,11 +13,6 @@ from app import brand
 from app.config import config
 from app.judges_slides import judges_slides
 
-_DARK_BG         = brand.CARBON_BG
-_LIGHT_BG        = brand.N50
-_DARK_HEADER_BG  = brand.CARBON_SURF
-_LIGHT_HEADER_BG = brand.WHITE
-
 
 # ── Scaled image label ────────────────────────────────────────────────────────
 
@@ -86,7 +81,7 @@ class JudgesOverlay(QWidget):
         header_layout.setContentsMargins(32, 0, 32, 0)
         header_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        self._header_label = QLabel("BREAKAWAY 3937  ·  JUDGING")
+        self._header_label = QLabel()
         self._header_label.setObjectName("section_header")
         header_layout.addWidget(self._header_label)
 
@@ -112,16 +107,15 @@ class JudgesOverlay(QWidget):
 
     def _refresh_style(self, *_):
         theme = config.screen_theme(self._screen_id) if self._screen_id else "dark"
-        accent = config.active_team.primary_color
+        pal = brand.palette(theme)
+        team = config.active_team
+        accent = team.primary_color
 
-        if theme == "light":
-            bg        = _LIGHT_BG
-            header_bg = _LIGHT_HEADER_BG
-            hint_color = brand.N500
-        else:
-            bg        = _DARK_BG
-            header_bg = _DARK_HEADER_BG
-            hint_color = brand.MUTED_DARK
+        team_label = (f"{team.name} {team.number}" if team.name
+                      else f"Team {team.number}").upper()
+        self._header_label.setText(f"{team_label}  ·  JUDGING")
+
+        bg, header_bg, hint_color = pal["bg"], pal["surface"], pal["muted"]
 
         self.setStyleSheet(f"""
             JudgesOverlay {{

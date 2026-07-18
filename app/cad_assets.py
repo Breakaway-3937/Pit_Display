@@ -22,6 +22,8 @@ from typing import Any
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from app.lazy_proxy import LazyProxy
+
 _ASSETS_DIR    = Path(__file__).parent.parent / "assets"
 _CAD_DIR       = _ASSETS_DIR / "cad"
 _SUBSYSTEMS    = _CAD_DIR / "subsystems.json"
@@ -145,31 +147,12 @@ class _CADAssets(QObject):
         self.subsystem_focused.emit(sub_id)
 
 
-# ── Lazy proxy (same pattern as config / rotation) ────────────────────────────
-
-class _Proxy:
-    _real: "_CADAssets | None" = None
-
-    def __getattr__(self, name: str):
-        if self._real is None:
-            raise RuntimeError(
-                f"cad_assets.{name} accessed before init_cad_assets() was called."
-            )
-        return getattr(self._real, name)
-
-    def __setattr__(self, name: str, value):
-        if name == "_real":
-            object.__setattr__(self, name, value)
-        else:
-            setattr(self._real, name, value)
-
-
-cad_assets: _CADAssets = _Proxy()  # type: ignore[assignment]
+cad_assets: _CADAssets = LazyProxy("cad_assets", "init_cad_assets")  # type: ignore[assignment]
 
 
 def init_cad_assets() -> _CADAssets:
     """Call once in main() after init_config()."""
     real = _CADAssets()
-    cad_assets._real = real  # type: ignore[attr-defined]
+    cad_assets._install(real)
     real.start_server()
     return real

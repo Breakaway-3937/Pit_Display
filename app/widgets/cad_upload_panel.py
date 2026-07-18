@@ -22,22 +22,7 @@ from PyQt6.QtWidgets import (
 
 from app import brand
 from app.cad_assets import cad_assets
-from app.config import config
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _lbl(text: str, obj_name: str = "") -> QLabel:
-    lbl = QLabel(text)
-    if obj_name:
-        lbl.setObjectName(obj_name)
-    return lbl
-
-
-def _divider() -> QFrame:
-    f = QFrame()
-    f.setFrameShape(QFrame.Shape.HLine)
-    return f
+from app.widgets.helpers import clear_layout, divider as _divider, label as _lbl
 
 
 def _slug(text: str) -> str:
@@ -222,7 +207,6 @@ class CADSettingsPanel(QWidget):
         self._load()
         cad_assets.config_changed.connect(self._load)
         cad_assets.model_changed.connect(self._refresh_model_status)
-        config.team_changed.connect(self._on_team_changed)
 
     # ── Build UI ──────────────────────────────────────────────────────────
 
@@ -346,10 +330,7 @@ class CADSettingsPanel(QWidget):
             self._model_status.setText("No model uploaded")
 
     def _refresh_sub_list(self):
-        while self._sub_list_layout.count():
-            item = self._sub_list_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        clear_layout(self._sub_list_layout)
 
         if not self._subsystems:
             self._sub_list_layout.addWidget(
@@ -425,12 +406,8 @@ class CADSettingsPanel(QWidget):
         self._set_status("Config saved.")
 
     def _reload_viewer(self):
-        from app.cad_assets import cad_assets as _ca
-        _ca.model_changed.emit()
+        cad_assets.model_changed.emit()
         self._set_status("Reload signal sent to viewers.")
 
     def _set_status(self, msg: str):
         self._status_lbl.setText(msg)
-
-    def _on_team_changed(self, _team):
-        pass

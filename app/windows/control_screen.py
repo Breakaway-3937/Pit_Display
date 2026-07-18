@@ -20,52 +20,17 @@ from PyQt6.QtGui import QPixmap
 
 from app import brand
 from app.cad_assets import cad_assets
-from app.config import config, SCREENS, MODES
+from app.config import config, MODES, MODE_LABELS, SCREENS, SCREEN_LABELS
 from app.judges_slides import judges_slides
 from app.teams import all_teams
+from app.theme import apply_theme
 from app.widgets.brand_widgets import ChamferButton, ChamferFrame, eyebrow
+from app.widgets.cad_upload_panel import CADSettingsPanel
+from app.widgets.helpers import clear_layout, divider, label
 from app.widgets.toggle_switch import ToggleSwitch
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _label(text: str, obj_name: str = "", align=Qt.AlignmentFlag.AlignLeft) -> QLabel:
-    lbl = QLabel(text)
-    lbl.setAlignment(align)
-    if obj_name:
-        lbl.setObjectName(obj_name)
-    return lbl
-
-
-def _panel(obj_name: str = "panel") -> QFrame:
-    f = QFrame()
-    f.setObjectName(obj_name)
-    f.setFrameShape(QFrame.Shape.StyledPanel)
-    return f
-
-
-def _divider() -> QFrame:
-    line = QFrame()
-    line.setFrameShape(QFrame.Shape.HLine)
-    return line
-
-
-SCREEN_LABELS = {
-    "presentation_a": "Presentation A",
-    "presentation_b": "Presentation B",
-    "project":        "Project",
-    "control":        "Control",
-}
-
-
 # ── Mode button ──────────────────────────────────────────────────────────────
-
-MODE_LABELS = {
-    "standard": "Standard",
-    "judges":   "Judges",
-    "lunch":    "Lunch",
-}
-
 
 class ModeButton(ChamferButton):
     """
@@ -87,9 +52,6 @@ class ModeButton(ChamferButton):
         f.setPixelSize(15)
         self.setFont(f)
 
-    def update_color(self, hex_color: str):
-        self.set_accent(hex_color)
-
 
 # ── Screen card (sidebar row) ─────────────────────────────────────────────────
 
@@ -108,8 +70,7 @@ class ScreenCard(QFrame):
         super().__init__()
         self.screen_id = screen_id
         self._active = False
-        self._base_style = ""
-        self._active_style = ""
+        self._team_color = team_color
         self._build(team_color)
 
     def _build(self, team_color: str):
@@ -139,107 +100,52 @@ class ScreenCard(QFrame):
             )
             row.addWidget(self._toggle, alignment=Qt.AlignmentFlag.AlignVCenter)
         else:
-            always_on = _label("Always On", "stat_label")
+            always_on = label("Always On", "stat_label")
             always_on.setStyleSheet(f"color: {brand.STATUS_ONLINE}; font-size: 11px;")
             row.addWidget(always_on, alignment=Qt.AlignmentFlag.AlignVCenter)
             self._toggle = None
 
-        self._refresh_style()
+        self._apply_style()
 
     def set_active(self, active: bool):
         self._active = active
-        self._refresh_style()
-
-    def update_team_color(self, hex_color: str):
-        if self._toggle:
-            self._toggle.set_color_on(hex_color)
-        self._refresh_style()
-
-    def _refresh_style(self):
-        border_color = "#888888" if not self._active else "#current_team"
-        # Will be overridden by set_team_color; default to visible highlight
-        name_style_active = """
-            QPushButton {
-                background-color: #1e1e1e;
-                color: #ffffff;
-                border: none;
-                border-left: 3px solid %(color)s;
-                border-radius: 0;
-                text-align: left;
-                padding-left: 16px;
-                font-size: 14px;
-                font-weight: 600;
-            }
-        """
-        name_style_inactive = f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {brand.MUTED_DARK};
-                border: none;
-                border-left: 3px solid transparent;
-                border-radius: 0;
-                text-align: left;
-                padding-left: 16px;
-                font-family: "{brand.FONT_DISPLAY}";
-                font-size: 15px;
-                font-weight: 500;
-            }}
-            QPushButton:hover {{
-                background-color: {brand.CARBON_SURF};
-                color: {brand.INK_DARK};
-            }}
-        """
-        # Store color for apply later
-        self._active_style = name_style_active
-        if self._active:
-            self._name_btn.setStyleSheet(name_style_inactive)  # reset first
-            # Applied properly via apply_team_color
-        else:
-            self._name_btn.setStyleSheet(name_style_inactive)
+        self._apply_style()
 
     def apply_team_color(self, hex_color: str):
-        if self._active:
-            self._name_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {brand.CARBON_SURF};
-                    color: #FFFFFF;
-                    border: none;
-                    border-left: 3px solid {hex_color};
-                    border-radius: 0;
-                    text-align: left;
-                    padding-left: 16px;
-                    font-family: "{brand.FONT_DISPLAY}";
-                    font-size: 15px;
-                    font-weight: 600;
-                }}
-            """)
-        else:
-            self._name_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: transparent;
-                    color: {brand.MUTED_DARK};
-                    border: none;
-                    border-left: 3px solid transparent;
-                    border-radius: 0;
-                    text-align: left;
-                    padding-left: 16px;
-                    font-family: "{brand.FONT_DISPLAY}";
-                    font-size: 15px;
-                    font-weight: 500;
-                }}
-                QPushButton:hover {{
-                    background-color: {brand.CARBON_SURF};
-                    color: {brand.INK_DARK};
-                }}
-            """)
+        self._team_color = hex_color
         if self._toggle:
             self._toggle.set_color_on(hex_color)
+        self._apply_style()
+
+    def _apply_style(self):
+        base = (
+            "border: none; border-radius: 0; text-align: left; padding-left: 16px;"
+            f' font-family: "{brand.FONT_DISPLAY}"; font-size: 15px;'
+        )
+        if self._active:
+            qss = f"""
+                QPushButton {{ {base}
+                    background-color: {brand.CARBON_SURF}; color: {brand.WHITE};
+                    border-left: 3px solid {self._team_color}; font-weight: 600;
+                }}
+            """
+        else:
+            qss = f"""
+                QPushButton {{ {base}
+                    background-color: transparent; color: {brand.MUTED_DARK};
+                    border-left: 3px solid transparent; font-weight: 500;
+                }}
+                QPushButton:hover {{
+                    background-color: {brand.CARBON_SURF}; color: {brand.INK_DARK};
+                }}
+            """
+        self._name_btn.setStyleSheet(qss)
 
 
 # ── Setting row ───────────────────────────────────────────────────────────────
 
 class SettingRow(QWidget):
-    def __init__(self, label: str, description: str, control: QWidget):
+    def __init__(self, label_text: str, description: str, control: QWidget):
         super().__init__()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 8, 0, 8)
@@ -247,9 +153,9 @@ class SettingRow(QWidget):
 
         text_col = QVBoxLayout()
         text_col.setSpacing(2)
-        text_col.addWidget(_label(label, "stat_value"))
+        text_col.addWidget(label(label_text, "stat_value"))
         if description:
-            desc = _label(description, "stat_label")
+            desc = label(description, "stat_label")
             desc.setWordWrap(True)
             text_col.addWidget(desc)
         layout.addLayout(text_col, stretch=1)
@@ -326,7 +232,7 @@ class _SlidePicker(QWidget):
         outer.setSpacing(6)
 
         # Folder path hint so students know where to drop files
-        hint = _label("Drop images in:  assets/judges_slides/", "stat_label")
+        hint = label("Drop images in:  assets/judges_slides/", "stat_label")
         hint.setStyleSheet("font-family: Roboto; font-size: 11px;")
         outer.addWidget(hint)
 
@@ -358,7 +264,7 @@ class _SlidePicker(QWidget):
         self._prev_btn.clicked.connect(judges_slides.prev)
         nav_row.addWidget(self._prev_btn)
 
-        self._counter_lbl = _label("— / —", "stat_label", Qt.AlignmentFlag.AlignCenter)
+        self._counter_lbl = label("— / —", "stat_label", Qt.AlignmentFlag.AlignCenter)
         nav_row.addWidget(self._counter_lbl, stretch=1)
 
         self._next_btn = QPushButton("Next  ▶")
@@ -375,15 +281,14 @@ class _SlidePicker(QWidget):
     # ── Rebuild from disk ─────────────────────────────────────────────────
 
     def _rebuild(self):
-        while self._thumb_layout.count():
-            item = self._thumb_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        clear_layout(self._thumb_layout)
         self._thumbs.clear()
 
         paths = judges_slides.paths
         if not paths:
-            self._thumb_layout.addWidget(_label("No images found — add files and click Reload", "stat_label"))
+            self._thumb_layout.addWidget(
+                label("No images found — add files and click Reload", "stat_label")
+            )
         else:
             for i, path in enumerate(paths):
                 thumb = _Thumbnail(i, path)
@@ -434,7 +339,7 @@ class _CADJudgesPicker(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(6)
 
-        hint = _label("Subsystems map to Onshape node names in assets/cad/subsystems.json.", "stat_label")
+        hint = label("Subsystems map to Onshape node names in assets/cad/subsystems.json.", "stat_label")
         hint.setWordWrap(True)
         outer.addWidget(hint)
 
@@ -461,10 +366,7 @@ class _CADJudgesPicker(QWidget):
         outer.addWidget(nav)
 
     def _rebuild(self):
-        while self._btn_layout.count():
-            item = self._btn_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        clear_layout(self._btn_layout)
         self._sub_btns.clear()
 
         cfg = cad_assets.load_config()
@@ -472,7 +374,7 @@ class _CADJudgesPicker(QWidget):
 
         if not subs:
             self._btn_layout.addWidget(
-                _label("No subsystems configured — add them in the Project panel.", "stat_label")
+                label("No subsystems configured — add them in the Project panel.", "stat_label")
             )
             return
 
@@ -519,123 +421,112 @@ class ScreenSettingsPanel(QWidget):
     def __init__(self, screen_id: str):
         super().__init__()
         self._screen_id = screen_id
+        self._team_toggles: list[ToggleSwitch] = []
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 20, 24, 20)
         outer.setSpacing(4)
 
-        outer.addWidget(_label(
+        outer.addWidget(label(
             SCREEN_LABELS.get(screen_id, screen_id).upper(), "section_header"
         ))
-        outer.addWidget(_label(
+        outer.addWidget(label(
             f"Configure settings for the {SCREEN_LABELS.get(screen_id, screen_id)} screen.",
             "stat_label",
         ))
         outer.addSpacing(12)
-        outer.addWidget(_divider())
+        outer.addWidget(divider())
         outer.addSpacing(12)
 
         # ── Appearance ────────────────────────────────────────────────────
-        outer.addWidget(_label("Appearance", "screen_title"))
+        outer.addWidget(label("Appearance", "screen_title"))
         outer.addSpacing(8)
 
-        self._theme_toggle = ToggleSwitch(
-            color_on=config.active_team.primary_color
+        light = config.screen_theme(screen_id) == "light"
+        self._theme_toggle, self._theme_label, theme_row = self._labeled_toggle(
+            checked=light, text="Light" if light else "Dark",
         )
-        current_theme = config.screen_theme(screen_id)
-        self._theme_toggle.setChecked(current_theme == "light")
         self._theme_toggle.toggled.connect(self._on_theme_toggled)
 
-        self._theme_label = _label(
-            "Light" if current_theme == "light" else "Dark", "stat_value"
-        )
-
-        toggle_row_widget = QWidget()
-        toggle_row_layout = QHBoxLayout(toggle_row_widget)
-        toggle_row_layout.setContentsMargins(0, 0, 0, 0)
-        toggle_row_layout.addWidget(self._theme_toggle)
-        toggle_row_layout.addSpacing(10)
-        toggle_row_layout.addWidget(self._theme_label)
-        toggle_row_layout.addStretch()
-
         outer.addWidget(SettingRow(
-            label="Dark / Light Mode",
+            label_text="Dark / Light Mode",
             description="Switch this screen between dark and light display themes.",
-            control=toggle_row_widget,
+            control=theme_row,
         ))
 
-        outer.addWidget(_divider())
+        outer.addWidget(divider())
         outer.addSpacing(12)
 
         # Judges content — only relevant for presentation screens
         if screen_id in ("presentation_a", "presentation_b"):
-            outer.addWidget(_label("Judges Slides", "screen_title"))
+            outer.addWidget(label("Judges Slides", "screen_title"))
             outer.addSpacing(8)
             outer.addWidget(_SlidePicker())
             outer.addSpacing(16)
 
-            outer.addWidget(_divider())
+            outer.addWidget(divider())
             outer.addSpacing(12)
 
-            outer.addWidget(_label("Judges CAD", "screen_title"))
+            outer.addWidget(label("Judges CAD", "screen_title"))
             outer.addSpacing(8)
             outer.addWidget(_CADJudgesPicker())
             outer.addSpacing(12)
 
         # Project screen: pick which interactive view is shown, then CAD config.
         if screen_id == "project":
-            outer.addWidget(_label("Display Content", "screen_title"))
+            outer.addWidget(label("Display Content", "screen_title"))
             outer.addSpacing(8)
 
-            self._content_toggle = ToggleSwitch(
-                color_on=config.active_team.primary_color
+            board = config.get(screen_id, "content", "cad") == "board"
+            self._content_toggle, self._content_label, content_row = self._labeled_toggle(
+                checked=board, text="Impact Board" if board else "CAD Viewer",
             )
-            current_content = config.get(screen_id, "content", "cad")
-            self._content_toggle.setChecked(current_content == "board")
             self._content_toggle.toggled.connect(self._on_content_toggled)
 
-            self._content_label = _label(
-                "Impact Board" if current_content == "board" else "CAD Viewer",
-                "stat_value",
-            )
-            content_row = QWidget()
-            content_row_layout = QHBoxLayout(content_row)
-            content_row_layout.setContentsMargins(0, 0, 0, 0)
-            content_row_layout.addWidget(self._content_toggle)
-            content_row_layout.addSpacing(10)
-            content_row_layout.addWidget(self._content_label)
-            content_row_layout.addStretch()
-
             outer.addWidget(SettingRow(
-                label="CAD Viewer / Impact Board",
+                label_text="CAD Viewer / Impact Board",
                 description="Choose what the project touchscreen shows.",
                 control=content_row,
             ))
 
-            outer.addWidget(_divider())
+            outer.addWidget(divider())
             outer.addSpacing(12)
-            outer.addWidget(_label("CAD Viewer Config", "screen_title"))
+            outer.addWidget(label("CAD Viewer Config", "screen_title"))
             outer.addSpacing(8)
-            from app.widgets.cad_upload_panel import CADSettingsPanel
             outer.addWidget(CADSettingsPanel(), stretch=1)
 
         outer.addStretch()
 
         config.team_changed.connect(self._on_team_changed)
 
+    def _labeled_toggle(self, checked: bool, text: str) -> tuple[ToggleSwitch, QLabel, QWidget]:
+        """A team-colored ToggleSwitch with a state label beside it."""
+        toggle = ToggleSwitch(color_on=config.active_team.primary_color)
+        toggle.setChecked(checked)
+        self._team_toggles.append(toggle)
+
+        state_lbl = label(text, "stat_value")
+
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.addWidget(toggle)
+        row_layout.addSpacing(10)
+        row_layout.addWidget(state_lbl)
+        row_layout.addStretch()
+        return toggle, state_lbl, row
+
     def _on_theme_toggled(self, light: bool):
-        theme = "light" if light else "dark"
         self._theme_label.setText("Light" if light else "Dark")
-        config.set(self._screen_id, "theme", theme)
+        config.set(self._screen_id, "theme", "light" if light else "dark")
 
     def _on_content_toggled(self, board: bool):
         self._content_label.setText("Impact Board" if board else "CAD Viewer")
         config.set(self._screen_id, "content", "board" if board else "cad")
 
     def _on_team_changed(self, team):
-        self._theme_toggle.set_color_on(team.primary_color)
-        if hasattr(self, "_content_toggle"):
-            self._content_toggle.set_color_on(team.primary_color)
+        for toggle in self._team_toggles:
+            toggle.set_color_on(team.primary_color)
 
 
 # ── Control screen ────────────────────────────────────────────────────────────
@@ -698,8 +589,8 @@ class ControlScreen(QMainWindow):
         self._brand_chip.setFixedSize(58, 44)
         chip_l = QVBoxLayout(self._brand_chip)
         chip_l.setContentsMargins(0, 0, 0, 0)
-        self._chip_num = _label(str(config.active_team.number), "",
-                                Qt.AlignmentFlag.AlignCenter)
+        self._chip_num = label(str(config.active_team.number), "",
+                               Qt.AlignmentFlag.AlignCenter)
         self._chip_num.setStyleSheet(
             f'color: #FFFFFF; background: transparent;'
             f' font-family: "{brand.FONT_DISPLAY}"; font-size: 17px; font-weight: 700;'
@@ -710,7 +601,7 @@ class ControlScreen(QMainWindow):
         title_col = QVBoxLayout()
         title_col.setSpacing(0)
         self._title_label = eyebrow("Pit Display")
-        wordmark = _label("BREAKAWAY", "screen_title")
+        wordmark = label("BREAKAWAY", "screen_title")
         wordmark.setStyleSheet(
             f'color: #FFFFFF; background: transparent;'
             f' font-family: "{brand.FONT_DISPLAY}"; font-size: 20px;'
@@ -812,7 +703,6 @@ class ControlScreen(QMainWindow):
             panel.setVisible(sid == screen_id)
         for sid, card in self._screen_cards.items():
             card.set_active(sid == screen_id)
-            card.apply_team_color(config.active_team.primary_color)
 
     def _on_power_toggled(self, screen_id: str, on: bool):
         window = self._managed_windows.get(screen_id)
@@ -839,7 +729,7 @@ class ControlScreen(QMainWindow):
         self._chip_num.setText(str(team.number))
         # Mode buttons recolor
         for btn in self._mode_buttons.values():
-            btn.update_color(team.primary_color)
+            btn.set_accent(team.primary_color)
         # Sidebar cards recolor
         for card in self._screen_cards.values():
             card.apply_team_color(team.primary_color)
@@ -852,10 +742,7 @@ class ControlScreen(QMainWindow):
                 break
 
     def _on_screen_setting_changed(self, screen_id: str, key: str, value):
-        if key != "theme":
-            return
-        window = self._managed_windows.get(screen_id)
-        if window is None:
-            return
-        from app.theme import apply_theme
-        apply_theme(window, value)
+        # Managed windows subscribe to this signal themselves; the control
+        # window is the only one nobody else re-themes.
+        if screen_id == "control" and key == "theme":
+            apply_theme(self, value)

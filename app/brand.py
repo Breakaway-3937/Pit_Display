@@ -73,26 +73,43 @@ def cut_polygon(w: int, h: int, cut: int = CUT_MEDIUM):
 
 
 # ── Palette bundles (theme-aware) ───────────────────────────────────────────
-# Screens read the right bundle by theme name. Keeps light/dark parity in sync.
+# Screens read the right bundle by theme name, and app.theme renders both QSS
+# stylesheets from these — one template, light/dark parity guaranteed.
 
 DARK = {
-    "bg":       CARBON_BG,
-    "surface":  CARBON_SURF,
-    "surface2": CARBON_SURF2,
-    "line":     CARBON_LINE,
-    "ink":      INK_DARK,
-    "muted":    MUTED_DARK,
-    "faint":    FAINT_DARK,
+    "bg":           CARBON_BG,
+    "surface":      CARBON_SURF,
+    "surface2":     CARBON_SURF2,
+    "line":         CARBON_LINE,
+    "ink":          INK_DARK,
+    "muted":        MUTED_DARK,
+    "faint":        FAINT_DARK,
+    "title":        WHITE,          # headline ink (brighter than body on dark)
+    "input_bg":     CARBON_SURF2,
+    "input_border": CARBON_LINE,
+    "hover_border": "#443F3D",
+    "control_hover":   "#322D31",
+    "control_pressed": CARBON_SURF,
+    "scroll_handle":       "#443F3D",
+    "scroll_handle_hover": "#6A6462",
 }
 
 LIGHT = {
-    "bg":       N50,
-    "surface":  WHITE,
-    "surface2": N100,
-    "line":     N200,
-    "ink":      CARBON,
-    "muted":    N500,
-    "faint":    N400,
+    "bg":           N50,
+    "surface":      WHITE,
+    "surface2":     N100,
+    "line":         N200,
+    "ink":          CARBON,
+    "muted":        N500,
+    "faint":        N400,
+    "title":        CARBON,
+    "input_bg":     WHITE,
+    "input_border": N300,
+    "hover_border": N400,
+    "control_hover":   N200,
+    "control_pressed": N300,
+    "scroll_handle":       N300,
+    "scroll_handle_hover": N400,
 }
 
 

@@ -31,6 +31,8 @@ import sqlite3
 from pathlib import Path
 from typing import Callable
 
+from app.lazy_proxy import LazyProxy
+
 _DB_PATH = Path(__file__).parent.parent.parent / "data" / "pit_display.db"
 
 _MIGRATIONS: list[Callable[[sqlite3.Connection], None]] = []
@@ -95,27 +97,7 @@ class _Database:
         self._conn.close()
 
 
-# ── Lazy proxy (mirrors app.config pattern) ───────────────────────────────────
-
-class _Proxy:
-    _real: "_Database | None" = None
-
-    def __getattr__(self, name: str):
-        if self._real is None:
-            raise RuntimeError(
-                f"db.{name} accessed before init_db() was called. "
-                "Call init_db() in main() after init_config()."
-            )
-        return getattr(self._real, name)
-
-    def __setattr__(self, name: str, value):
-        if name == "_real":
-            object.__setattr__(self, name, value)
-        else:
-            setattr(self._real, name, value)
-
-
-db: _Database = _Proxy()  # type: ignore[assignment]
+db: _Database = LazyProxy("db", "init_db")  # type: ignore[assignment]
 
 
 def init_db(path: Path | None = None) -> _Database:
@@ -124,5 +106,5 @@ def init_db(path: Path | None = None) -> _Database:
     Pass path to override the default location (useful in tests).
     """
     real = _Database(path or _DB_PATH)
-    db._real = real  # type: ignore[attr-defined]
+    db._install(real)
     return real

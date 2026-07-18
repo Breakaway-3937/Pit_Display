@@ -8,12 +8,12 @@ from the live widget dimensions every frame, guaranteed to fill the screen.
 """
 
 from pathlib import Path
-from typing import Optional
 
 from PyQt6.QtWidgets import QWidget, QSizePolicy
-from PyQt6.QtCore import Qt, QRect
+from PyQt6.QtCore import Qt, QPoint, QRect
 from PyQt6.QtGui import (
-    QPainter, QPixmap, QFont, QFontMetrics, QColor, QPen, QResizeEvent, QShowEvent,
+    QPainter, QPixmap, QFont, QFontMetrics, QColor, QPen, QPolygon,
+    QResizeEvent, QShowEvent,
 )
 
 from app import brand
@@ -22,7 +22,6 @@ from app.config import config
 _LOGO_DIR   = Path(__file__).parent.parent.parent / "assets" / "logos"
 _LOGO_NAMES = ["2026 Wordmark.png", "breakaway_logo.png", "breakaway_logo.jpg"]
 
-_EYEBROW  = "BREAKAWAY 3937"
 _HEADLINE = "We'll Be Right Back"
 _SUB      = "Our team is on a lunch break and will return shortly.\nThank you for stopping by our pit!"
 
@@ -34,24 +33,8 @@ _HEADLINE_H_FRAC  = 0.20
 _SUB_Y_FRAC       = 0.64
 _SUB_H_FRAC       = 0.22
 
-# Dark / light color palettes — Breakaway brand tokens
-_DARK = {
-    "bg":           brand.CARBON_BG,
-    "headline":     brand.WHITE,
-    "sub":          brand.MUTED_DARK,
-    "ph_border":    brand.CARBON_LINE,
-    "ph_fill":      brand.CARBON_SURF,
-}
-_LIGHT = {
-    "bg":           brand.N50,
-    "headline":     brand.CARBON,
-    "sub":          brand.N500,
-    "ph_border":    brand.N200,
-    "ph_fill":      brand.WHITE,
-}
 
-
-def _find_logo() -> Optional[Path]:
+def _find_logo() -> Path | None:
     for name in _LOGO_NAMES:
         p = _LOGO_DIR / name
         if p.exists():
@@ -89,7 +72,7 @@ class LunchOverlay(QWidget):
         self._screen_id = screen_id
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
-        self._logo_pixmap: Optional[QPixmap] = None
+        self._logo_pixmap: QPixmap | None = None
         self._load_logo()
         config.team_changed.connect(self.update)
         config.screen_setting_changed.connect(self._on_setting_changed)
@@ -118,7 +101,8 @@ class LunchOverlay(QWidget):
         w, h = self.width(), self.height()
 
         theme = config.screen_theme(self._screen_id) if self._screen_id else "dark"
-        pal = _LIGHT if theme == "light" else _DARK
+        pal = brand.palette(theme)
+        headline_color = brand.WHITE if theme != "light" else pal["ink"]
 
         # Background
         p.fillRect(0, 0, w, h, QColor(pal["bg"]))
@@ -135,14 +119,17 @@ class LunchOverlay(QWidget):
             ly = int(h * 0.06)
             p.drawPixmap(lx, ly, scaled)
         else:
-            p.setPen(QPen(QColor(pal["ph_border"]), 2, Qt.PenStyle.DashLine))
-            p.setBrush(QColor(pal["ph_fill"]))
+            p.setPen(QPen(QColor(pal["line"]), 2, Qt.PenStyle.DashLine))
+            p.setBrush(QColor(pal["surface"]))
             logo_max_w = min(700, w - 160)
             pr = QRect((w - logo_max_w) // 2, int(h * 0.06), logo_max_w, logo_h)
             p.drawRoundedRect(pr, 12, 12)
 
         # ── Eyebrow (Chakra Petch, tracked caps, team red) ────────────────
-        accent = QColor(config.active_team.primary_color)
+        team = config.active_team
+        eyebrow = (f"{team.name} {team.number}" if team.name
+                   else f"Team {team.number}").upper()
+        accent = QColor(team.primary_color)
         eb_font = _font(max(12, int(h * 0.028)), QFont.Weight.DemiBold, brand.FONT_DISPLAY)
         eb_font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 130)
         p.setFont(eb_font)
@@ -150,7 +137,7 @@ class LunchOverlay(QWidget):
         p.drawText(
             QRect(40, int(h * (_DIVIDER_Y_FRAC - 0.055)), w - 80, int(h * 0.05)),
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-            _EYEBROW,
+            eyebrow,
         )
 
         # ── Accent divider — The Cut chamfered bar ────────────────────────
@@ -159,8 +146,6 @@ class LunchOverlay(QWidget):
         dx = (w - div_w) // 2
         dy = int(h * _DIVIDER_Y_FRAC)
         cut = min(div_bar_h * 2, 14)
-        from PyQt6.QtGui import QPolygon
-        from PyQt6.QtCore import QPoint
         bar = QPolygon([
             QPoint(dx, dy),
             QPoint(dx + div_w - cut, dy),
@@ -187,13 +172,13 @@ class LunchOverlay(QWidget):
             headline_rect.height(),
         )
         p.setFont(headline_font)
-        p.setPen(QColor(pal["headline"]))
+        p.setPen(QColor(headline_color))
         p.drawText(headline_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, _HEADLINE)
 
         # ── Sub-line ─────────────────────────────────────────────────────
         sub_px = min(int(h * 0.055), int((w - 160) // 38))
         p.setFont(_font(max(8, sub_px)))
-        p.setPen(QColor(pal["sub"]))
+        p.setPen(QColor(pal["muted"]))
         sub_rect = QRect(
             80,
             int(h * _SUB_Y_FRAC),

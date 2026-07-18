@@ -13,7 +13,7 @@ Subclasses provide `SCREEN_ID` and `SLIDES`.
 from PyQt6.QtWidgets import QMainWindow, QStackedWidget
 
 from app.cad_assets import cad_assets
-from app.config import config
+from app.config import config, SCREEN_LABELS
 from app.rotation import rotation
 from app.theme import apply_theme
 from app.widgets.cad_viewer import CADViewerWidget
@@ -35,7 +35,9 @@ class PresentationScreen(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"Pit Display — {self.SCREEN_ID}")
+        self.setWindowTitle(
+            f"Pit Display — {SCREEN_LABELS.get(self.SCREEN_ID, self.SCREEN_ID)}"
+        )
         self.setMinimumSize(320, 240)
         self._build_ui()
 

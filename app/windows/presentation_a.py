@@ -25,7 +25,3 @@ class PresentationScreenA(PresentationScreen):
             "Questions about FRC, engineering, or our robot? We've got answers.",
         ),
     ]
-
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Pit Display — Presentation A")

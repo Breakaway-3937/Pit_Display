@@ -12,6 +12,7 @@ from app.config import init_config
 from app.db import init_db
 from app.judges_slides import init_judges_slides
 from app.rotation import init_rotation
+from app.theme import dark_qss
 from app.windows.control_screen import ControlScreen
 from app.windows.presentation_a import PresentationScreenA
 from app.windows.presentation_b import PresentationScreenB
@@ -25,12 +26,6 @@ def _load_fonts() -> None:
         QFontDatabase.addApplicationFont(str(ttf))
 
 
-def _load_stylesheet(app: QApplication) -> None:
-    qss = Path(__file__).parent / "assets" / "styles.qss"
-    if qss.exists():
-        app.setStyleSheet(qss.read_text())
-
-
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Pit Display")
@@ -42,7 +37,7 @@ def main():
     init_rotation()
     init_judges_slides()
     init_cad_assets()
-    _load_stylesheet(app)
+    app.setStyleSheet(dark_qss())
 
     # Create all windows — only control is shown on boot
     control = ControlScreen()

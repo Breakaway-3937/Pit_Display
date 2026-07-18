@@ -13,6 +13,8 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QPixmap
 
+from app.lazy_proxy import LazyProxy
+
 SLIDES_DIR = Path(__file__).parent.parent / "assets" / "judges_slides"
 _EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif"}
 
@@ -84,30 +86,13 @@ class JudgesSlideManager(QObject):
         return QPixmap(str(self._paths[index]))
 
 
-# ── Lazy proxy ────────────────────────────────────────────────────────────────
-
-class _Proxy:
-    _real: "JudgesSlideManager | None" = None
-
-    def __getattr__(self, name: str):
-        if self._real is None:
-            raise RuntimeError(
-                f"judges_slides.{name} accessed before init_judges_slides()."
-            )
-        return getattr(self._real, name)
-
-    def __setattr__(self, name: str, value):
-        if name == "_real":
-            object.__setattr__(self, name, value)
-        else:
-            setattr(self._real, name, value)
-
-
-judges_slides: JudgesSlideManager = _Proxy()  # type: ignore[assignment]
+judges_slides: JudgesSlideManager = LazyProxy(
+    "judges_slides", "init_judges_slides"
+)  # type: ignore[assignment]
 
 
 def init_judges_slides() -> JudgesSlideManager:
     """Call once in main(), after init_config()."""
     real = JudgesSlideManager()
-    judges_slides._real = real  # type: ignore[attr-defined]
+    judges_slides._install(real)
     return real

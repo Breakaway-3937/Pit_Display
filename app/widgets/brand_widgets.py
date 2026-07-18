@@ -144,21 +144,23 @@ class ChamferButton(QPushButton):
 
     def _colors(self):
         """Return (fill, text, border) QColors for the current state."""
-        red = self._accent
-        red_hover = QColor(brand.RED_HOVER)
-        ember = QColor(brand.EMBER)
+        accent = self._accent
         pressed = self.isDown()
 
         if self._variant == "primary" or self._active:
-            fill = ember if pressed else (red_hover if self._hover else red)
+            # Hover/pressed shades derive from the accent so non-red team
+            # colors darken instead of snapping to brand red.
+            fill = (accent.darker(130) if pressed
+                    else accent.darker(112) if self._hover
+                    else accent)
             return fill, QColor(brand.WHITE), None
         if self._variant == "secondary":
             if self._hover or pressed:
-                return red, QColor(brand.WHITE), red
-            return QColor(0, 0, 0, 0), red, red
+                return accent, QColor(brand.WHITE), accent
+            return QColor(0, 0, 0, 0), accent, accent
         # ghost
         if self._hover or pressed:
-            return QColor(red.red(), red.green(), red.blue(), 28), red, None
+            return QColor(accent.red(), accent.green(), accent.blue(), 28), accent, None
         return QColor(0, 0, 0, 0), QColor(brand.MUTED_DARK), None
 
     def paintEvent(self, _event):

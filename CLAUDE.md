@@ -30,15 +30,17 @@ Four-window PyQt6 desktop app for FRC pit displays. All windows are created at s
 
 ### Global singletons (lazy-proxy pattern)
 
-Three module-level singletons use an identical lazy-proxy pattern — safe to import at module level, but raise if accessed before their `init_*()` function is called in `main()`:
+Five module-level singletons share the `LazyProxy` helper in `app/lazy_proxy.py` — safe to import at module level, but raise if accessed before their `init_*()` function is called in `main()`:
 
 | Import | Init call | Purpose |
 |---|---|---|
 | `from app.config import config` | `init_config()` | Active team, display mode, per-screen theme settings; emits Qt signals on change |
 | `from app.rotation import rotation` | `init_rotation()` | 45-second timer that emits `advance` signal in standard mode |
 | `from app.judges_slides import judges_slides` | `init_judges_slides()` | Loads images from `assets/judges_slides/`, tracks current slide index |
+| `from app.cad_assets import cad_assets` | `init_cad_assets()` | Local HTTP server (port 8765) + subsystems config + CAD focus signals |
+| `from app.db import db` | `init_db()` | SQLite connection + versioned migration runner (`data/pit_display.db`) |
 
-`init_config()` must be called first; `init_rotation()` and `init_judges_slides()` depend on `config` being ready.
+`init_config()` must be called first; the others depend on `config` being ready.
 
 ### Signal flow
 
@@ -51,7 +53,7 @@ All cross-component communication uses Qt signals — no direct calls between wi
 
 ### Theming
 
-Dark theme is the default; `assets/styles.qss` is loaded app-wide at startup. Light theme is applied per-window by injecting inline QSS via `app.theme.apply_theme(window, "light")`. Clearing the window stylesheet (setting `""`) falls back to the app-level dark QSS.
+Both stylesheets are rendered from one QSS template in `app/theme.py`, fed by the `DARK` / `LIGHT` palette bundles in `app/brand.py` — change a token there and both themes update. `theme.dark_qss()` is set app-wide at startup; light theme is applied per-window via `app.theme.apply_theme(window, "light")`. Clearing the window stylesheet (setting `""`) falls back to the app-level dark QSS.
 
 Accent colors come from the active team's `primary_color` field and are applied inline via `setStyleSheet()` wherever the team color is needed dynamically.
 
@@ -62,10 +64,6 @@ Edit `app/teams.py` — add an entry to the `TEAMS` dict. The control screen com
 ### Judges slides
 
 Drop numbered PNG/JPG files into `assets/judges_slides/` (e.g. `01_intro.png`, `02_robot.png`). Files are sorted alphabetically. Click "Reload" in the control screen to rescan.
-
-### WindowManager
-
-`app/windows/window_manager.py` handles multi-monitor placement. With 4+ screens, presentation/project windows go fullscreen on their assigned display. With fewer screens, all windows tile in a 2×2 grid on the primary display for development.
 
 ### Empty stubs
 

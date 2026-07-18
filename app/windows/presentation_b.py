@@ -21,7 +21,3 @@ class PresentationScreenB(PresentationScreen):
             "None of this is possible without the support of our incredible partners.",
         ),
     ]
-
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Pit Display — Presentation B")

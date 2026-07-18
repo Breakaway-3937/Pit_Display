@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QScrollArea, QSizePolicy, QFrame,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QFontMetrics
 
 from app import brand
 from app.config import config
@@ -236,8 +236,13 @@ FS_PAGE_TITLE = 48
 FS_SECTION    = 30
 FS_CARD_TITLE = 32
 FS_BODY       = 21
-FS_STAT_NUM   = 62
-FS_STAT_LABEL = 20
+FS_STAT_LABEL = 22
+# Stat tiles are the board's key points, so they're hero-scaled: the tile owns a
+# fixed height (scaled with the screen) and the number auto-fits to fill it —
+# see `_StatNumber` / `_stat_tile`. This keeps the figures dominant and uniform
+# across the four tiles at any resolution.
+STAT_TILE_H   = 200   # base tile height @1080 baseline
+STAT_NUM_RATIO = 0.52  # figure pixel size as a fraction of tile height
 FS_DEPT       = 25
 FS_TAB        = 22
 FS_BACK       = 24
@@ -314,6 +319,55 @@ class _CardButton(ChamferFrame):
         self._down = False
 
 
+class _StatNumber(QLabel):
+    """A hero stat figure whose size is driven explicitly by `set_px`.
+
+    The board sets the pixel size deterministically from the tile height (see
+    `_apply_scale`) so the figure always scales with the screen — it never
+    depends on the label's own allocated height, which the layout can squeeze.
+    Width is only used as a gentle guard: a long figure (e.g. ``1.5K+``) may be
+    nudged down to fit a settled width, but never below half the hero size, so
+    it can't collapse to a tiny label the way an unbounded fit-to-width would.
+    """
+
+    def __init__(self, text: str, family: str):
+        super().__init__(text)
+        self._family = family
+        self._px = 40
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+
+    def _font_at(self, px: int) -> QFont:
+        f = QFont(self._family)
+        f.setWeight(_Bold)
+        f.setPixelSize(max(10, px))
+        return f
+
+    def set_px(self, px: int):
+        self._px = px
+        self._apply()
+
+    def setText(self, text: str):
+        super().setText(text)
+        self._apply()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._apply()
+
+    def _apply(self):
+        px = self._px
+        w = self.width()
+        # Only shrink on a real, settled width, and never past half the hero
+        # size — a transient/degenerate layout pass must not collapse the figure.
+        if w > 60:
+            floor = max(24, px // 2)
+            while px > floor and \
+                    QFontMetrics(self._font_at(px)).horizontalAdvance(self.text()) > w:
+                px -= 2
+        self.setFont(self._font_at(px))
+
+
 # ── The board ─────────────────────────────────────────────────────────────────
 
 class InteractiveBoard(QWidget):
@@ -330,12 +384,16 @@ class InteractiveBoard(QWidget):
         # Tracked for live re-theming / re-branding / re-scaling.
         self._cards: list[ChamferFrame] = []
         self._blocks: list[tuple[ChamferFrame, int]] = []   # (frame, base_height)
+        self._stat_tiles: list[tuple[ChamferFrame, "_StatNumber", int]] = []
         self._accent_edges: list[ChamferFrame] = []
         self._tab_buttons: list[ChamferButton] = []
         self._accent_labels: list[QLabel] = []
         self._chips: list[_Chip] = []
         self._fonts: list[tuple] = []   # (label, base_px, weight, family, tracking)
         self._detail_widget: QWidget | None = None
+        # List lengths captured when a detail view opens, so its registrations
+        # can be dropped again when it closes (see _discard_detail).
+        self._detail_marks = (0, 0, 0, 0)
 
         self._build()
         self._select_tab(0)
@@ -587,6 +645,11 @@ class InteractiveBoard(QWidget):
     # ── Detail view (tap-through) ─────────────────────────────────────────
 
     def _open_detail(self, item: dict, category: str):
+        self._discard_detail()
+        self._detail_marks = (
+            len(self._fonts), len(self._chips),
+            len(self._accent_labels), len(self._blocks),
+        )
         scroll, col = self._scroll_page()
         col.addWidget(self._eyebrow(category))
         col.addWidget(self._disp(item["name"], FS_PAGE_TITLE, obj="screen_title"))
@@ -605,9 +668,6 @@ class InteractiveBoard(QWidget):
             col.addLayout(row)
         col.addStretch()
 
-        if self._detail_widget is not None:
-            self._center.removeWidget(self._detail_widget)
-            self._detail_widget.deleteLater()
         self._detail_widget = scroll
         self._center.addWidget(scroll)
         self._center.setCurrentWidget(scroll)
@@ -619,10 +679,21 @@ class InteractiveBoard(QWidget):
     def _close_detail(self):
         self._nav.setCurrentIndex(0)
         self._center.setCurrentWidget(self._pages)
-        if self._detail_widget is not None:
-            self._center.removeWidget(self._detail_widget)
-            self._detail_widget.deleteLater()
-            self._detail_widget = None
+        self._discard_detail()
+
+    def _discard_detail(self):
+        """Delete the detail view and unregister everything it added to the
+        scale/theme tracking lists, so later passes never touch dead widgets."""
+        if self._detail_widget is None:
+            return
+        self._center.removeWidget(self._detail_widget)
+        self._detail_widget.deleteLater()
+        self._detail_widget = None
+        n_fonts, n_chips, n_accents, n_blocks = self._detail_marks
+        del self._fonts[n_fonts:]
+        del self._chips[n_chips:]
+        del self._accent_labels[n_accents:]
+        del self._blocks[n_blocks:]
 
     # ── Sponsors footer (always visible) ──────────────────────────────────
 
@@ -657,14 +728,17 @@ class InteractiveBoard(QWidget):
 
     def _stat_tile(self, number: str, label: str) -> ChamferFrame:
         tile = self._card()
+        tile.setFixedHeight(int(STAT_TILE_H * self._scale))
         v = QVBoxLayout(tile)
-        v.setContentsMargins(22, 18, 22, 18)
+        v.setContentsMargins(22, 16, 22, 16)
         v.setSpacing(2)
-        num = self._disp(number, FS_STAT_NUM)
+        num = _StatNumber(number, brand.FONT_DISPLAY)
         num.setStyleSheet(f"color:{self._accent}; background:transparent;")
+        num.set_px(int(STAT_TILE_H * STAT_NUM_RATIO * self._scale))
         self._accent_labels.append(num)
-        v.addWidget(num)
-        v.addWidget(self._body(label, FS_STAT_LABEL))
+        v.addWidget(num, stretch=1)
+        v.addWidget(self._body(label, FS_STAT_LABEL), stretch=0)
+        self._stat_tiles.append((tile, num, STAT_TILE_H))
         return tile
 
     def _image_block(self, height: int) -> ChamferFrame:
@@ -721,6 +795,9 @@ class InteractiveBoard(QWidget):
             self._back_btn.setFont(f); self._back_btn.update()
         for frame, base_h in self._blocks:
             frame.setFixedHeight(int(base_h * s))
+        for tile, num, base_h in self._stat_tiles:
+            tile.setFixedHeight(int(base_h * s))
+            num.set_px(int(base_h * STAT_NUM_RATIO * s))
 
     # ── Theme / team ──────────────────────────────────────────────────────
 

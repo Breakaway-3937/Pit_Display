@@ -12,10 +12,25 @@ Usage anywhere:
 """
 
 from PyQt6.QtCore import QObject, pyqtSignal
+
+from app.lazy_proxy import LazyProxy
 from app.teams import Team, get_team, all_teams
 
 SCREENS = ["presentation_a", "presentation_b", "project", "control"]
 MODES   = ["standard", "judges", "lunch"]
+
+SCREEN_LABELS = {
+    "presentation_a": "Presentation A",
+    "presentation_b": "Presentation B",
+    "project":        "Project",
+    "control":        "Control",
+}
+
+MODE_LABELS = {
+    "standard": "Standard",
+    "judges":   "Judges",
+    "lunch":    "Lunch",
+}
 
 
 class _AppConfig(QObject):
@@ -80,35 +95,11 @@ class _AppConfig(QObject):
         return self.get(screen, "theme", "dark")
 
 
-# ── Lazy proxy ────────────────────────────────────────────────────────────────
-
-class _Proxy:
-    """
-    Forwards all attribute access to the real _AppConfig once it's created.
-    Safe to import before QApplication exists; raises clearly if accessed too early.
-    """
-    _real: "_AppConfig | None" = None
-
-    def __getattr__(self, name: str):
-        if self._real is None:
-            raise RuntimeError(
-                f"config.{name} accessed before init_config() was called. "
-                "Call init_config() in main() right after QApplication()."
-            )
-        return getattr(self._real, name)
-
-    def __setattr__(self, name: str, value):
-        if name == "_real":
-            object.__setattr__(self, name, value)
-        else:
-            setattr(self._real, name, value)
-
-
-config: _AppConfig = _Proxy()  # type: ignore[assignment]
+config: _AppConfig = LazyProxy("config", "init_config")  # type: ignore[assignment]
 
 
 def init_config() -> _AppConfig:
     """Call exactly once in main(), after QApplication is created."""
     real = _AppConfig()
-    config._real = real  # type: ignore[attr-defined]
+    config._install(real)
     return real

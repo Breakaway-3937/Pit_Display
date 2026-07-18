@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Runtime data (recreated by init_db on launch)
+data/
+
+# OS
+.DS_Store

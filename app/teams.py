@@ -3,7 +3,7 @@ Team registry. Add new teams by inserting into TEAMS.
 primary_color / secondary_color drive branding across all screens.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
