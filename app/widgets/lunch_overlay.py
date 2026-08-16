@@ -10,9 +10,9 @@ from the live widget dimensions every frame, guaranteed to fill the screen.
 from pathlib import Path
 
 from PyQt6.QtWidgets import QWidget, QSizePolicy
-from PyQt6.QtCore import Qt, QPoint, QRect
+from PyQt6.QtCore import Qt, QRect, QRectF
 from PyQt6.QtGui import (
-    QPainter, QPixmap, QFont, QFontMetrics, QColor, QPen, QPolygon,
+    QPainter, QPixmap, QFont, QFontMetrics, QColor, QPen,
     QResizeEvent, QShowEvent,
 )
 
@@ -140,23 +140,15 @@ class LunchOverlay(QWidget):
             eyebrow,
         )
 
-        # ── Accent divider — The Cut chamfered bar ────────────────────────
+        # ── Accent divider — Rounded pill bar (§5.1) ──────────────────────
         div_w = max(160, min(320, w // 6))
         div_bar_h = max(5, h // 120)
         dx = (w - div_w) // 2
         dy = int(h * _DIVIDER_Y_FRAC)
-        cut = min(div_bar_h * 2, 14)
-        bar = QPolygon([
-            QPoint(dx, dy),
-            QPoint(dx + div_w - cut, dy),
-            QPoint(dx + div_w, dy + cut),
-            QPoint(dx + div_w, dy + div_bar_h),
-            QPoint(dx + cut, dy + div_bar_h),
-            QPoint(dx, dy + div_bar_h - cut),
-        ])
+        radius = div_bar_h / 2
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(accent)
-        p.drawPolygon(bar)
+        p.drawRoundedRect(QRectF(dx, dy, div_w, div_bar_h), radius, radius)
 
         # ── Headline ─────────────────────────────────────────────────────
         headline_rect = QRect(

@@ -1,23 +1,29 @@
 """
-Breakaway 3937 — brand system tokens and helpers.
+Breakaway 3937 — brand system tokens and helpers (Brand System v2.0).
 
-Single source of truth for colors, fonts, and the signature "Cut" chamfer
-geometry. See Breakaway_Branding.md for the full spec. Everything visual in
-the app should pull from here rather than hard-coding hex values.
+Single source of truth for colors, fonts, the Rounded radius scale, and the
+typography scale. See Breakaway_Branding.md for the full spec. Everything
+visual in the app should pull from here rather than hard-coding hex values.
 
-Design thesis: *Precision under speed.* One red used with intent; white (or
-carbon, reversed) carries the layout. Chakra Petch for display/numbers,
-Roboto for body. The Cut appears sparingly, as a signature — never on the logo.
+Design thesis: *Precision under speed.* Confident, disciplined, roomy. One red
+used with intent (the "red budget" — one focal red per surface); white (or
+carbon, reversed) carries the layout. Chakra Petch for display/numbers, Roboto
+for body.
+
+The device system (§5): **Rounded** is the shell on every surface; **Bracket**,
+**Pocket**, and **Trace** are accents — one accent per surface, never stacked.
+The reusable Qt widgets live in app/widgets/brand_widgets.py.
 """
 
 # ── Type faces ──────────────────────────────────────────────────────────────
 FONT_DISPLAY = "Chakra Petch"   # headlines, section titles, numbers, eyebrows
 FONT_BODY    = "Roboto"         # body copy, labels, tables, UI text
+FONT_MONO    = "JetBrains Mono" # data, scores, timestamps (tabular figures)
 
 # ── Core brand colors ───────────────────────────────────────────────────────
 RED       = "#C82027"   # Breakaway Red — the brand. Focus, CTAs, highlights
 RED_HOVER = "#B01C22"   # primary button hover
-EMBER     = "#8E1519"   # deep red — pressed states, small accents (sparingly)
+EMBER     = "#8E1519"   # deep red — pressed states, tint-chip text (sparingly)
 CARBON    = "#181416"   # ink on light; dark backgrounds. Not pure black
 WHITE     = "#FFFFFF"
 
@@ -25,7 +31,7 @@ WHITE     = "#FFFFFF"
 N50  = "#FAF9F8"   # app background (light)
 N100 = "#F3F1F0"   # surface / fill
 N200 = "#E5E2E1"   # hairline / border
-N300 = "#CFCBC9"   # input border
+N300 = "#CFCBC9"   # card border / input border
 N400 = "#A6A19E"   # disabled / muted
 N500 = "#6A6462"   # secondary text (AA floor on white)
 N600 = "#443F3D"   # tertiary ink
@@ -40,36 +46,50 @@ INK_DARK     = "#F3F1F0"   # body text on dark (N100)
 MUTED_DARK   = "#A6A19E"   # secondary text on dark (N400)
 FAINT_DARK   = "#6A6462"   # tertiary text on dark (N500)
 
-# ── Status dots ─────────────────────────────────────────────────────────────
+# ── Status dots (§7) ────────────────────────────────────────────────────────
 STATUS_ONLINE  = "#2E8B7F"
 STATUS_PENDING = "#E08A1E"
 STATUS_FAULT   = "#C82027"
 STATUS_IDLE    = "#A6A19E"
 
-# ── Data-viz categorical (red = focus; rest neutral/context) ────────────────
+# ── Data-viz palettes (§1) — red = focus; rest neutral/context ──────────────
 CATEGORICAL = ["#C82027", "#2B3A67", "#E08A1E", "#2E8B7F", "#6B4E71", "#59595B"]
+SEQUENTIAL  = ["#FBE4E5", "#F3AEB1", "#E77B7F", "#D8474C", "#C82027", "#8E1519"]
+DIVERGING   = ["#2B3A67", "#6E7FA8", "#B9C2D8", "#EEEBEA", "#E79B9E", "#D8555A",
+               "#C82027"]
 
 
-# ── The Cut (chamfer) size tiers, in px ─────────────────────────────────────
-CUT_SMALL  = 8    # tags / buttons
-CUT_MEDIUM = 14   # cards / callouts
-CUT_LARGE  = 28   # heroes / banners
+# ── Rounded — the container radius scale (§5.1), in px ──────────────────────
+# The default shell on every surface. Never mix two radii on one element, and
+# never mix a sharp corner with a rounded one.
+R_PILL   = 999   # tags / chips / pills (full pill = ½ height)
+R_BTN    = 10    # buttons / inputs
+R_CARD   = 14    # cards / callouts
+R_BANNER = 18    # banners / hero panels (16–20)
+R_MEDIA  = 12    # images / media
 
 
-def cut_polygon(w: int, h: int, cut: int = CUT_MEDIUM):
-    """
-    Points for The Cut applied to two diagonally-opposite corners
-    (top-right + bottom-left) — one consistent diagonal shear implying motion.
-    Returns a list of (x, y) tuples winding clockwise from top-left.
-    """
-    return [
-        (0, 0),
-        (w - cut, 0),
-        (w, cut),
-        (w, h),
-        (cut, h),
-        (0, h - cut),
-    ]
+# ── Typography scale (§2), pixel sizes + tracking (‰, Qt PercentageSpacing) ──
+# (px, weight_is_bold, tracking_permille). Weight True = 700, False = 600/400
+# per role; consumers pick the concrete QFont weight. Kept as a lookup so the
+# app's programmatic type stays in one place alongside the QSS roles in theme.
+TYPE = {
+    "display_xl": {"px": 56, "track": 99},   # -0.01em
+    "display_l":  {"px": 40, "track": 99},   # -0.01em
+    "h1":         {"px": 30, "track": 100},
+    "h2":         {"px": 22, "track": 100},
+    "h3":         {"px": 17, "track": 100},
+    "lead":       {"px": 18, "track": 100},
+    "body":       {"px": 16, "track": 100},
+    "small":      {"px": 14, "track": 100},
+    "eyebrow":    {"px": 12, "track": 116},  # +0.16em, UPPER
+    "mono":       {"px": 13, "track": 100},
+}
+
+
+def red_tint(alpha: float = 0.12) -> str:
+    """Red-tint chip fill (§7): rgba(200,32,39,alpha). Pair with EMBER text."""
+    return f"rgba(200, 32, 39, {alpha})"
 
 
 # ── Palette bundles (theme-aware) ───────────────────────────────────────────

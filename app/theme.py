@@ -28,7 +28,7 @@ def _qss(p: dict) -> str:
     QMainWindow {{ background-color: {p["bg"]}; }}
 
     /* Labels are transparent so they never paint the page background over a
-       card (ChamferFrame etc. use a lighter surface fill). */
+       card (RoundedFrame etc. use a lighter surface fill). */
     QLabel {{ background: transparent; }}
 
     QToolTip {{
@@ -73,7 +73,7 @@ def _qss(p: dict) -> str:
     /* ── Buttons (brand system §7) ──────────────────────────────────────── */
     QPushButton {{
         background-color: {p["surface2"]}; color: {p["ink"]};
-        border: 1px solid {p["line"]}; border-radius: 8px;
+        border: 1px solid {p["line"]}; border-radius: {brand.R_BTN}px;
         padding: 8px 16px; font-weight: 500;
     }}
     QPushButton:hover {{
@@ -117,7 +117,7 @@ def _qss(p: dict) -> str:
     /* ── ComboBox ───────────────────────────────────────────────────────── */
     QComboBox {{
         background-color: {p["input_bg"]}; border: 1px solid {p["input_border"]};
-        border-radius: 8px; padding: 7px 12px; color: {p["ink"]};
+        border-radius: {brand.R_BTN}px; padding: 7px 12px; color: {p["ink"]};
         font-family: "{brand.FONT_DISPLAY}"; font-weight: 500;
     }}
     QComboBox:hover {{ border-color: {p["hover_border"]}; }}
@@ -131,7 +131,7 @@ def _qss(p: dict) -> str:
     /* ── Inputs ─────────────────────────────────────────────────────────── */
     QLineEdit, QTextEdit {{
         background-color: {p["input_bg"]}; border: 1px solid {p["input_border"]};
-        border-radius: 8px; padding: 7px 11px; color: {p["ink"]};
+        border-radius: {brand.R_BTN}px; padding: 7px 11px; color: {p["ink"]};
         selection-background-color: {brand.RED}; selection-color: {brand.WHITE};
     }}
     QLineEdit:focus, QTextEdit:focus {{ border-color: {brand.RED}; }}

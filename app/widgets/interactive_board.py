@@ -14,7 +14,7 @@ Interactivity:
 
 Content is real (synthesized from the team's FIRST Impact documents). Edit the
 `TABS` list to reshape it. Theme + team aware: apply_theme("dark"|"light")
-recolors the Cut cards; apply_team(hex) re-accents tabs, headers, and figures.
+recolors the Rounded cards; apply_team(hex) re-accents tabs, headers, figures.
 """
 
 from PyQt6.QtWidgets import (
@@ -26,7 +26,7 @@ from PyQt6.QtGui import QFont, QFontMetrics
 
 from app import brand
 from app.config import config
-from app.widgets.brand_widgets import ChamferFrame, ChamferButton, BreakLine
+from app.widgets.brand_widgets import RoundedFrame, RoundedButton, Trace
 
 
 # ── Content model ─────────────────────────────────────────────────────────────
@@ -259,7 +259,7 @@ def _rgb(hex_color: str) -> tuple[int, int, int]:
 
 
 class _Chip(QLabel):
-    """A small chamfered tag — used for the E's and FIRST-in-AR sub-sections."""
+    """A full-pill tag (§7) — used for the E's and FIRST-in-AR sub-sections."""
 
     def __init__(self, text: str, accent: str, px: int = FS_CHIP):
         super().__init__(text.upper())
@@ -282,18 +282,19 @@ class _Chip(QLabel):
         self._accent = accent
         r, g, b = _rgb(accent)
         self.setStyleSheet(
-            f"color:{accent}; background:rgba({r},{g},{b},0.12); border-radius:5px;"
+            f"color:{accent}; background:rgba({r},{g},{b},0.12); "
+            f"border-radius:{brand.R_PILL}px;"
         )
 
 
-class _CardButton(ChamferFrame):
-    """A tappable Cut card. Emits `clicked`; brightens its border on hover/press."""
+class _CardButton(RoundedFrame):
+    """A tappable Rounded card. Emits `clicked`; brightens its hairline on
+    hover/press — the interaction affordance, not a static Bracket."""
 
     clicked = pyqtSignal()
 
-    def __init__(self, fill, border, accent, cut=brand.CUT_MEDIUM, parent=None):
-        super().__init__(fill=fill, border=border, cut=cut,
-                         accent_edge=accent, parent=parent)
+    def __init__(self, fill, border, accent, radius=brand.R_CARD, parent=None):
+        super().__init__(fill=fill, border=border, radius=radius, parent=parent)
         self._border_rest = border
         self._accent_hex = accent
         self._down = False
@@ -381,11 +382,11 @@ class InteractiveBoard(QWidget):
         self._scale = 1.0
 
         # Tracked for live re-theming / re-branding / re-scaling.
-        self._cards: list[ChamferFrame] = []
-        self._blocks: list[tuple[ChamferFrame, int]] = []   # (frame, base_height)
-        self._stat_tiles: list[tuple[ChamferFrame, "_StatNumber", int]] = []
-        self._accent_edges: list[ChamferFrame] = []
-        self._tab_buttons: list[ChamferButton] = []
+        self._cards: list[RoundedFrame] = []
+        self._blocks: list[tuple[RoundedFrame, int]] = []   # (frame, base_height)
+        self._stat_tiles: list[tuple[RoundedFrame, "_StatNumber", int]] = []
+        self._bracket_cards: list[RoundedFrame] = []   # the one focal card, bracketed
+        self._tab_buttons: list[RoundedButton] = []
         self._accent_labels: list[QLabel] = []
         self._chips: list[_Chip] = []
         self._fonts: list[tuple] = []   # (label, base_px, weight, family, tracking)
@@ -480,7 +481,7 @@ class InteractiveBoard(QWidget):
         lay.addWidget(num)
         lay.addStretch()
 
-        self._header_line = BreakLine(color=self._accent, diameter=34)
+        self._header_line = Trace(color=self._accent, stroke=5)
         self._header_line.setFixedWidth(170)
         lay.addWidget(self._header_line, alignment=Qt.AlignmentFlag.AlignVCenter)
         return bar
@@ -491,8 +492,8 @@ class InteractiveBoard(QWidget):
         lay.setContentsMargins(20, 6, 20, 10)
         lay.setSpacing(8)
         for i, tab in enumerate(TABS):
-            btn = ChamferButton(tab["tab"], variant="ghost",
-                                accent=self._accent, cut=brand.CUT_SMALL)
+            btn = RoundedButton(tab["tab"], variant="ghost",
+                                accent=self._accent, radius=brand.R_BTN)
             btn.setMinimumHeight(64)
             f = QFont(brand.FONT_DISPLAY); f.setPixelSize(FS_TAB); f.setWeight(_Demi)
             btn.setFont(f)
@@ -506,8 +507,8 @@ class InteractiveBoard(QWidget):
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(20, 6, 20, 10)
         lay.setSpacing(12)
-        self._back_btn = ChamferButton("‹  Back", variant="secondary",
-                                       accent=self._accent, cut=brand.CUT_SMALL)
+        self._back_btn = RoundedButton("‹  Back", variant="secondary",
+                                       accent=self._accent, radius=brand.R_BTN)
         self._back_btn.setMinimumHeight(64)
         self._back_btn.setFixedWidth(200)
         f = QFont(brand.FONT_DISPLAY); f.setPixelSize(FS_BACK); f.setWeight(_Demi)
@@ -555,8 +556,8 @@ class InteractiveBoard(QWidget):
         # Hero image — a team/pit photo anchors the page (drop a real image here).
         col.addWidget(self._image_block(300))
 
-        # "Every Kid Can" mission card with the 5 E's
-        mission = self._card(accent_edge=True)
+        # "Every Kid Can" mission card — the one focal card, framed by a Bracket
+        mission = self._card(bracket=True)
         m = QVBoxLayout(mission)
         m.setContentsMargins(26, 24, 26, 24)
         m.setSpacing(12)
@@ -610,7 +611,6 @@ class InteractiveBoard(QWidget):
         card = _CardButton(self._pal["surface"], self._pal["line"], self._accent)
         card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._cards.append(card)
-        self._accent_edges.append(card)
 
         c = QVBoxLayout(card)
         c.setContentsMargins(24, 22, 24, 20)
@@ -698,8 +698,8 @@ class InteractiveBoard(QWidget):
     # ── Sponsors footer (always visible) ──────────────────────────────────
 
     def _sponsors_footer(self) -> QWidget:
-        foot = ChamferFrame(fill=self._pal["surface2"], border=self._pal["line"],
-                            cut=brand.CUT_SMALL)
+        foot = RoundedFrame(fill=self._pal["surface2"], border=self._pal["line"],
+                            radius=brand.R_CARD)
         self._footer = foot
         foot.setFixedHeight(96)
         lay = QHBoxLayout(foot)
@@ -714,19 +714,19 @@ class InteractiveBoard(QWidget):
 
     # ── Card / block / tile factories (tracked for theming + scaling) ─────
 
-    def _card(self, accent_edge: bool = False) -> ChamferFrame:
-        f = ChamferFrame(
+    def _card(self, bracket: bool = False) -> RoundedFrame:
+        f = RoundedFrame(
             fill=self._pal["surface"], border=self._pal["line"],
-            cut=brand.CUT_MEDIUM,
-            accent_edge=self._accent if accent_edge else None,
+            radius=brand.R_CARD,
+            bracket=self._accent if bracket else None,
         )
         f.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._cards.append(f)
-        if accent_edge:
-            self._accent_edges.append(f)
+        if bracket:
+            self._bracket_cards.append(f)
         return f
 
-    def _stat_tile(self, number: str, label: str) -> ChamferFrame:
+    def _stat_tile(self, number: str, label: str) -> RoundedFrame:
         tile = self._card()
         tile.setFixedHeight(int(STAT_TILE_H * self._scale))
         v = QVBoxLayout(tile)
@@ -741,9 +741,9 @@ class InteractiveBoard(QWidget):
         self._stat_tiles.append((tile, num, STAT_TILE_H))
         return tile
 
-    def _image_block(self, height: int) -> ChamferFrame:
-        block = ChamferFrame(fill=self._pal["surface2"], border=None,
-                            cut=brand.CUT_SMALL)
+    def _image_block(self, height: int) -> RoundedFrame:
+        block = RoundedFrame(fill=self._pal["surface2"], border=None,
+                            radius=brand.R_MEDIA)
         block.setFixedHeight(int(height * self._scale))
         block.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         lbl = QLabel("IMAGE", block)
@@ -830,8 +830,9 @@ class InteractiveBoard(QWidget):
             btn.set_accent(accent)
         if hasattr(self, "_back_btn"):
             self._back_btn.set_accent(accent)
-        for card in self._accent_edges:
-            card.set_accent(accent)
+        for card in self._bracket_cards:
+            card.set_bracket(accent)
+        for card in self._cards:
             if isinstance(card, _CardButton):
                 card._accent_hex = accent
         for chip in self._chips:

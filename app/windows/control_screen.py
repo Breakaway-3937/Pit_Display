@@ -24,7 +24,7 @@ from app.config import config, MODES, MODE_LABELS, SCREENS, SCREEN_LABELS
 from app.judges_slides import judges_slides
 from app.teams import all_teams
 from app.theme import apply_theme
-from app.widgets.brand_widgets import ChamferButton, ChamferFrame, eyebrow
+from app.widgets.brand_widgets import RoundedButton, RoundedFrame, eyebrow
 from app.widgets.cad_upload_panel import CADSettingsPanel
 from app.widgets.helpers import clear_layout, divider, label
 from app.widgets.toggle_switch import ToggleSwitch
@@ -32,9 +32,9 @@ from app.widgets.toggle_switch import ToggleSwitch
 
 # ── Mode button ──────────────────────────────────────────────────────────────
 
-class ModeButton(ChamferButton):
+class ModeButton(RoundedButton):
     """
-    One of the three mode selector buttons in the top bar. Built on The Cut:
+    One of the three mode selector buttons in the top bar. Rounded shell:
     active = red fill (team accent), inactive = ghost. Recolors with the team.
     """
 
@@ -43,7 +43,7 @@ class ModeButton(ChamferButton):
             MODE_LABELS.get(mode, mode.title()),
             variant="ghost",
             accent=team_color,
-            cut=brand.CUT_SMALL,
+            radius=brand.R_BTN,
         )
         self.mode = mode
         self.setMinimumWidth(124)
@@ -580,11 +580,11 @@ class ControlScreen(QMainWindow):
         layout.setContentsMargins(18, 0, 20, 0)
         layout.setSpacing(14)
 
-        # Left: brand mark — chamfered red chip with the team number + wordmark
-        self._brand_chip = ChamferFrame(
+        # Left: brand mark — rounded red chip with the team number + wordmark
+        self._brand_chip = RoundedFrame(
             fill=config.active_team.primary_color,
             border=None,
-            cut=brand.CUT_SMALL,
+            radius=brand.R_BTN,
         )
         self._brand_chip.setFixedSize(58, 44)
         chip_l = QVBoxLayout(self._brand_chip)

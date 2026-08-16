@@ -2,8 +2,8 @@
 SlidePanel — reusable rotating-slide container for standard mode screens.
 
 Brand: Chakra Petch display title over a Roboto body, one idea per slide,
-generous whitespace, a single Break Line signature beneath the headline, and
-a red active dot in the footer indicator.
+generous whitespace, a single Trace leading line beneath the headline, and
+a red active pill in the footer indicator.
 
 Usage:
     slides = [("Title A", "Body text"), ("Title B", "More text")]
@@ -13,12 +13,12 @@ Usage:
 """
 
 from PyQt6.QtWidgets import QWidget, QStackedWidget, QVBoxLayout, QLabel, QSizePolicy
-from PyQt6.QtCore import Qt, QPointF
-from PyQt6.QtGui import QPainter, QColor, QPolygonF
+from PyQt6.QtCore import Qt, QRectF
+from PyQt6.QtGui import QPainter, QColor
 
 from app import brand
 from app.config import config
-from app.widgets.brand_widgets import BreakLine, eyebrow
+from app.widgets.brand_widgets import Trace, eyebrow
 
 
 # ── Dot indicator ─────────────────────────────────────────────────────────────
@@ -62,10 +62,9 @@ class _SlideDots(QWidget):
         for i in range(self._count):
             p.setPen(Qt.PenStyle.NoPen)
             if i == self._active:
-                # Active dot is a chamfered bar — a nod to The Cut.
+                # Active slide reads as a wide rounded pill (Rounded, §5.1).
                 p.setBrush(self._accent)
-                pts = brand.cut_polygon(bar_w, diameter, cut=3)
-                p.drawPolygon(QPolygonF([QPointF(x + px, cy - r + py) for px, py in pts]))
+                p.drawRoundedRect(QRectF(x, cy - r, bar_w, diameter), r, r)
                 x += bar_w + gap
             else:
                 p.setBrush(idle)
@@ -78,7 +77,7 @@ class _SlideDots(QWidget):
 # ── Individual slide ──────────────────────────────────────────────────────────
 
 class _Slide(QWidget):
-    """One slide: eyebrow, Chakra headline, Break Line signature, Roboto body."""
+    """One slide: eyebrow, Chakra headline, Trace leading line, Roboto body."""
 
     def __init__(self, index: int, title: str, body: str, parent=None):
         super().__init__(parent)
@@ -103,10 +102,10 @@ class _Slide(QWidget):
         self._title.setStyleSheet("font-size: 46px;")
         layout.addWidget(self._title)
 
-        # The Break Line — one signature per slide, centered under the headline
-        self._break_line = BreakLine(color=accent, diameter=40)
-        self._break_line.setMaximumWidth(320)
-        layout.addWidget(self._break_line, alignment=Qt.AlignmentFlag.AlignHCenter)
+        # Trace — one leading line per slide, centered under the headline
+        self._trace = Trace(color=accent, stroke=6)
+        self._trace.setMaximumWidth(320)
+        layout.addWidget(self._trace, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         self._body = QLabel(body)
         self._body.setObjectName("stat_label")
@@ -124,7 +123,7 @@ class _Slide(QWidget):
     def apply_team(self, accent: str):
         self._eyebrow.setText(self._eyebrow_text().upper())
         self._eyebrow.setStyleSheet(f"color: {accent}; background: transparent;")
-        self._break_line.set_color(accent)
+        self._trace.set_color(accent)
 
 
 # ── SlidePanel ────────────────────────────────────────────────────────────────
