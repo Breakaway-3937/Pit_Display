@@ -145,6 +145,56 @@ def _qss(p: dict) -> str:
         background: {brand.RED}; border-color: {brand.RED};
     }}
 
+    /* ── Sliders (LED brightness/speed, volume, EQ bands) ───────────────── */
+    QSlider::groove:horizontal {{
+        height: 4px; background: {p["line"]}; border-radius: 2px;
+    }}
+    QSlider::sub-page:horizontal {{
+        background: {brand.RED}; border-radius: 2px;
+    }}
+    QSlider::handle:horizontal {{
+        background: {p["surface"]}; border: 2px solid {brand.RED};
+        width: 13px; height: 13px; margin: -6px 0; border-radius: 8px;
+    }}
+    QSlider::handle:horizontal:hover {{ background: {brand.RED}; }}
+
+    QSlider::groove:vertical {{
+        width: 4px; background: {p["line"]}; border-radius: 2px;
+    }}
+    /* Vertical sliders run bottom-up, so add-page is the filled half. EQ bands
+       are bipolar (cut and boost), so the fill stays neutral — red here would
+       imply "more is better", which is wrong for a cut. */
+    QSlider::add-page:vertical {{
+        background: {p["muted"]}; border-radius: 2px;
+    }}
+    QSlider::handle:vertical {{
+        background: {p["surface"]}; border: 2px solid {brand.RED};
+        width: 13px; height: 13px; margin: 0 -6px; border-radius: 8px;
+    }}
+    QSlider::handle:vertical:hover {{ background: {brand.RED}; }}
+    QSlider:disabled::handle:horizontal, QSlider:disabled::handle:vertical {{
+        border-color: {p["faint"]};
+    }}
+
+    /* ── Lists (music library + queue) ───────────────────────────────────── */
+    QListWidget {{
+        background-color: {p["surface"]}; border: 1px solid {p["line"]};
+        border-radius: {brand.R_BTN}px; outline: none; padding: 4px;
+    }}
+    QListWidget::item {{
+        padding: 7px 9px; border-radius: 6px; color: {p["ink"]};
+    }}
+    QListWidget::item:hover {{ background: {p["surface2"]}; }}
+    QListWidget::item:selected {{
+        background: {brand.RED}; color: {brand.WHITE};
+    }}
+
+    QProgressBar {{
+        background: {p["line"]}; border: none; border-radius: 2px;
+        height: 4px; text-align: center; color: transparent;
+    }}
+    QProgressBar::chunk {{ background: {brand.RED}; border-radius: 2px; }}
+
     /* ── Dialogs ────────────────────────────────────────────────────────── */
     QDialog, QMessageBox {{ background-color: {p["surface"]}; }}
     """

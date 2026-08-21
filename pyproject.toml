@@ -8,6 +8,9 @@ dependencies = [
     "pyqt6>=6.7.0",
     "PyQt6-Qt6>=6.7.0",
     "pyqt6-webengine>=6.10.0",
+    "pyserial>=3.5",
+    "python-vlc>=3.0.21",
+    "mutagen>=1.47.0",
 ]
 
 [project.scripts]

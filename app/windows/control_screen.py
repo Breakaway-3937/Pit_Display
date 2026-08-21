@@ -19,6 +19,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 
 from app import brand
+from app.admin import admin
 from app.cad_assets import cad_assets
 from app.config import config, MODES, MODE_LABELS, SCREENS, SCREEN_LABELS
 from app.judges_slides import judges_slides
@@ -26,8 +27,17 @@ from app.teams import all_teams
 from app.theme import apply_theme
 from app.widgets.brand_widgets import RoundedButton, RoundedFrame, eyebrow
 from app.widgets.cad_upload_panel import CADSettingsPanel
+from app.widgets.admin_bar import AdminBar
 from app.widgets.helpers import clear_layout, divider, label
+from app.widgets.led_panel import LEDPanel
+from app.widgets.music_panel import MusicPanel
 from app.widgets.toggle_switch import ToggleSwitch
+from app.leds import leds
+
+# Pit-wide subsystems. Unlike SCREENS these are not windows — they are hardware
+# the pit owns, so they get their own sidebar group and their own panels.
+SYSTEMS = ["leds", "music"]
+SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music"}
 
 
 # ── Mode button ──────────────────────────────────────────────────────────────
@@ -66,11 +76,14 @@ class ScreenCard(QFrame):
     selected = pyqtSignal(str)       # screen_id — user clicked the name area
     power_toggled = pyqtSignal(str, bool)  # screen_id, on
 
-    def __init__(self, screen_id: str, team_color: str):
+    def __init__(self, screen_id: str, team_color: str,
+                 label_text: str | None = None, show_toggle: bool = True):
         super().__init__()
         self.screen_id = screen_id
         self._active = False
         self._team_color = team_color
+        self._label_text = label_text or SCREEN_LABELS.get(screen_id, screen_id)
+        self._show_toggle = show_toggle
         self._build(team_color)
 
     def _build(self, team_color: str):
@@ -82,7 +95,7 @@ class ScreenCard(QFrame):
         row.setSpacing(0)
 
         # Name button (left — fills remaining space)
-        self._name_btn = QPushButton(SCREEN_LABELS.get(self.screen_id, self.screen_id))
+        self._name_btn = QPushButton(self._label_text)
         self._name_btn.setFlat(True)
         self._name_btn.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
@@ -92,7 +105,9 @@ class ScreenCard(QFrame):
         row.addWidget(self._name_btn)
 
         # Power toggle (right) — hidden for the control screen itself
-        if self.screen_id != "control":
+        if not self._show_toggle:
+            self._toggle = None
+        elif self.screen_id != "control":
             self._toggle = ToggleSwitch(color_on=team_color)
             self._toggle.setChecked(False)
             self._toggle.toggled.connect(
@@ -116,6 +131,13 @@ class ScreenCard(QFrame):
         if self._toggle:
             self._toggle.set_color_on(hex_color)
         self._apply_style()
+
+    def set_checked(self, on: bool):
+        """Reflect state changed elsewhere, without re-emitting power_toggled."""
+        if self._toggle is not None and self._toggle.isChecked() != on:
+            self._toggle.blockSignals(True)
+            self._toggle.setChecked(on)
+            self._toggle.blockSignals(False)
 
     def _apply_style(self):
         base = (
@@ -529,6 +551,41 @@ class ScreenSettingsPanel(QWidget):
             toggle.set_color_on(team.primary_color)
 
 
+# ── Pit subsystem panel ───────────────────────────────────────────────────────
+
+class SystemSettingsPanel(QWidget):
+    """
+    Wrapper giving the LED and Music panels the same header chrome the
+    per-screen panels have, so the right-hand column reads consistently.
+    """
+
+    _BLURBS = {
+        "leds": "Drive the pit LED strips over USB. The controller keeps "
+                "running its animation if this app closes.",
+        "music": "Local music for the overhead speakers, with a ten-band "
+                 "equaliser for tuning the pit.",
+    }
+
+    def __init__(self, system_id: str):
+        super().__init__()
+        self._system_id = system_id
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 20, 24, 20)
+        outer.setSpacing(4)
+
+        outer.addWidget(label(SYSTEM_LABELS.get(system_id, system_id).upper(),
+                              "section_header"))
+        outer.addWidget(label(self._BLURBS.get(system_id, ""), "stat_label"))
+        outer.addSpacing(12)
+        outer.addWidget(divider())
+        outer.addSpacing(16)
+
+        self.body = LEDPanel() if system_id == "leds" else MusicPanel()
+        outer.addWidget(self.body)
+        outer.addStretch()
+
+
 # ── Control screen ────────────────────────────────────────────────────────────
 
 class ControlScreen(QMainWindow):
@@ -544,6 +601,7 @@ class ControlScreen(QMainWindow):
         self._build_ui()
         config.team_changed.connect(self._on_team_changed)
         config.screen_setting_changed.connect(self._on_screen_setting_changed)
+        leds.state_changed.connect(self._on_leds_state_changed)
 
     def set_managed_windows(self, windows: dict[str, "QMainWindow"]) -> None:
         """Called from main.py to hand over the other 3 window references."""
@@ -560,6 +618,13 @@ class ControlScreen(QMainWindow):
         main.setSpacing(0)
 
         main.addWidget(self._top_bar())
+
+        # Admin bar — an inline strip, not a screen and not a modal, so the
+        # operator can watch the gated controls appear as they unlock.
+        self._admin_bar = AdminBar()
+        self._admin_bar.closed.connect(self._close_admin)
+        self._admin_bar.setVisible(False)
+        main.addWidget(self._admin_bar)
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -580,13 +645,17 @@ class ControlScreen(QMainWindow):
         layout.setContentsMargins(18, 0, 20, 0)
         layout.setSpacing(14)
 
-        # Left: brand mark — rounded red chip with the team number + wordmark
+        # Left: brand mark — rounded red chip with the team number + wordmark.
+        # Also the admin door: clicking it opens the admin bar (see _toggle_admin).
         self._brand_chip = RoundedFrame(
             fill=config.active_team.primary_color,
             border=None,
             radius=brand.R_BTN,
         )
         self._brand_chip.setFixedSize(58, 44)
+        self._brand_chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._brand_chip.setToolTip("Admin — LED tuning and equaliser")
+        self._brand_chip.mousePressEvent = self._on_brand_clicked
         chip_l = QVBoxLayout(self._brand_chip)
         chip_l.setContentsMargins(0, 0, 0, 0)
         self._chip_num = label(str(config.active_team.number), "",
@@ -670,6 +739,24 @@ class ControlScreen(QMainWindow):
             self._screen_cards[screen_id] = card
             layout.addWidget(card)
 
+        layout.addSpacing(18)
+        sys_hdr = eyebrow("Pit Systems")
+        sys_hdr.setContentsMargins(18, 0, 0, 10)
+        layout.addWidget(sys_hdr)
+
+        for system_id in SYSTEMS:
+            # The LED card's toggle is the strip kill switch; music has no
+            # equivalent single on/off, so it gets a plain row.
+            card = ScreenCard(system_id, team_color,
+                              label_text=SYSTEM_LABELS[system_id],
+                              show_toggle=(system_id == "leds"))
+            card.selected.connect(self._select_screen)
+            card.power_toggled.connect(self._on_power_toggled)
+            if system_id == "leds":
+                card.set_checked(leds.enabled)
+            self._screen_cards[system_id] = card
+            layout.addWidget(card)
+
         layout.addStretch()
         return sidebar
 
@@ -682,6 +769,12 @@ class ControlScreen(QMainWindow):
         for screen_id in SCREENS:
             panel = ScreenSettingsPanel(screen_id)
             self._settings_panels[screen_id] = panel
+            panel.setVisible(False)
+            layout.addWidget(panel)
+
+        for system_id in SYSTEMS:
+            panel = SystemSettingsPanel(system_id)
+            self._settings_panels[system_id] = panel
             panel.setVisible(False)
             layout.addWidget(panel)
 
@@ -698,6 +791,19 @@ class ControlScreen(QMainWindow):
 
     # ── Interaction ───────────────────────────────────────────────────────
 
+    def _on_brand_clicked(self, _event):
+        """The Breakaway mark is the admin door."""
+        if self._admin_bar.isVisible():
+            self._close_admin()
+        else:
+            self._admin_bar.setVisible(True)
+            self._admin_bar.focus_password()
+
+    def _close_admin(self):
+        """Hiding the bar always re-locks — there is no stay-unlocked option."""
+        admin.lock()
+        self._admin_bar.setVisible(False)
+
     def _select_screen(self, screen_id: str):
         for sid, panel in self._settings_panels.items():
             panel.setVisible(sid == screen_id)
@@ -705,6 +811,9 @@ class ControlScreen(QMainWindow):
             card.set_active(sid == screen_id)
 
     def _on_power_toggled(self, screen_id: str, on: bool):
+        if screen_id == "leds":
+            leds.set_enabled(on)
+            return
         window = self._managed_windows.get(screen_id)
         if window is None:
             return
@@ -740,6 +849,11 @@ class ControlScreen(QMainWindow):
                 self._team_combo.setCurrentIndex(i)
                 self._team_combo.blockSignals(False)
                 break
+
+    def _on_leds_state_changed(self):
+        card = self._screen_cards.get("leds")
+        if card is not None:
+            card.set_checked(leds.enabled)
 
     def _on_screen_setting_changed(self, screen_id: str, key: str, value):
         # Managed windows subscribe to this signal themselves; the control

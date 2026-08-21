@@ -46,7 +46,8 @@ def register_migration(fn: Callable[[sqlite3.Connection], None]) -> Callable:
 
 class _Database:
 
-    def __init__(self, path: Path = _DB_PATH):
+    def __init__(self, path: Path | str = _DB_PATH):
+        path = Path(path)          # accept a str too — callers pass both
         path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(
             str(path),
@@ -100,7 +101,7 @@ class _Database:
 db: _Database = LazyProxy("db", "init_db")  # type: ignore[assignment]
 
 
-def init_db(path: Path | None = None) -> _Database:
+def init_db(path: Path | str | None = None) -> _Database:
     """
     Call once in main(), after init_config().
     Pass path to override the default location (useful in tests).

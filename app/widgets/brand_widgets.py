@@ -30,6 +30,7 @@ from PyQt6.QtCore import Qt, QRectF
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QPainterPath
 
 from app import brand
+from app.brand import FONT_MONO_STACK
 
 
 # ── Bracket — focus accent (§5.2) ────────────────────────────────────────────
@@ -390,6 +391,30 @@ class Trace(QWidget):
         p.setBrush(self._color)
         p.drawRoundedRect(QRectF(pad_x, y0 - pad_h / 2, pad_w, pad_h), 2, 2)
         p.end()
+
+
+# ── Mono font (data / numbers) ──────────────────────────────────────────────
+
+def mono_font(px: int | None = None, tabular: bool = True) -> QFont:
+    """
+    The brand mono role (§2) with its full fallback stack.
+
+    Always set the whole stack rather than a bare family name: if Qt cannot
+    resolve the family it sweeps every font alias on the system to look for it,
+    which is slow and noisy. `tabular` turns on lining figures so columns of
+    digits line up — the reason this role exists.
+    """
+    f = QFont()
+    f.setFamilies(FONT_MONO_STACK)
+    f.setStyleHint(QFont.StyleHint.Monospace)
+    f.setPixelSize(px if px is not None else brand.TYPE["mono"]["px"])
+    if tabular:
+        f.setStyleStrategy(QFont.StyleStrategy.PreferDefault)
+        try:
+            f.setFeature("tnum", 1)          # Qt 6.7+
+        except (AttributeError, TypeError):
+            pass                              # older Qt: lining figures anyway
+    return f
 
 
 # ── Eyebrow label ───────────────────────────────────────────────────────────

@@ -22,6 +22,87 @@ the power toggles in its sidebar.
   and click Reload on the control screen.
 - **Teams** — add entries to `app/teams.py`; branding follows the selection
   automatically.
+- **Pit systems** — LED strips and music sit below the screens in the control
+  sidebar. Both follow the team colour and the display mode.
+- **Admin lock** — click the Breakaway mark (top-left) to unlock LED tuning and
+  the equaliser. Closing it re-locks. See [`ADMIN_GUIDE.md`](ADMIN_GUIDE.md).
+- **Adding media** — music, judges slides, CAD: [`MEDIA_GUIDE.md`](MEDIA_GUIDE.md).
+
+## LED strips
+
+USB serial to an Arduino Uno/Nano driving WS2812B. The **firmware owns the
+animation loop** — the app only sends short commands, so the strips keep running
+if this app closes, and long strips never suffer the dropped-serial problem that
+pixel streaming hits on AVR.
+
+### Setup
+
+1. Open `firmware/pit_leds/pit_leds.ino`, set `NUM_LEDS` and `LED_PIN`, flash it
+   (needs the **FastLED** library).
+2. Plug the board in. The app finds it by USB ID and handshakes automatically —
+   no port to configure, and replugging is fine.
+3. Control it from **Control Screen → Pit Systems → LED Strips**.
+
+Brightness, speed, looks and colour are **admin only** — click the Breakaway
+mark in the top-left to unlock. The **on/off kill switch stays available to any
+operator**, because "turn those off please" should never need a password.
+
+**Save as boot default** writes the current look to the controller's EEPROM,
+which is also what the watchdog falls back to if the app stops talking.
+
+**Wiring:** power the strip from its own 5V supply (USB runs about eight pixels),
+tie all grounds together, 330Ω in series on the data line, 1000µF across the
+strip's 5V/GND.
+
+**Strip length:** stay at or below ~300 pixels on an Uno/Nano — the ATmega328P
+has 2KB of SRAM and FastLED uses 3 bytes per pixel. Beyond that, use an ESP32.
+
+### No hardware? 
+
+```bash
+PIT_LEDS_FAKE=1 uv run main.py
+```
+
+The panel connects to a simulated controller so the whole UI works on a machine
+with nothing plugged in.
+
+## Music
+
+A local media hub for the overhead speakers, with a ten-band equaliser.
+**Control Screen → Pit Systems → Music.**
+
+Point it at a folder with **Add folder…** and it indexes everything it finds
+(re-scanning is safe — it will not duplicate or lose your queue). Double-click to
+play. It works with no internet, no account, and no subscription.
+
+- **Volume cap** is the real ceiling; the volume slider cannot exceed it.
+- **Duck for a visitor** drops to 20% in one click. Judges mode does it on its own.
+- **The music folder is pre-curated by the team** — there is no explicit filter
+  in the app, so listen through the folder before an event.
+
+### Equaliser
+
+**Admin only** — click the Breakaway mark in the top-left to unlock.
+
+Ten bands, 31Hz to 16kHz, plus a preamp. Presets: *Pit Default*, *Crowded*,
+*Judges Visiting*, *Lunch*, *Flat*.
+
+Before touching a slider: **aim the speakers down into the pit**, not across the
+aisle. That beats any curve here. Then the two moves that matter most are a
+high-pass around 100–120Hz (pit boom is low end bouncing off concrete — cutting
+it makes you clearer *and* less annoying) and a broad cut at 200–400Hz for mud.
+Every preset does both.
+
+**Requires the VLC runtime.** Install VLC on the pit machine, or bundle
+`libvlc.dll` and its plugins folder. Without it the app still runs and the panel
+tells you what is missing — it just cannot play or equalise anything.
+
+### Spotify
+
+Not built in, on purpose. It needs internet for every command, Dev Mode caps an
+app at five users and requires the owner to keep an active Premium subscription,
+and there is no way to apply the equaliser to it. If you want Spotify at an
+event, run the desktop client on the pit machine alongside this app.
 
 ## CAD viewer
 

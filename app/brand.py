@@ -20,6 +20,14 @@ FONT_DISPLAY = "Chakra Petch"   # headlines, section titles, numbers, eyebrows
 FONT_BODY    = "Roboto"         # body copy, labels, tables, UI text
 FONT_MONO    = "JetBrains Mono" # data, scores, timestamps (tabular figures)
 
+# Mono is the one role the brand spec defines as a *stack* (§2: "ui-monospace /
+# JetBrains Mono"), so it needs real fallbacks. JetBrains Mono is bundled in
+# assets/fonts/ and loaded at startup, but naming a family Qt cannot find costs
+# a full font-alias sweep on every QFont construction — and prints a warning.
+# These are the platform defaults: macOS, Windows, Linux, then the universal.
+FONT_MONO_STACK = [FONT_MONO, "Menlo", "Consolas", "DejaVu Sans Mono",
+                   "Courier New", "monospace"]
+
 # ── Core brand colors ───────────────────────────────────────────────────────
 RED       = "#C82027"   # Breakaway Red — the brand. Focus, CTAs, highlights
 RED_HOVER = "#B01C22"   # primary button hover
