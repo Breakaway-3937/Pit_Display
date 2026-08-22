@@ -26,7 +26,8 @@ the power toggles in its sidebar.
   sidebar. Both follow the team colour and the display mode.
 - **Admin lock** — click the Breakaway mark (top-left) to unlock LED tuning and
   the equaliser. Closing it re-locks. See [`ADMIN_GUIDE.md`](ADMIN_GUIDE.md).
-- **Adding media** — music, judges slides, CAD: [`MEDIA_GUIDE.md`](MEDIA_GUIDE.md).
+- **Adding media** — music, judges slides, CAD, robot logs: [`MEDIA_GUIDE.md`](MEDIA_GUIDE.md).
+- **Database** — every table and query: [`DATABASE.md`](DATABASE.md).
 
 ## LED strips
 

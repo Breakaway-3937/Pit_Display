@@ -26,7 +26,7 @@ is the shell underneath. The logo is never a device.
 import math
 
 from PyQt6.QtWidgets import QFrame, QPushButton, QLabel, QWidget, QSizePolicy
-from PyQt6.QtCore import Qt, QRectF
+from PyQt6.QtCore import Qt, QRectF, QSize
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QPainterPath
 
 from app import brand
@@ -349,6 +349,16 @@ class Trace(QWidget):
         self._drop = max(20.0, 4.0 * stroke)   # 45° vertical travel of the entry
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(int(2 * stroke + self._drop))
+
+    # A bare QWidget has an invalid sizeHint, so any layout that positions this
+    # by its hint — addWidget(..., alignment=...) does exactly that — gave it
+    # zero width and the Trace silently never painted. Declare a real one.
+    def sizeHint(self) -> QSize:
+        return QSize(int(self._drop + 12 * self._stroke), self.height())
+
+    def minimumSizeHint(self) -> QSize:
+        # Enough for the diagonal, a short flat run, and the pad.
+        return QSize(int(self._drop + 5 * self._stroke), self.height())
 
     def set_color(self, hex_color: str):
         self._color = QColor(hex_color)

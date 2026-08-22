@@ -11,6 +11,7 @@ There are four kinds of media. Each has its own folder and its own rules.
 | [Music](#1-music) | any folder you pick | Any operator |
 | [Judges slides](#2-judges-slides) | `assets/judges_slides/` | Any operator |
 | [Robot CAD](#3-robot-cad) | uploaded through the app | Any operator |
+| [Robot logs](#5-robot-logs) | imported through the app | Any operator |
 | [Fonts](#4-fonts) | `assets/fonts/` | Developer only |
 
 ---
@@ -125,6 +126,43 @@ faces and swapping them makes the display off-brand. See `CLAUDE.md`.
 
 ---
 
+## 5. Robot logs
+
+Telemetry pulled off the robot as a Phoenix 6 **"detailed" text export** (`.txt`).
+
+**Control Screen → Pit Systems → Robot Logs → Choose log file…**
+
+A 3.8 GB export takes about a minute and the app stays usable while it runs. The
+importer keeps only the values that actually changed, so that 3.8 GB becomes
+about 83 MB on disk without losing anything you can ask for.
+
+### Name the CAN ids — do this once
+
+A log only ever says *"TalonFX 11"*. It has no idea that is the front-left drive
+motor, and it never will. The **CAN ID → name** table on that panel is where you
+type the English names.
+
+- Rows appear on their own the first time a device shows up in an import.
+- Type the name and subsystem straight into the table; it saves as you go.
+- **Names are per robot, not per log.** They persist across every future import
+  and survive deleting the session that created them.
+- Until a device is named, screens fall back to showing `TalonFX 11`.
+
+The counter in the corner tells you how many are still unnamed. Get it to zero
+once and you never think about it again that season.
+
+### Keeping the file size down
+
+Imported telemetry lives in its own file, `data/pit_display_samples.db`, apart
+from the app's settings. If it grows too large, delete a session from the panel
+(admin only) or delete that whole file when the app is closed — the app rebuilds
+it empty on the next start and your CAN names are untouched.
+
+**Archive the original exports.** They are the only way to re-import a session
+you have deleted.
+
+---
+
 ## Pre-event checklist
 
 - [ ] Music folder curated and **listened to end to end**
@@ -134,6 +172,7 @@ faces and swapping them makes the display off-brand. See `CLAUDE.md`.
 - [ ] Judges slides in `assets/judges_slides/`, numbered with leading zeros
 - [ ] Slides **Reload**ed and clicked through
 - [ ] Robot `.glb` uploaded, subsystems named and checked
+- [ ] Robot log imported and **every CAN id named** (Robot Logs panel shows "all named")
 - [ ] Admin password changed from the shipped default (see `ADMIN_GUIDE.md`)
 - [ ] Whole thing run **unplugged from the internet** for ten minutes to prove
       nothing quietly depends on it

@@ -25,19 +25,22 @@ from app.config import config, MODES, MODE_LABELS, SCREENS, SCREEN_LABELS
 from app.judges_slides import judges_slides
 from app.teams import all_teams
 from app.theme import apply_theme
-from app.widgets.brand_widgets import RoundedButton, RoundedFrame, eyebrow
+from app.widgets.brand_widgets import (
+    RoundedButton, RoundedFrame, eyebrow, mono_font,
+)
 from app.widgets.cad_upload_panel import CADSettingsPanel
 from app.widgets.admin_bar import AdminBar
 from app.widgets.helpers import clear_layout, divider, label
 from app.widgets.led_panel import LEDPanel
 from app.widgets.music_panel import MusicPanel
+from app.widgets.robot_panel import RobotLogPanel
 from app.widgets.toggle_switch import ToggleSwitch
 from app.leds import leds
 
 # Pit-wide subsystems. Unlike SCREENS these are not windows — they are hardware
 # the pit owns, so they get their own sidebar group and their own panels.
-SYSTEMS = ["leds", "music"]
-SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music"}
+SYSTEMS = ["leds", "music", "robot"]
+SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music", "robot": "Robot Logs"}
 
 
 # ── Mode button ──────────────────────────────────────────────────────────────
@@ -339,6 +342,224 @@ class _SlidePicker(QWidget):
         self._next_btn.setEnabled(has)
 
 
+# ── Standard slide picker ─────────────────────────────────────────────────────
+
+class _StandardSlideRow(QFrame):
+    """One row in the standard-slide list: number, title, and a preview line."""
+
+    clicked = pyqtSignal(int)
+
+    def __init__(self, index: int, title: str, body: str, is_fact: bool):
+        super().__init__()
+        self.index = index
+        self._active = False
+        self._is_fact = is_fact
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # QLabel subclasses QFrame, so a bare `QFrame { border-left: … }` rule
+        # paints that border on every child label too. Scope it by object name.
+        self.setObjectName("slide_row")
+
+        row = QVBoxLayout(self)
+        row.setContentsMargins(11, 8, 11, 8)
+        row.setSpacing(2)
+
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(8)
+        self._num = label(f"{index + 1:02d}", "stat_label")
+        self._num.setFont(mono_font(11))
+        self._num.setFixedWidth(22)
+        head.addWidget(self._num)
+        self._title = label(title, "stat_value")
+        self._title.setWordWrap(True)
+        head.addWidget(self._title, stretch=1)
+        if is_fact:
+            # Authored slides are edited in code; fact slides regenerate from
+            # the log. Worth telling them apart at a glance.
+            tag = label("FROM LOG", "stat_label")
+            tag.setFont(mono_font(9))
+            tag.setStyleSheet(f"color: {brand.STATUS_ONLINE}; background: transparent;")
+            head.addWidget(tag)
+        row.addLayout(head)
+
+        self._body = label(body, "stat_label")
+        self._body.setWordWrap(True)
+        self._body.setContentsMargins(30, 0, 0, 0)
+        row.addWidget(self._body)
+
+        self._apply_style()
+
+    def set_active(self, active: bool):
+        if active != self._active:
+            self._active = active
+            self._apply_style()
+
+    def apply_team(self, _color: str):
+        self._apply_style()
+
+    def _apply_style(self):
+        accent = config.active_team.primary_color
+        if self._active:
+            self.setStyleSheet(
+                f"QFrame#slide_row {{ background-color: {brand.CARBON_SURF2};"
+                f" border-left: 3px solid {accent}; border-radius: 0; }}")
+            self._num.setStyleSheet(
+                f"color: {accent}; background: transparent;")
+        else:
+            self.setStyleSheet(
+                "QFrame#slide_row { background-color: transparent;"
+                " border-left: 3px solid transparent; border-radius: 0; }")
+            self._num.setStyleSheet(
+                f"color: {brand.FAINT_DARK}; background: transparent;")
+
+    def mousePressEvent(self, _event):
+        self.clicked.emit(self.index)
+
+
+class _StandardSlidePicker(QWidget):
+    """
+    Every slide in the Standard rotation for one presentation screen, with the
+    live one highlighted and clickable to jump.
+
+    Jumps travel through `config.set(screen, "slide_index", n)` rather than a
+    direct call, for the same reason everything else here does: the control
+    screen never holds a reference to a presentation window.
+    """
+
+    def __init__(self, screen_id: str):
+        super().__init__()
+        self._screen_id = screen_id
+        self._rows: list[_StandardSlideRow] = []
+        self._build_ui()
+        config.screen_setting_changed.connect(self._on_setting_changed)
+        config.mode_changed.connect(lambda _m: self._refresh_enabled())
+        config.team_changed.connect(self._on_team_changed)
+        self._rebuild()
+
+    def _build_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        self._count_lbl = label("", "stat_label")
+        head.addWidget(self._count_lbl)
+        head.addStretch()
+        self._mode_hint = label("", "stat_label")
+        head.addWidget(self._mode_hint)
+        outer.addLayout(head)
+
+        self._list_host = QWidget()
+        self._list = QVBoxLayout(self._list_host)
+        self._list.setContentsMargins(0, 0, 0, 0)
+        self._list.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidget(self._list_host)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setMinimumHeight(260)
+        outer.addWidget(scroll)
+
+        nav = QHBoxLayout()
+        nav.setSpacing(8)
+        prev = RoundedButton("‹ Previous", variant="secondary",
+                             accent=config.active_team.primary_color)
+        prev.clicked.connect(lambda: self._step(-1))
+        nxt = RoundedButton("Next ›", variant="secondary",
+                            accent=config.active_team.primary_color)
+        nxt.clicked.connect(lambda: self._step(+1))
+        first = RoundedButton("↩ First", variant="ghost")
+        first.clicked.connect(lambda: self._jump(0))
+        reload_btn = RoundedButton("↺ Reload", variant="ghost")
+        reload_btn.setToolTip(
+            "Rebuild the list after importing a robot log. The presentation "
+            "screen picks up new slides when it is powered off and on.")
+        reload_btn.clicked.connect(self._rebuild)
+        for b in (prev, nxt, first, reload_btn):
+            nav.addWidget(b)
+        self._nav_buttons = [prev, nxt]
+        outer.addLayout(nav)
+
+    # ── Build the list ────────────────────────────────────────────────────
+
+    def _slides(self) -> list[tuple[str, str]]:
+        from app.windows.presentation_a import PresentationScreenA
+        from app.windows.presentation_b import PresentationScreenB
+        cls = (PresentationScreenA if self._screen_id == "presentation_a"
+               else PresentationScreenB)
+        try:
+            return cls.rotation_slides()
+        except Exception:
+            return list(cls.SLIDES)
+
+    def _rebuild(self):
+        clear_layout(self._list)
+        self._rows.clear()
+        slides = self._slides()
+        authored = len(self._authored())
+        for i, (title, body) in enumerate(slides):
+            row = _StandardSlideRow(i, title, body, is_fact=i >= authored)
+            row.clicked.connect(self._jump)
+            self._rows.append(row)
+            self._list.addWidget(row)
+        self._list.addStretch()
+
+        facts = len(slides) - authored
+        self._count_lbl.setText(
+            f"{len(slides)} slides — {authored} authored"
+            + (f", {facts} from the robot log" if facts else ""))
+        self._refresh_active()
+        self._refresh_enabled()
+
+    def _authored(self) -> list:
+        from app.windows.presentation_a import PresentationScreenA
+        from app.windows.presentation_b import PresentationScreenB
+        cls = (PresentationScreenA if self._screen_id == "presentation_a"
+               else PresentationScreenB)
+        return cls.SLIDES
+
+    # ── Interaction ───────────────────────────────────────────────────────
+
+    def _current(self) -> int:
+        return int(config.get(self._screen_id, "slide_index", 0) or 0)
+
+    def _jump(self, index: int):
+        if not self._rows:
+            return
+        config.set(self._screen_id, "slide_index", index % len(self._rows))
+
+    def _step(self, delta: int):
+        self._jump(self._current() + delta)
+
+    def _on_setting_changed(self, screen: str, key: str, _value):
+        if screen == self._screen_id and key == "slide_index":
+            self._refresh_active()
+
+    def _refresh_active(self):
+        current = self._current()
+        for row in self._rows:
+            row.set_active(row.index == current)
+
+    def _refresh_enabled(self):
+        standard = config.mode == "standard"
+        self._mode_hint.setText(
+            "" if standard else f"{MODE_LABELS.get(config.mode, config.mode)} mode is live")
+        self._mode_hint.setStyleSheet(
+            f"color: {brand.STATUS_PENDING}; background: transparent;")
+        for b in self._nav_buttons:
+            b.setEnabled(True)   # jumping while in another mode still sets the
+                                 # slide the screen returns to
+
+    def _on_team_changed(self, team):
+        for row in self._rows:
+            row.apply_team(team.primary_color)
+        for b in self._nav_buttons:
+            b.set_accent(team.primary_color)
+
+
 # ── CAD judges picker ─────────────────────────────────────────────────────────
 
 class _CADJudgesPicker(QWidget):
@@ -481,6 +702,18 @@ class ScreenSettingsPanel(QWidget):
 
         # Judges content — only relevant for presentation screens
         if screen_id in ("presentation_a", "presentation_b"):
+            outer.addWidget(label("Standard Slides", "screen_title"))
+            outer.addSpacing(4)
+            outer.addWidget(label(
+                "Everything in this screen's Standard rotation. Click one to "
+                "put it on screen now; the 45-second timer carries on from there.",
+                "stat_label"))
+            outer.addSpacing(8)
+            outer.addWidget(_StandardSlidePicker(screen_id))
+            outer.addSpacing(16)
+            outer.addWidget(divider())
+            outer.addSpacing(12)
+
             outer.addWidget(label("Judges Slides", "screen_title"))
             outer.addSpacing(8)
             outer.addWidget(_SlidePicker())
@@ -564,6 +797,9 @@ class SystemSettingsPanel(QWidget):
                 "running its animation if this app closes.",
         "music": "Local music for the overhead speakers, with a ten-band "
                  "equaliser for tuning the pit.",
+        "robot": "Import telemetry exported off the robot, and name the CAN "
+                 "ids so every screen can say “Front-Left Drive” instead of "
+                 "“TalonFX 11”.",
     }
 
     def __init__(self, system_id: str):
@@ -581,7 +817,8 @@ class SystemSettingsPanel(QWidget):
         outer.addWidget(divider())
         outer.addSpacing(16)
 
-        self.body = LEDPanel() if system_id == "leds" else MusicPanel()
+        self.body = {"leds": LEDPanel, "music": MusicPanel,
+                     "robot": RobotLogPanel}[system_id]()
         outer.addWidget(self.body)
         outer.addStretch()
 

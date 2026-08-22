@@ -14,6 +14,18 @@ uv run pit-display
 
 There are no tests and no linter configured. The only runtime check is launching the app.
 
+## Database
+
+**[`DATABASE.md`](DATABASE.md) is the authoritative reference** — every table,
+every column, every query, and the invariants that will bite you. Read it before
+touching storage, and update it whenever you add a table, a migration, or a
+query. It is the contract between the schema and everything that reads it.
+
+The short version: two SQLite files. `data/pit_display.db` holds settings,
+presets, the music library and all robot-log metadata; `data/pit_display_samples.db`
+is ATTACHed as `samples` and holds only bulk telemetry. The second is disposable
+by design and its schema is deliberately unversioned.
+
 ## Architecture
 
 Four-window PyQt6 desktop app for FRC pit displays. All windows are created at startup; only the control screen is shown on boot. The other three are shown/hidden by power toggles in the control screen sidebar.
@@ -61,7 +73,29 @@ All cross-component communication uses Qt signals — no direct calls between wi
 - `config.team_changed` → LED strips wash to the team colour (when following)
 - `config.mode_changed` → LED preset + EQ curve swap; judges mode auto-ducks audio
 - `cad_assets.subsystem_focused` → strips echo that subsystem's `accent_color`
+- `config.set(screen, "slide_index", n)` → that presentation screen jumps to slide n;
+  the screen writes the same key back as the rotation advances, so the control
+  screen's picker stays in sync
 - `admin.lock_state_changed` → `LEDPanel` / `MusicPanel` show or hide their gated blocks
+
+### Qt layout traps hit in this codebase
+
+Three real bugs, all from the same root cause — **`addWidget(w, alignment=…)`
+lays the widget out at its `sizeHint()`**, ignoring `heightForWidth` and any
+expanding policy:
+
+- A word-wrapped `QLabel` gets a one-line height, so long body text is clipped.
+- A custom `QWidget` with no `sizeHint()` gets zero width. `Trace` had this —
+  it silently never painted on any presentation slide.
+
+Centre with a stretch row (`addStretch / addWidget / addStretch`) instead, and
+give custom painted widgets a real `sizeHint()`. Related: `layout.setAlignment(
+AlignCenter)` on a `QVBoxLayout` collapses it to minimum size, so wrapped labels
+wrap at their narrowest — use stretches for vertical centring too.
+
+Also: **`helpers.label()` does not word-wrap.** A long unwrapped label forces its
+whole panel wider than the window and pushes table columns off-screen. Call
+`setWordWrap(True)` on any prose.
 
 ### Theming
 
@@ -92,6 +126,25 @@ Windows pit machine.
 ### Adding a team
 
 Edit `app/teams.py` — add an entry to the `TEAMS` dict. The control screen combo box picks it up automatically.
+
+### Standard slide picker
+
+**Control Screen → Presentation A/B → Standard Slides** lists every slide in
+that screen's rotation (authored + fun facts), highlights the live one, and
+jumps on click. Prev / Next / First / Reload underneath.
+
+Jumps travel through `config.set(screen_id, "slide_index", n)` — the control
+screen never holds a reference to a presentation window, same as every other
+cross-window command here.
+
+**The feedback loop is closed by two idempotence guards**, and both are load
+bearing: `config.set()` ignores an unchanged value, and `SlidePanel.set_slide()`
+ignores a re-select. The round trip (picker → config → screen → config) settles
+on the first pass. Verified: one click produces exactly one config write. If you
+add another writer of this key, keep that property.
+
+`PresentationScreen.rotation_slides()` is a **classmethod** so the picker can
+list slides without a live window.
 
 ### Judges slides
 
@@ -183,9 +236,8 @@ To gate something new: subscribe to `admin.lock_state_changed(bool)` and call
 the gated widgets in **one container** and toggle that, rather than tracking a
 list of individual widgets.
 
-Credential: PBKDF2-HMAC-SHA256, random per-credential salt, 200k iterations,
-`hmac.compare_digest`, one row (`id = 1`) in `admin_credential` (migration
-`_v6_admin`). Default password is `Password`; the bar nags until it is changed.
+Credential: PBKDF2-HMAC-SHA256, one row in `admin_credential` — see
+[`DATABASE.md`](DATABASE.md). Default password is `Password`; the bar nags until it is changed.
 **It is a UI lock, not a security boundary** — the DB is a local file. The
 docstring in `app/admin.py` says so at length; keep that framing honest.
 
@@ -196,9 +248,48 @@ panel), which tells you nothing about the gate.
 ### Media
 
 No explicit-content filter — the team pre-curates the music folder. Do not
-re-add per-track filtering; it was removed in migration `_v5_drop_explicit`.
+re-add per-track filtering; it was removed in migration `_v5_drop_explicit`
+(see [`DATABASE.md`](DATABASE.md)).
 Operator instructions for every media type: [`MEDIA_GUIDE.md`](MEDIA_GUIDE.md).
+
+### Robot logs (`app/robot/`)
+
+Imports CTRE Phoenix 6 "detailed" text exports. **Schema, queries and the traps
+are in [`DATABASE.md`](DATABASE.md)** — this section covers only the code layout.
+
+| File | Role |
+|---|---|
+| `parser.py` | Line grammar + `classify()`. Pure, no I/O |
+| `ingest.py` | One streaming pass; own connection, own thread |
+| `repository.py` | Every query the screens use |
+| `distance.py` | Wheel odometry |
+| `fun_facts.py` | Silly-but-true slides for the standard rotation |
+| `app/widgets/robot_panel.py` | Import button + the CAN-id name table |
+
+Measured on the real 3.85 GB export: 62,118,775 raw rows → 3,263,543 stored in
+75 s; 83 MB of telemetry, main DB still ~270 KB. Summary queries under 0.5 ms.
+
+**Before writing any query over this data**, read the Invariants section of
+[`DATABASE.md`](DATABASE.md). Four of them produce plausible wrong answers
+rather than errors: the non-unique `(series_id, t_ms)` key, millisecond (not
+microsecond) timestamps, change-only samples needing zero-order-hold
+integration, and motor-shaft (not wheel) units on the drive motors.
+
+**Fun-fact slides.** `fun_facts.slides()` turns the imported log into
+(title, body) pairs that `PresentationScreen._rotation_slides()` appends to each
+screen's authored `SLIDES`. Two rules: **every number is real** (nothing invented
+or rounded for effect — a visitor who asks "is that true?" gets a yes), and the
+jokes are at our own expense. Returns `[]` with no import, so the rotation just
+omits them. Facts are read at construction; `reload_slides()` picks up a new
+import without a restart.
+
+**The CAN-id name map is the manual step.** `device` rows appear automatically
+on import with `label` NULL; names are typed in **Control Screen → Pit Systems →
+Robot Logs** and persist across imports. Naming is intentionally **not**
+admin-gated (it is data entry); deleting a session is, because it destroys
+samples.
 
 ### Empty stubs
 
-`app/db/` (repositories, sync) and `app/robot/` are empty stubs for future SQLite and robot-file features.
+`app/db/repositories/` and `app/db/sync/` are empty stubs for the future
+on-prem SQL Server sync.

@@ -53,11 +53,47 @@ class PresentationScreen(QMainWindow):
         # Apply whatever theme was already selected for this screen.
         apply_theme(self, config.screen_theme(self.SCREEN_ID))
 
+    @classmethod
+    def rotation_slides(cls) -> list[tuple[str, str]]:
+        """
+        The standard rotation: this screen's own slides, then any fun facts
+        generated from imported robot logs.
+
+        Facts are read once, at construction. Importing a new log while a
+        presentation screen is open will not change what it shows until the
+        screen is power-cycled from the control sidebar — the same way judges
+        slides need a Reload. `reload_slides()` does it without a restart.
+        """
+        slides = list(cls.SLIDES)
+        try:
+            from app.robot.fun_facts import slides as fact_slides
+            slides += fact_slides()
+        except Exception:
+            # A malformed or partially-imported log must never stop the
+            # audience screens from coming up.
+            pass
+        return slides
+
+    def reload_slides(self) -> None:
+        """Rebuild the rotation, picking up newly imported robot logs."""
+        new = SlidePanel(self.rotation_slides())
+        old = self._slides
+        self._stack.insertWidget(self._PAGE_NORMAL, new)
+        self._stack.removeWidget(old)
+        old.deleteLater()
+        self._slides = new
+        new.slide_changed.connect(self._on_slide_changed)
+        new.apply_team(config.active_team)
+        if self._stack.currentIndex() == self._PAGE_NORMAL:
+            self._stack.setCurrentIndex(self._PAGE_NORMAL)
+
     def _build_ui(self):
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
-        self._slides = SlidePanel(self.SLIDES)
+        self._slides = SlidePanel(self.rotation_slides())
+        # Report every move so the control screen's picker can follow along.
+        self._slides.slide_changed.connect(self._on_slide_changed)
         self._stack.addWidget(self._slides)                 # 0
 
         self._lunch = LunchOverlay(screen_id=self.SCREEN_ID)
@@ -118,8 +154,21 @@ class PresentationScreen(QMainWindow):
         self._slides.apply_team(team)
         self._cad_view.set_accent(team.primary_color)
 
+    def _on_slide_changed(self, index: int):
+        """
+        Publish the current slide so the control screen can highlight it.
+
+        Safe against a feedback loop: config.set() ignores an unchanged value
+        and SlidePanel.set_slide() ignores a re-select, so the round trip
+        terminates on the first pass.
+        """
+        config.set(self.SCREEN_ID, "slide_index", index)
+
     def _on_setting_changed(self, screen: str, key: str, value):
         if screen != self.SCREEN_ID:
+            return
+        if key == "slide_index":
+            self._slides.set_slide(int(value))
             return
         if key == "theme":
             apply_theme(self, value)

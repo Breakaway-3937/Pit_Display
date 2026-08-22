@@ -12,8 +12,10 @@ Usage:
     panel.reset()  # jump back to slide 0
 """
 
-from PyQt6.QtWidgets import QWidget, QStackedWidget, QVBoxLayout, QLabel, QSizePolicy
-from PyQt6.QtCore import Qt, QRectF
+from PyQt6.QtWidgets import (
+    QWidget, QStackedWidget, QVBoxLayout, QHBoxLayout, QLabel, QSizePolicy,
+)
+from PyQt6.QtCore import Qt, pyqtSignal, QRectF
 from PyQt6.QtGui import QPainter, QColor
 
 from app import brand
@@ -85,9 +87,13 @@ class _Slide(QWidget):
         accent = config.active_team.primary_color
 
         layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Centre with stretches, NOT layout.setAlignment(AlignCenter): that
+        # collapses the layout to its minimum size, so word-wrapped labels get
+        # their narrowest width and a long body is clipped instead of wrapping
+        # into the space that is actually available.
         layout.setSpacing(18)
         layout.setContentsMargins(80, 40, 80, 40)
+        layout.addStretch(1)
 
         self._eyebrow = eyebrow(self._eyebrow_text(), accent)
         self._eyebrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -105,7 +111,13 @@ class _Slide(QWidget):
         # Trace — one leading line per slide, centered under the headline
         self._trace = Trace(color=accent, stroke=6)
         self._trace.setMaximumWidth(320)
-        layout.addWidget(self._trace, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self._trace.setMinimumWidth(220)
+        trace_row = QHBoxLayout()
+        trace_row.setContentsMargins(0, 0, 0, 0)
+        trace_row.addStretch(1)
+        trace_row.addWidget(self._trace)
+        trace_row.addStretch(1)
+        layout.addLayout(trace_row)
 
         self._body = QLabel(body)
         self._body.setObjectName("stat_label")
@@ -113,7 +125,23 @@ class _Slide(QWidget):
         self._body.setWordWrap(True)
         self._body.setStyleSheet("font-size: 18px;")  # overrides #stat_label 12px
         self._body.setMaximumWidth(720)
-        layout.addWidget(self._body, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self._body.setMinimumWidth(520)
+        # Word-wrapped labels compute height from width, so the layout has to be
+        # told to ask. Without this a multi-line body is given a single line.
+        body_policy = self._body.sizePolicy()
+        body_policy.setHeightForWidth(True)
+        self._body.setSizePolicy(body_policy)
+        # Centre the body with a stretch row rather than addWidget(alignment=…).
+        # Passing an alignment makes Qt lay the widget out at its sizeHint, which
+        # for a word-wrapped label is one line tall — so a multi-line body gets
+        # clipped. Inside a row it receives a real width and heightForWidth works.
+        body_row = QHBoxLayout()
+        body_row.setContentsMargins(0, 0, 0, 0)
+        body_row.addStretch(1)
+        body_row.addWidget(self._body)
+        body_row.addStretch(1)
+        layout.addLayout(body_row)
+        layout.addStretch(1)
 
     def _eyebrow_text(self) -> str:
         team = config.active_team
@@ -133,7 +161,13 @@ class SlidePanel(QWidget):
     Stacked slides with a dot-indicator footer.
     Connect rotation.advance → next_slide().
     Call reset() when returning from another mode.
+
+    `slide_changed` fires on every move, however it was caused — the rotation
+    timer or an operator jumping from the control screen — so a picker can stay
+    in sync without polling.
     """
+
+    slide_changed = pyqtSignal(int)
 
     def __init__(self, slides: list[tuple[str, str]], parent=None):
         super().__init__(parent)
@@ -156,14 +190,39 @@ class SlidePanel(QWidget):
         outer.addSpacing(24)
 
     def next_slide(self):
-        self._index = (self._index + 1) % self._stack.count()
-        self._stack.setCurrentIndex(self._index)
-        self._dots.set_active(self._index)
+        self.set_slide(self._index + 1)
+
+    def previous_slide(self):
+        self.set_slide(self._index - 1)
+
+    def set_slide(self, index: int):
+        """
+        Jump to a slide. Wraps in both directions, so the control screen's
+        prev/next need no bounds checking. Idempotent — re-selecting the
+        current slide emits nothing, which is what stops the control screen and
+        the presentation screen echoing each other through config.
+        """
+        count = self._stack.count()
+        if count == 0:
+            return
+        index %= count
+        if index == self._index:
+            return
+        self._index = index
+        self._stack.setCurrentIndex(index)
+        self._dots.set_active(index)
+        self.slide_changed.emit(index)
 
     def reset(self):
-        self._index = 0
-        self._stack.setCurrentIndex(0)
-        self._dots.set_active(0)
+        self.set_slide(0)
+
+    def titles(self) -> list[str]:
+        return [self._stack.widget(i)._title.text()
+                for i in range(self._stack.count())]
+
+    @property
+    def count(self) -> int:
+        return self._stack.count()
 
     def apply_team(self, team):
         """Re-brand every slide to the newly active team."""

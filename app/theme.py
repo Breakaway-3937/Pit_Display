@@ -136,6 +136,21 @@ def _qss(p: dict) -> str:
     }}
     QLineEdit:focus, QTextEdit:focus {{ border-color: {brand.RED}; }}
 
+    /* In-cell editors reuse the QLineEdit rule above, but a table row is only
+       ~30px tall — 7px of vertical padding plus a 10px radius leaves almost no
+       room, so the text you are typing gets clipped even though it renders
+       correctly once committed. Give editors inside item views their own tight
+       geometry. */
+    QAbstractItemView QLineEdit,
+    QAbstractItemView QComboBox,
+    QAbstractItemView QSpinBox {{
+        padding: 0px 5px;
+        border-radius: 3px;
+        border: 1px solid {brand.RED};
+        margin: 0px;
+        min-height: 0px;
+    }}
+
     QCheckBox {{ spacing: 8px; }}
     QCheckBox::indicator {{
         width: 16px; height: 16px; border: 1px solid {p["input_border"]};
