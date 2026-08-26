@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- user-scalable=no: Chromium's own pinch-zoom and double-tap-zoom would
+     otherwise swallow the two-finger gestures the viewer needs. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>CAD Viewer</title>
 <style>
   /* Breakaway 3937 — CAD viewer. Carbon ground, one red used with intent,
@@ -58,6 +60,12 @@
     height: 100vh;
     font-family: "Roboto", system-ui, sans-serif;
     color: var(--ink);
+    /* Kiosk touch hygiene: no rubber-band overscroll, no blue flash on tap,
+       no text selection from a long press by a visitor's resting finger. */
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   canvas {
@@ -66,6 +74,11 @@
     display: block;
     width: 100%;
     height: 100%;
+    /* Load bearing for multi-touch. Without `touch-action: none` the browser
+       claims two-finger gestures for page pan/zoom and fires `pointercancel`
+       part-way through, so a pinch-to-zoom dies mid-gesture and the tumble
+       never gets its pointer back. */
+    touch-action: none;
   }
 
   /* ── Subsystem name label (top-left) ── */
@@ -154,7 +167,12 @@
     padding: 0 20px;
     gap: 10px;
     overflow-x: auto;
+    /* The bar is the one thing on the page a finger may still drag, and only
+       sideways — everything else is the canvas, which owns its gestures. */
+    touch-action: pan-x;
+    scrollbar-width: none;
   }
+  #sub-bar::-webkit-scrollbar { display: none; }
   #sub-bar.hidden {
     display: none;
   }
@@ -173,6 +191,7 @@
     flex-shrink: 0;
     outline: none;
     transition: color 0.15s, background 0.15s;
+    touch-action: manipulation;   /* no 300ms double-tap-zoom wait */
   }
   .sub-btn:hover {
     color: #ffffff;

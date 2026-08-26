@@ -30,7 +30,9 @@ from app import brand
 from app.admin import admin
 from app.config import config
 from app.db import db
-from app.robot import ImportError_, delete_session, import_log, repository as repo
+from app.robot import (
+    ImportError_, delete_session, import_log, owlet, repository as repo,
+)
 from app.widgets.brand_widgets import RoundedButton, RoundedFrame, eyebrow, mono_font
 from app.widgets.helpers import divider, label
 
@@ -115,10 +117,25 @@ class RobotLogPanel(QWidget):
 
         root.addSpacing(6)
         import_help = label(
-            "Phoenix 6 “detailed” text exports (.txt). A 3.8 GB file takes about "
-            "a minute; the app stays usable while it runs.", "stat_label")
+            "A .hoot straight off the controller, a .wpilog off the roboRIO, or "
+            "an older Phoenix “detailed” .txt export. A .hoot is extracted with "
+            "owlet first, so it takes longer than its size suggests; the app "
+            "stays usable throughout.", "stat_label")
         import_help.setWordWrap(True)
         root.addWidget(import_help)
+
+        # Which owlet this machine picked. Shown because "no owlet for your
+        # platform" is the one import failure an operator can neither diagnose
+        # nor fix from the error alone — and the pit machine is Windows while
+        # every machine this is built on is not.
+        root.addSpacing(4)
+        owlet_line = label(owlet.describe(), "stat_label")
+        owlet_line.setWordWrap(True)
+        owlet_line.setFont(mono_font())
+        if not owlet.available():
+            owlet_line.setStyleSheet(
+                f"color: {brand.STATUS_PENDING}; background: transparent;")
+        root.addWidget(owlet_line)
         root.addSpacing(16)
 
         self._totals = RoundedFrame(fill=brand.CARBON_SURF2, border=brand.CARBON_LINE,
@@ -359,8 +376,10 @@ class RobotLogPanel(QWidget):
 
     def _choose_file(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Choose a Phoenix detailed export", "",
-            "Log exports (*.txt);;All files (*)")
+            self, "Choose a robot log", "",
+            "Robot logs (*.hoot *.wpilog *.txt);;"
+            "Phoenix hoot (*.hoot);;WPILib DataLog (*.wpilog);;"
+            "Phoenix detailed export (*.txt);;All files (*)")
         if path:
             self.start_import(Path(path))
 
@@ -389,10 +408,20 @@ class RobotLogPanel(QWidget):
             note = (f" · {len(result.new_devices)} new device(s) need names: "
                     + ", ".join(result.new_devices[:6])
                     + ("…" if len(result.new_devices) > 6 else ""))
+        # Say what was dropped. A log that is a third unstorable is one somebody
+        # needs to look at, and silence would read as a clean import.
+        if result.skipped:
+            note += f" · {result.skipped:,} record(s) skipped (unstorable type)"
+        if result.enum_overflow:
+            note += (" · too many distinct values, not stored: "
+                     + ", ".join(result.enum_overflow[:3]))
         self._import_status.setText(
             f"Imported {result.raw_rows:,} rows as {result.stored_rows:,} "
             f"({result.compression:.0f}× smaller) in {result.elapsed_s:.0f}s{note}")
         self.refresh()
+        # Every screen that reads the log picks the new one up now, rather than
+        # after a power-cycle from the sidebar.
+        config.notify_logs_changed()
 
     def _on_failed(self, message: str):
         self._import_btn.setEnabled(True)
@@ -418,6 +447,7 @@ class RobotLogPanel(QWidget):
             return
         delete_session(sid, Path(db.path))
         self.refresh()
+        config.notify_logs_changed()
 
     # ── Admin gating ──────────────────────────────────────────────────────
 

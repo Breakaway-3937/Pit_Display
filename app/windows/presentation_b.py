@@ -7,6 +7,9 @@ class PresentationScreenB(PresentationScreen):
 
     SCREEN_ID = "presentation_b"
 
+    # B asks "what is wrong, on which motor?" — the board you walk up to.
+    BOARD_CONTENT = "robot_info"
+
     SLIDES = [
         (
             "Our Design Process",

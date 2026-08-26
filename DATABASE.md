@@ -73,6 +73,7 @@ side effect. `main.py` does this at the top.
 | 5 | `_v5_drop_explicit` | drops `tracks.explicit` |
 | 6 | `_v6_admin` | `admin_credential` |
 | 7 | `_v7_robot_logs` | `log_session`, `device`, `signal`, `signal_enum`, `series`, `session_constant`, `fault_event` |
+| 8 | `_v8_checklists` | `checklist`, `checklist_item` |
 
 **Never edit a migration that has shipped.** Add a new one. A migration must be
 safe to run against a database that already has data — `_v5` checks
@@ -124,6 +125,50 @@ Always read and written as a complete set of ten and never queried per band, so
 a column beats a child table here. `built_in = 1` rows are protected — saving
 over one forks a copy named `"<name> (edited)"`.
 
+#### `checklist` / `checklist_item`
+The pit checklists shown on the overhead screens. Written and ticked from
+Control → (a presentation screen) → Checklist; read by `ChecklistOverlay`.
+
+`checklist`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `name` | TEXT UNIQUE | |
+| `position` | INTEGER | display order in the picker |
+| `created_at` | TEXT | |
+
+`checklist_item`
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `checklist_id` | INTEGER | → `checklist(id)` **ON DELETE CASCADE** |
+| `text` | TEXT | the item as it appears on screen |
+| `position` | INTEGER | display order — **not** `id`, see below |
+| `done` | INTEGER | 0/1 |
+| `done_at` | TEXT | set when ticked, NULL when cleared |
+
+Index: `idx_checklist_item_list` on `(checklist_id, position)`.
+
+Three things to know before querying this:
+
+- **`position` is the order, `id` is not.** Items get reordered, and a row that
+  moves must not have to be deleted and re-inserted to do it. `_ChecklistService`
+  renumbers densely from 0 after every structural change, so always
+  `ORDER BY position, id` — never `ORDER BY id`.
+- **`done` is persistent state, not session state.** The crew ticks items off
+  across a whole match cycle, and the app closing between matches must not
+  silently un-tick the work. Clearing it is an explicit operator Reset
+  (`UPDATE … SET done = 0`), never a side effect of a restart.
+- **Which list a screen shows is not in this schema.** It is the per-screen
+  `checklist_id` setting in `app.config`, so the two overhead screens can point
+  at different lists. A screen whose list gets deleted falls back to
+  `default_list_id()` rather than going blank.
+
+Migration `_v8` seeds one empty list named `Pit Checklist` — somewhere for the
+first item to go. The items themselves are the team's to write.
+
 #### `admin_credential`
 Exactly one row, `CHECK (id = 1)`. PBKDF2-HMAC-SHA256, random per-credential
 salt, 200k iterations. `is_default = 1` while the shipped password is unchanged,
@@ -152,6 +197,63 @@ log_session ──┬── series ──┬── samples.sample      (change p
 device  ──────┘  signal ──── signal_enum
 ```
 
+#### The pipeline that fills these tables
+
+Three shapes of file arrive in the pit and all three land here. `app/robot/`
+holds the code; the layout is in [`CLAUDE.md`](CLAUDE.md).
+
+```
+robot.hoot   ──owlet -f wpilog──▶  .wpilog ──┐
+robot.wpilog ───────────────────────────────┼──▶ (t_ms, device, can id, signal, value)
+…_detailed.txt ──parser.parse_line──────────┘                    │
+                                                                 ▼
+                     device · signal · series · sample · session_constant · fault_event
+```
+
+The storage code sees one record stream and cannot tell which source produced a
+row — a `.hoot`, its `.wpilog` extraction, and a hand-made `.txt` export of the
+same log all write identical `device` / `signal` / `series` rows. That is what
+lets the CAN-id names survive a change of import route.
+
+**The one thing a wpilog adds** is signals with no CAN address at all: the
+team's application data, which does not exist in a hoot. Those go to the
+pseudo-device below.
+
+Verified against the team's own logs of 2026-08-17 (one `.hoot`, two
+AdvantageKit `.wpilog`):
+
+| | entry shape | resolves to |
+|---|---|---|
+| owlet's hoot export | `Phoenix6/TalonFX-12/MotorVoltage` | `TalonFX 12`, signal `MotorVoltage` |
+| owlet, non-CAN | `RobotMode`, `DS:IsFMSAttached` | `Robot -1` |
+| AdvantageKit | `/RealOutputs/Shooter Lead Temp F` | `Robot -1`, full path as the name |
+
+**All 112 TalonFX signal names from the hoot route match the text-export route
+exactly**, so the two land on the same `signal` rows and the CAN-id names carry
+over. That equivalence is the property to re-check if the entry naming ever
+moves.
+
+#### Losslessness, audited
+
+Every series was rebuilt from the database and compared against the source file
+record by record — the source's value sequence run-length encoded (which is
+exactly what change-only storage should keep) against what is actually stored,
+in order. **1,912,619 source records, 100.00% accounted for, zero mismatches**
+on all three logs.
+
+| | records | where it went |
+|---|---:|---|
+| change-only series | 1,235,639 | `samples.sample`, exact |
+| never-changing series | 450,450 | `session_constant`, exact (878 rows) |
+| fault bits | 84,604 | `fault_event`, exact (32 intervals) |
+| `Timestamp` | 141,926 | one series per session kept, the duplicates dropped |
+| `string[]` / `raw` | 12 | **dropped** — no REAL representation |
+
+The reader was also checked against an independent walk of each file that shares
+none of its logic: rows produced equals rows expected, exactly, on all three.
+Re-run both after any change to `wpilog.py`, `parser.classify()` or the storage
+loop — and read invariant 8 first.
+
 #### `log_session`
 One row per imported file.
 
@@ -159,12 +261,12 @@ One row per imported file.
 |---|---|
 | `source_file` | absolute path, **UNIQUE** — a second import of the same file fails loudly instead of silently doubling the data |
 | `source_name` | basename, for display |
-| `source_kind` | `hoot` \| `wpilog` — the same tables hold both sources |
+| `source_kind` | `hoot` \| `wpilog` — the same tables hold both sources. A `.hoot` and the `.txt` export of one are both `hoot`; the roboRIO's own DataLogManager file is `wpilog` |
 | `device_serial`, `started_at` | parsed from the filename |
 | `duration_s` | length of the log in seconds |
-| `raw_rows`, `stored_rows` | compression audit. A ratio far off ~19× is the cheapest signal that the export format changed |
+| `raw_rows`, `stored_rows` | compression audit — **read it against `source_kind`**. A hoot compresses ~19×; a wpilog is *already* change-only and lands near 1.1×, which is normal and not a fault. A hoot far off 19× is the cheapest signal that the export format changed |
 | `source_bytes`, `archive_path` | provenance for re-import after eviction |
-| `match_key`, `notes`, `keep` | operator metadata; `keep = 1` exempts from future eviction |
+| `match_key`, `notes`, `keep` | operator metadata; `keep = 1` exempts from future eviction. `match_key` is pre-filled from the filename when it carries a match (`FRC_…_Q15` → `qm15`) and is editable either way |
 
 #### `device` — the CAN-id → English name map
 **This is the hand-maintained translation table.** A log only ever says
@@ -189,6 +291,26 @@ in, read from the `ConnectedMotor` constant (`KrakenX60`, `KrakenX44`). It is
 observed, not typed, and is empty for CANcoder and Pigeon2, which have no such
 signal.
 
+**One row in this table is not a CAN device.** Application signals from a
+`.wpilog` — robot states, PDH currents, shooter setpoints — have no CAN address,
+so they are all filed under a reserved pseudo-device:
+
+| `device_type` | `can_id` | `label` | `subsystem` |
+|---|---|---|---|
+| `Robot` | `-1` | `Robot Code` | `Application` |
+
+Their `signal.name` is the full log path (`RealOutputs/Shooter/Setpoint`) and
+their `signal.device_type` is `Robot`, which keeps `UNIQUE (device_type, name)`
+clear of the Phoenix catalogue. The row is inserted **already named**, and
+`repository.devices()` / `unnamed_count()` both filter `can_id >= 0` so it never
+reaches the CAN-map screen: that table answers "which motor is CAN 11", and a
+row claiming CAN −1 is a lie in it — one nobody can act on, sitting in the
+"still unnamed" badge forever. Every other query joins `device` normally and
+sees it like any other device.
+
+Constants: `app.robot.wpilog.APP_DEVICE_TYPE` / `APP_CAN_ID`. Do not hardcode
+`-1`.
+
 #### `signal`
 209 rows for the current firmware; grows only when CTRE adds a signal.
 
@@ -200,9 +322,36 @@ signal.
 | `fault` | live fault bit | `fault_event` intervals |
 | `sticky_fault` | latched since last clear | `fault_event`, `t_ms_end` NULL |
 | `config` | firmware/motor constants | usually `session_constant` |
-| `meta` | the device's own `Timestamp` echo | **dropped** — redundant with the line timestamp |
+| `clock` | the device's own clock | `sample` — **one series per session** |
+| `meta` | *(unused)* | dropped |
+
+**`clock` keeps the time values exactly once.** Every device on the bus reports
+`Timestamp`, so a ten-motor log carries ten near-identical copies — 7.4% of
+every file measured. The clock itself is worth having (the gap between a
+device's clock and the log's own timestamp is CAN latency and drift); the tenth
+copy of it is not. The importer claims the first `(device, signal)` pair to
+report it and discards the rest into `ImportResult.clock_dropped`.
+
+> The claim is made **before** `series_id()`, not after. Calling it first
+> creates a `series` row for every device's copy and then never writes to it,
+> leaving nine rows with NULL statistics on a ten-motor log.
+
+`meta` no longer has any members — `classify()` cannot return it. The branch is
+kept in `ingest.py` so a future "read it and throw it away" class needs no
+change to the storage loop.
 
 Assigned by `app.robot.parser.classify()`.
+
+**`FaultField` and `StickyFaultField` are `telemetry`, not faults**, despite the
+names. They are the whole fault word packed into one number rather than a single
+bit — storing them as intervals would record "something was faulted from t1 to
+t2" and throw away *which*, which is all they carry. They are the only two
+signals in the catalogue that start with `Fault`/`StickyFault` without being a
+bit, and `classify()` special-cases the `Field` suffix for exactly them. Real
+values seen: `StickyFaultField = 8389376` across ten motors.
+
+A signal name containing `/` is application data off the `Robot` pseudo-device
+and is always `telemetry` — CTRE's naming says nothing about the team's own.
 
 #### `signal_enum`
 Interns string values (`Open`, `VoltageFOC`, `KrakenX60_Integrated`) to small
@@ -256,11 +405,11 @@ Every query lives in a module, not inline in a widget. Add new ones here.
 
 | Function | Returns | Reads |
 |---|---|---|
-| `devices()` | `list[DeviceRow]` | the CAN map |
+| `devices()` | `list[DeviceRow]` | the CAN map — **real CAN devices only** (`can_id >= 0`) |
 | `set_device_name(device_id, label, subsystem)` | — | writes the CAN map |
 | `add_device(device_type, can_id, label, subsystem)` | new id, or `None` if it exists | pre-register before a log arrives |
 | `delete_device(device_id)` | `bool` | refuses while `series` references it |
-| `unnamed_count()` | `int` | drives the "13 still unnamed" badge |
+| `unnamed_count()` | `int` | drives the "13 still unnamed" badge; filters `can_id >= 0` like `devices()` |
 | `detected_hardware()` | `dict[int, str]` | device_id → motor the controller reported (`ConnectedMotor`), e.g. `KrakenX60` |
 | `sessions()` | rows | import list, newest first |
 | `session(session_id)` | row | |
@@ -350,6 +499,51 @@ Verified against an independent Python integration: exact match on all four
 motors. **The imported session is a bench test** — ~0.3% duty cycle, each wheel
 rolled ~27 in in about 2 s of movement across a 9.6-minute log.
 
+### `app.robot.diagnostics` — the pit board
+
+What the crew needs between matches, as opposed to what a visitor wants.
+`dashboard()` is one call returning everything the two overlays render;
+everything else is a piece of it.
+
+| Function | Returns | Reads |
+|---|---|---|
+| `dashboard(session_id=None)` | `Dashboard` | all of the below, in one pass |
+| `vitals(session_id)` | `list[Reading]` | battery, draw, CAN, loop time, temps |
+| `subsystems(session_id)` | `list[Subsystem]` | the team's own `RealOutputs/…` signals |
+| `motors(session_id)` | `list[MotorRow]` | per-CAN-device temp / current / volts |
+| `faults(session_id)` | `list[Reading]` | latched faults grouped by name |
+| `latest_session_id()` / `latest_motor_session()` / `latest_app_session()` | `int \| None` | which session answers which half |
+
+Three things to know before extending it:
+
+- **Status comes from the robot's own latched faults, not from thresholds
+  invented here.** A Talon knows its own temperature and current limits and sets
+  `StickyFault_DeviceTemp` / `StickyFault_StatorCurrLimit` when it crosses one.
+  Three published figures *are* used and each is named in the code: the **6.8 V**
+  roboRIO brownout floor, the **20 ms** WPILib loop period, and 100% CAN
+  utilisation. Do not add a fourth without a citation — a tile that goes red on
+  a made-up number teaches the crew to ignore the colour.
+- **`dashboard()` with no argument reads the newest session of *each kind*.** A
+  pit pulls two files off one match and each holds half the picture: motors come
+  from the newest log that has CAN devices, subsystems and `SystemStats` from
+  the newest that has application signals. `Dashboard.sources` names both. Pass
+  a `session_id` to pin the whole board to one log.
+- **`latest_app_session()` matches on signal *paths*, not the `Robot`
+  pseudo-device.** owlet emits a few non-CAN entries of its own (`RobotMode`,
+  `AllianceStation`), so a hoot also lands rows on that device and would win the
+  query while having no subsystem data at all.
+
+Spiky signals (`FullCycleMS`, CAN utilisation) are reported as the **mean** with
+the peak in the caption. The first cycle after boot is a real 10-second
+`FullCycleMS` and also the least informative number in the log.
+
+Subsystems are grouped out of the signal names (`RealOutputs/<name> Temp F`)
+rather than from a hardcoded list, so renaming a mechanism in robot code renames
+it on the board with no edit here.
+
+Reads `series`, `session_constant` and `fault_event` only — never a raw sample.
+Measured at 1.9 ms for the whole dashboard across two sessions.
+
 ### `app.robot.fun_facts` — audience slides
 
 `slides()` returns `(title, body)` pairs built from the most recent import, for
@@ -367,6 +561,8 @@ imported.
 | `app.music.eq` | `eq_presets` | `all_presets()`, `get_preset()`, `save_preset()`, `delete_preset()`, `ensure_seeded()` |
 | `app.admin` | `admin_credential` | `verify()`, `unlock()`, `change_password()`, `reset_to_default()` |
 | `app.robot.ingest` | writes everything under `log_session` | `import_log()`, `delete_session()` |
+| `app.robot.wpilog` | reads a `.wpilog` into records | `Reader`, `entry_identity()` |
+| `app.robot.owlet` | shells out to CTRE's extractor | `convert()`, `find_owlet()`, `scratch_dir()` |
 
 ---
 
@@ -395,16 +591,54 @@ ratio, `Velocity` becomes wheel units and dividing by `GEAR_RATIO` again would
 under-report by ~5×. `distance.check_units()` guards this — call it rather than
 assuming.
 
-**5. Cross-database foreign keys are not enforced.** `ON DELETE CASCADE` on
+**5. A wpilog's timestamps are microseconds since robot boot, not since the log
+started.** `wpilog.Reader` normalises them against the first data record and
+divides to milliseconds, because `t_ms` is defined as milliseconds from session
+start and `duration_s` is derived from the maximum. Reading `record.timestamp`
+yourself and storing it would put every session's samples at an arbitrary offset
+in the tens of millions, quietly breaking every window query.
+
+**6. A wpilog barely compresses, and that is correct.** WPILib's DataLog only
+appends when a value changes, so the importer's change-only pass has almost
+nothing left to remove: measured on the team's own AdvantageKit logs, 932,365
+records became 828,490 rows — **1.1×**, against 18.8× for a hoot of the same
+robot. Judge the ratio against `source_kind` or it reads as a broken import.
+`raw_rows` also counts array elements separately (a 24-wide PDH
+`ChannelCurrent` is 24 records from one log entry), which shifts it further.
+
+**7. Not every record in a wpilog can be stored.** `sample.v` is a REAL: string
+arrays, msgpack and raw bytes have nowhere to go and are counted in
+`ImportResult.skipped`, and a string signal past `wpilog.MAX_ENUM_LABELS`
+distinct values is abandoned mid-file rather than allowed to grow an unbounded
+`signal_enum`. A series that stops partway through a log is this, not a gap in
+the data — check `ImportResult.enum_overflow`.
+
+**8. `owlet` does not produce the same wpilog twice.** Measured: three
+extractions of one 1 MB `.hoot` gave 590,619 / 588,134 / 590,580 records, three
+different file sizes, three different checksums. The **values never disagree** —
+every record present in two runs is byte-identical — and the entry list is
+identical; owlet simply stops reading the final buffer at a slightly different
+point, so the difference is confined to the **last ~0.2 s** of the log (~0.4% of
+records, always the tail).
+
+Consequences, both real:
+
+- **Re-importing a hoot does not reproduce the previous session's row counts.**
+  A diff against an earlier import is not evidence of a bug in this app.
+- **A verification pass must audit against the exact wpilog that was imported**,
+  not a fresh conversion, or it reports thousands of phantom mismatches. That is
+  how the losslessness audit below was run.
+
+**9. Cross-database foreign keys are not enforced.** `ON DELETE CASCADE` on
 `series` does **not** reach `samples.sample`. Deleting a session must delete
 sample rows explicitly; `ingest.delete_session()` is the only correct way.
 
-**6. Ingest uses its own connection.** A 75-second write transaction on the
+**10. Ingest uses its own connection.** A 75-second write transaction on the
 shared `db` connection would stall every UI read. WAL lets readers keep working
 against the previous snapshot until it commits. Always run imports off the GUI
 thread.
 
-**7. Never version the samples schema.** See [The two files](#the-two-files).
+**11. Never version the samples schema.** See [The two files](#the-two-files).
 
 ---
 
@@ -426,7 +660,4 @@ thread.
   ~4 GB. The plan calls for evicting `samples.sample` on a rolling window while
   keeping `sample_1s`, `series`, `session_constant` and `fault_event` forever.
   `log_session.keep` exists for this and is not yet honoured by anything.
-- **WPILog ingest.** `source_kind` and the schema already accommodate it; the
-  parser does not exist. The team's 55 application-level signals (robot states,
-  PDH currents, shooter setpoints) live there, not in the hoot.
 - **Nightly SQL Server sync.** `app/db/sync/` is an empty stub.

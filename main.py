@@ -10,6 +10,7 @@ QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 import app.db.migrations  # noqa: F401 — registers migrations before init_db()
 from app.admin import init_admin
 from app.cad_assets import init_cad_assets
+from app.checklist import init_checklist
 from app.config import init_config
 from app.db import init_db
 from app.judges_slides import init_judges_slides
@@ -17,6 +18,7 @@ from app.leds import init_leds
 from app.music import init_music
 from app.rotation import init_rotation
 from app.theme import dark_qss
+from app.touch import install as install_touch
 from app.windows.control_screen import ControlScreen
 from app.windows.presentation_a import PresentationScreenA
 from app.windows.presentation_b import PresentationScreenB
@@ -46,6 +48,8 @@ def main():
     init_db()
     # Admin gates the LED/EQ controls; needs the DB for its credential row.
     init_admin()
+    # Checklists are read while the presentation screens are being built.
+    init_checklist()
     init_rotation()
     init_judges_slides()
     init_cad_assets()
@@ -60,6 +64,11 @@ def main():
     pres_a  = PresentationScreenA()
     pres_b  = PresentationScreenB()
     project = ProjectScreen()
+
+    # The two touch panels route touch per point rather than through Qt's
+    # single synthesized mouse, so a finger on one screen can't latch a widget
+    # on the other. Presentation screens are audience-facing — left alone.
+    install_touch(app, control, project)
 
     # Hand the other windows to the control screen so it can show/hide them
     control.set_managed_windows({

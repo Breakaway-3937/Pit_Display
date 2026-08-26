@@ -53,13 +53,22 @@ def detected_hardware() -> dict[int, str]:
 
 
 def devices() -> list[DeviceRow]:
+    """
+    Every real CAN device, for the CAN-id name table.
+
+    `can_id >= 0` excludes the `Robot` pseudo-device that `wpilog.py` files
+    application signals under. That table answers "which motor is CAN 11", and a
+    row claiming CAN −1 is a lie in it — the pseudo-device is named on creation
+    and there is nothing for an operator to do with it. Every other query joins
+    `device` directly and still sees it.
+    """
     detected = detected_hardware()
     return [
         DeviceRow(r["id"], r["device_type"], r["can_id"],
                   r["label"] or "", r["subsystem"] or "",
                   detected.get(r["id"], ""))
         for r in db.fetchall(
-            "SELECT * FROM device ORDER BY device_type, can_id")
+            "SELECT * FROM device WHERE can_id >= 0 ORDER BY device_type, can_id")
     ]
 
 
@@ -97,7 +106,9 @@ def delete_device(device_id: int) -> bool:
 
 
 def unnamed_count() -> int:
-    return db.fetchone("SELECT COUNT(*) n FROM device WHERE label IS NULL")["n"]
+    """Drives the "13 still unnamed" badge — real CAN devices only, as `devices()`."""
+    return db.fetchone(
+        "SELECT COUNT(*) n FROM device WHERE label IS NULL AND can_id >= 0")["n"]
 
 
 # ── Sessions ─────────────────────────────────────────────────────────────

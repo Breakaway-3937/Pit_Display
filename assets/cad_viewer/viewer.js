@@ -272,6 +272,8 @@
   var tumbling = false;
   var lastPX = 0, lastPY = 0;
   var dragDist = 0;              // suppresses the click that follows a drag
+  var multiTouch = false;        // a second finger joined this gesture
+  var lastTapAt = 0;             // touchend time — see onCanvasClick
   var tumblePivot = new THREE.Vector3();  // rotation center for current drag
 
   // CAD convention: the rotation pivot is the point on the model under the
@@ -308,7 +310,11 @@
 
   function onPointerDown(e) {
     activePointers++;
-    if (activePointers > 1) { tumbling = false; return; }  // pinch → OrbitControls
+    if (activePointers > 1) {                              // pinch → OrbitControls
+      tumbling = false;
+      multiTouch = true;
+      return;
+    }
     if (!controls || !controls.enabled) return;            // judges mode
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     tumbling = true;
@@ -336,6 +342,9 @@
   function onPointerUp(e) {
     activePointers = Math.max(0, activePointers - 1);
     tumbling = false;
+    // multiTouch stays set until every finger is off the glass, so the
+    // touchend that ends a pinch is not mistaken for a tap.
+    if (activePointers === 0) multiTouch = false;
   }
 
   // ── Interaction ────────────────────────────────────────────────────────────
@@ -349,6 +358,10 @@
   }
 
   function onCanvasClick(e) {
+    // A touchscreen fires a compatibility `click` a moment after `touchend`.
+    // onCanvasTouch has already picked; without this guard every tap picks
+    // twice, which on empty space is a focus immediately undone by a reset.
+    if (performance.now() - lastTapAt < 700) return;
     if (mode !== 'interactive' || animating || !model) return;
     if (dragDist > 8) return;   // was a rotate-drag, not a tap
     screenToNDC(e.clientX, e.clientY);
@@ -356,6 +369,11 @@
   }
 
   function onCanvasTouch(e) {
+    lastTapAt = performance.now();
+    // Only a clean one-finger lift is a tap: a pinch or two-finger pan ends in
+    // touchend too, and `dragDist` never grows during one because tumbling is
+    // off — so without these guards zooming out would also isolate a subsystem.
+    if (multiTouch || e.touches.length) return;
     if (mode !== 'interactive' || animating || !model) return;
     if (dragDist > 8) return;
     if (!e.changedTouches.length) return;

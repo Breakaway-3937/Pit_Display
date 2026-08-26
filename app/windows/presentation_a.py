@@ -7,6 +7,9 @@ class PresentationScreenA(PresentationScreen):
 
     SCREEN_ID = "presentation_a"
 
+    # A asks "is anything wrong?" — the glanceable board. B carries the detail.
+    BOARD_CONTENT = "diagnostics"
+
     SLIDES = [
         (
             "Welcome to Breakaway",

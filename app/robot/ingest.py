@@ -1,18 +1,39 @@
 """
-Streaming importer for Phoenix hoot exports.
+The robot-log data pipeline: raw file off the robot → rows in the database.
 
-One pass over the file, no intermediate storage. Measured on a real 3.85 GB
-export: 62,118,776 raw rows in ~60 s, producing 4.87 M stored rows (105 MB).
+Three shapes of file arrive in the pit, and all three land in the same tables:
+
+```
+robot.hoot   ──owlet -f wpilog──▶  .wpilog ──┐
+robot.wpilog ───────────────────────────────┼──▶ (t_ms, device, can id, signal, value)
+…_detailed.txt ──parser.parse_line──────────┘                    │
+                                                                 ▼
+                             device · signal · series · sample · session_constant · fault_event
+```
+
+`owlet.py` runs the closed-format extractor, `wpilog.py` reads the binary log,
+`parser.py` reads the text export. Each is a `_Source` here, and the storage
+code below cannot tell them apart — which is the point. Add a fourth format by
+writing a `_Source`, not by touching the loop.
+
+**Which file to import.** The `.hoot` is the one to reach for: it is what the
+robot writes, it needs no preparation, and it is the only one that carries the
+controller serial. The `.wpilog` is the robot's own DataLogManager file and is
+where the team's application signals live — robot states, PDH currents, shooter
+setpoints — none of which exist in a hoot. The `.txt` is a hoot somebody already
+converted by hand, kept working because a season of them exists.
 
 ## What it does, and why
 
-The export samples every signal at a fixed rate whether or not it moved, so 92%
-of it is repetition. The importer keeps only *changes*, moves signals that never
-change into `session_constant`, folds fault bits into intervals, and builds
-1-second rollups in the same pass.
+One pass over the file, no intermediate storage. The robot samples every signal
+at a fixed rate whether or not it moved, so ~92% of a log is repetition. The
+importer keeps only *changes*, moves signals that never change into
+`session_constant`, folds fault bits into intervals, and builds 1-second rollups
+in the same pass.
 
-This is lossless for any "what was the value at time T" question, which is the
-only question the data can answer — see `verify_series()`.
+Measured on a real 3.85 GB text export: 62,118,776 raw rows in ~60 s, producing
+4.87 M stored rows (105 MB). This is lossless for any "what was the value at
+time T" question, which is the only question the data can answer.
 
 ## Threading
 
@@ -27,12 +48,28 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
-from app.robot.parser import Sample, classify, coerce, parse_filename, parse_line
+from app.robot import owlet, wpilog
+from app.robot.parser import Sample, classify, coerce, parse_line, parse_log_name
+from app.robot.wpilog import (
+    APP_CAN_ID, APP_DEVICE_LABEL, APP_DEVICE_SUBSYSTEM, APP_DEVICE_TYPE,
+)
 
 _BATCH = 100_000
-_PROGRESS_EVERY = 2_000_000
+
+# Every quarter-million rows. Low enough that a one-minute match log still shows
+# movement, high enough that a 62-million-row import spends no real time on it.
+_PROGRESS_EVERY = 250_000
+
+# A hoot has to be extracted before a single row can be read, and on a
+# multi-gigabyte log that is a real fraction of the wall clock. The bar gives it
+# the first fifth rather than sitting at zero through it.
+_CONVERT_SHARE = 0.20
+
+# One record from any source: (t_ms, device_type, can_id, signal, num, label).
+# Exactly one of `num` / `label` is set, matching `parser.coerce()`.
+Row = tuple[int, str, int, str, "float | None", "str | None"]
 
 
 class ImportError_(Exception):
@@ -42,6 +79,7 @@ class ImportError_(Exception):
 @dataclass
 class ImportResult:
     session_id: int
+    source_kind: str = "hoot"
     raw_rows: int = 0
     stored_rows: int = 0
     constants: int = 0
@@ -50,6 +88,15 @@ class ImportResult:
     devices: int = 0
     signals: int = 0
     new_devices: list[str] = field(default_factory=list)
+    # Records the source could not store — string arrays, msgpack, raw bytes.
+    # Surfaced rather than swallowed: a log that is 40% unstorable is a log
+    # somebody needs to know about.
+    skipped: int = 0
+    # Duplicate copies of the device clock, one per extra device on the bus.
+    # Expected and healthy — see `classify()` — but counted so the row totals
+    # add up when somebody audits them.
+    clock_dropped: int = 0
+    enum_overflow: list[str] = field(default_factory=list)
     duration_s: float = 0.0
     elapsed_s: float = 0.0
     source_bytes: int = 0
@@ -57,6 +104,148 @@ class ImportResult:
     @property
     def compression(self) -> float:
         return self.raw_rows / self.stored_rows if self.stored_rows else 0.0
+
+
+# ── Sources ──────────────────────────────────────────────────────────────
+#
+# Each turns one file into a stream of `Row`. `fraction()` is how far through
+# the file it is, read only when the progress bar ticks; `close()` releases
+# whatever it holds — a file handle, an mmap, or a scratch directory holding a
+# gigabyte of converted log.
+
+class _TextSource:
+    """A Phoenix "detailed" text export, one sample per line."""
+
+    kind = "hoot"
+
+    def __init__(self, path: Path):
+        self._path = path
+        self._total = max(path.stat().st_size, 1)
+        self._read = 0
+        self._fh = None
+        self.skipped = 0
+        self.enum_overflow: set[str] = set()
+
+    def rows(self) -> Iterator[Row]:
+        # 4 MB buffer: the file is read strictly forwards and is measured in
+        # gigabytes, so the syscall count is what matters, not locality.
+        self._fh = open(self._path, "r", encoding="utf-8", errors="replace",
+                        buffering=1 << 22)
+        for line in self._fh:
+            self._read += len(line)
+            s: Sample | None = parse_line(line)
+            if s is None:
+                continue                      # the '--- All Log Records ---' header
+            num, label = coerce(s.raw)
+            yield (s.t_ms, s.device_type, s.can_id, s.signal, num, label)
+
+    def fraction(self) -> float:
+        return min(1.0, self._read / self._total)
+
+    def close(self) -> None:
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
+
+
+class _WpilogSource:
+    """A WPILib DataLog — the robot's own, or one owlet extracted from a hoot."""
+
+    kind = "wpilog"
+
+    def __init__(self, path: Path):
+        self._reader = wpilog.Reader(path)
+        # Eagerly, not on the first row: the header check is the only thing that
+        # can tell a truncated or mis-named file from a real log, and it has to
+        # fail before `log_session` gains a row for it.
+        try:
+            self._reader.open()
+        except ValueError as err:
+            raise ImportError_(str(err)) from err
+
+    def rows(self) -> Iterator[Row]:
+        yield from self._reader.rows()
+
+    def fraction(self) -> float:
+        return self._reader.fraction()
+
+    @property
+    def skipped(self) -> int:
+        return self._reader.skipped
+
+    @property
+    def enum_overflow(self) -> set[str]:
+        return self._reader.enum_overflow
+
+    def close(self) -> None:
+        self._reader.close()
+
+
+class _HootSource:
+    """
+    A `.hoot`: extracted to a wpilog in a scratch directory, then read.
+
+    The scratch copy is deleted in `close()` whatever happens. It is the size of
+    the hoot and nothing reads it twice, so keeping it would double the disk cost
+    of every import for no benefit.
+    """
+
+    kind = "hoot"
+
+    def __init__(self, path: Path, say: Callable[[str, float], None]):
+        try:
+            self._dir = owlet.scratch_dir(path)
+        except owlet.OwletError as err:
+            raise ImportError_(str(err)) from err
+        self._inner: _WpilogSource | None = None
+        try:
+            say(f"Extracting {path.name} with owlet…", 0.01)
+            out = owlet.convert(
+                path, self._dir / (path.stem + ".wpilog"),
+                progress=lambda line: say(f"owlet: {line}", 0.02))
+        except owlet.OwletError as err:
+            owlet.clear_scratch(self._dir)
+            raise ImportError_(str(err)) from err
+        except Exception:
+            owlet.clear_scratch(self._dir)
+            raise
+        self._inner = _WpilogSource(out)
+
+    def rows(self) -> Iterator[Row]:
+        assert self._inner is not None
+        yield from self._inner.rows()
+
+    def fraction(self) -> float:
+        inner = self._inner.fraction() if self._inner else 0.0
+        return _CONVERT_SHARE + (1.0 - _CONVERT_SHARE) * inner
+
+    @property
+    def skipped(self) -> int:
+        return self._inner.skipped if self._inner else 0
+
+    @property
+    def enum_overflow(self) -> set[str]:
+        return self._inner.enum_overflow if self._inner else set()
+
+    def close(self) -> None:
+        if self._inner is not None:
+            self._inner.close()
+        owlet.clear_scratch(self._dir)
+
+
+def _open_source(path: Path, say: Callable[[str, float], None]):
+    """The right `_Source` for this file, chosen by extension."""
+    suffix = path.suffix.lower()
+    if suffix == ".hoot":
+        return _HootSource(path, say)
+    if suffix == ".wpilog":
+        return _WpilogSource(path)
+    if suffix in (".txt", ".log"):
+        return _TextSource(path)
+    raise ImportError_(
+        f"Don't know how to read {path.name}. Import a .hoot from the "
+        f"controller, a .wpilog from the roboRIO, or a Phoenix “detailed” .txt "
+        f"export.")
 
 
 def _connect(main_path: Path) -> sqlite3.Connection:
@@ -79,25 +268,30 @@ def import_log(
     progress: Callable[[str, float], None] | None = None,
 ) -> ImportResult:
     """
-    Import one export. `progress(message, fraction)` is called periodically.
+    Import one log — `.hoot`, `.wpilog`, or a Phoenix `.txt` export.
 
-    Raises ImportError_ if the file was already imported or has no parseable
-    rows — both are operator-fixable and neither should leave a partial session.
+    `progress(message, fraction)` is called periodically. Raises ImportError_ if
+    the file was already imported, cannot be read, or has no parseable rows —
+    all operator-fixable, and none should leave a partial session behind.
     """
     path = Path(path).resolve()
     db_path = Path(db_path)
     if not path.is_file():
         raise ImportError_(f"No such file: {path}")
 
-    total_bytes = path.stat().st_size
-    serial, started = parse_filename(path.name)
-    conn = _connect(db_path)
-
     def say(msg: str, frac: float):
         if progress:
             progress(msg, frac)
 
+    total_bytes = path.stat().st_size
+    meta = parse_log_name(path.name)
+    conn = _connect(db_path)
+    src = None
+
     try:
+        # Before opening the source, not after: opening a .hoot runs owlet, and
+        # spending four minutes extracting a log only to be told it was already
+        # imported is the kind of thing that happens in a six-minute pit cycle.
         dup = conn.execute("SELECT id FROM log_session WHERE source_file = ?",
                            (str(path),)).fetchone()
         if dup is not None:
@@ -106,12 +300,15 @@ def import_log(
                 f"first if you want to re-import."
             )
 
+        src = _open_source(path, say)
+
         cur = conn.execute(
             """INSERT INTO log_session
                    (source_file, source_name, source_kind, device_serial,
-                    started_at, source_bytes)
-               VALUES (?, ?, 'hoot', ?, ?, ?)""",
-            (str(path), path.name, serial, started, total_bytes),
+                    started_at, match_key, source_bytes)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (str(path), path.name, src.kind, meta.serial, meta.started,
+             meta.match_key, total_bytes),
         )
         session_id = cur.lastrowid
 
@@ -132,10 +329,22 @@ def import_log(
         def device_id(dtype: str, cid: int) -> int:
             key = (dtype, cid)
             if key not in dev_cache:
-                c = conn.execute(
-                    "INSERT INTO device (device_type, can_id) VALUES (?, ?)", key)
+                if key == (APP_DEVICE_TYPE, APP_CAN_ID):
+                    # The pseudo-device holding every signal with no CAN
+                    # address. Created already named: nobody has to work out
+                    # what "Robot -1" is, and an unnamed row would sit in the
+                    # "still unnamed" badge forever asking the crew to name
+                    # something that has no name to find.
+                    c = conn.execute(
+                        """INSERT INTO device (device_type, can_id, label, subsystem)
+                           VALUES (?, ?, ?, ?)""",
+                        (APP_DEVICE_TYPE, APP_CAN_ID, APP_DEVICE_LABEL,
+                         APP_DEVICE_SUBSYSTEM))
+                else:
+                    c = conn.execute(
+                        "INSERT INTO device (device_type, can_id) VALUES (?, ?)", key)
+                    new_devices.append(f"{dtype} {cid}")
                 dev_cache[key] = c.lastrowid
-                new_devices.append(f"{dtype} {cid}")
             return dev_cache[key]
 
         def signal_id(dtype: str, name: str) -> tuple[int, str]:
@@ -167,89 +376,96 @@ def import_log(
         faults: list[tuple] = []
         series_meta: dict[int, tuple[int, int, str]] = {}   # ser -> (dev, sig, class)
         pending: list[tuple] = []
+        # The clock is reported by every device on the bus. The first series to
+        # claim it is the one kept; every other device's copy is discarded, so
+        # the values are in the database exactly once. See `classify()`.
+        clock_ser: tuple[int, int] | None = None
+        clock_dropped = 0
         raw = stored = 0
-        t_max = 0.0
+        t_max = 0
         t0 = time.time()
-        read = 0
 
-        with open(path, "r", encoding="utf-8", errors="replace",
-                  buffering=1 << 22) as fh:
-            for line in fh:
-                read += len(line)
-                s: Sample | None = parse_line(line)
-                if s is None:
+        for t_ms, dtype, can_id, name, num, label in src.rows():
+            raw += 1
+
+            did = device_id(dtype, can_id)
+            sid, klass = signal_id(dtype, name)
+            if klass == "meta":
+                continue
+            if klass == "clock":
+                # Decided on (device, signal), *before* `series_id()` — calling
+                # it first would create a `series` row for every device's copy
+                # and then never write to it, leaving nine empty rows with NULL
+                # statistics behind on a ten-motor log.
+                if clock_ser is None:
+                    clock_ser = (did, sid)
+                elif (did, sid) != clock_ser:
+                    clock_dropped += 1        # another device's copy of the clock
                     continue
-                raw += 1
+            ser = series_id(did, sid)
+            series_meta[ser] = (did, sid, klass)
 
-                did = device_id(s.device_type, s.can_id)
-                sid, klass = signal_id(s.device_type, s.signal)
-                if klass == "meta":
-                    continue                      # device Timestamp echo — drop
-                ser = series_id(did, sid)
-                series_meta[ser] = (did, sid, klass)
+            if label is not None:
+                codes = enum_cache[sid]
+                if label not in codes:
+                    codes[label] = len(codes)
+                    conn.execute(
+                        "INSERT INTO signal_enum (signal_id, code, label) VALUES (?,?,?)",
+                        (sid, codes[label], label))
+                    conn.execute(
+                        "UPDATE signal SET value_kind='enum' WHERE id=?", (sid,))
+                num = float(codes[label])
 
-                num, label = coerce(s.raw)
-                if label is not None:
-                    codes = enum_cache[sid]
-                    if label not in codes:
-                        codes[label] = len(codes)
-                        conn.execute(
-                            "INSERT INTO signal_enum (signal_id, code, label) VALUES (?,?,?)",
-                            (sid, codes[label], label))
-                        conn.execute(
-                            "UPDATE signal SET value_kind='enum' WHERE id=?", (sid,))
-                    num = float(codes[label])
+            if t_ms > t_max:
+                t_max = t_ms
 
-                if s.t_ms > t_max:
-                    t_max = s.t_ms
+            a = agg.get(ser)
+            if a is None:
+                agg[ser] = a = [0, num, num, 0.0, num]
+            a[0] += 1
+            if num < a[1]: a[1] = num
+            if num > a[2]: a[2] = num
+            a[3] += num
+            a[4] = num
 
-                a = agg.get(ser)
-                if a is None:
-                    agg[ser] = a = [0, num, num, 0.0, num]
-                a[0] += 1
-                if num < a[1]: a[1] = num
-                if num > a[2]: a[2] = num
-                a[3] += num
-                a[4] = num
+            b = roll.get((ser, t_ms // 1000))
+            if b is None:
+                roll[(ser, t_ms // 1000)] = [num, num, num, 1]
+            else:
+                if num < b[0]: b[0] = num
+                if num > b[1]: b[1] = num
+                b[2] += num; b[3] += 1
 
-                b = roll.get((ser, s.t_ms // 1000))
-                if b is None:
-                    roll[(ser, s.t_ms // 1000)] = [num, num, num, 1]
+            # fault bits become intervals rather than samples
+            if klass in ("fault", "sticky_fault"):
+                high = num > 0
+                if high and ser not in fault_open:
+                    fault_open[ser] = t_ms
+                elif not high and ser in fault_open:
+                    faults.append((session_id, did, sid,
+                                   1 if klass == "sticky_fault" else 0,
+                                   fault_open.pop(ser), t_ms))
+                continue          # fault bits never enter `sample`
+
+            prev = last_val.get(ser)
+            if prev is None or prev != num:
+                last_val[ser] = num
+                # `ord` disambiguates two different values in one millisecond
+                if last_ms.get(ser) == t_ms:
+                    last_ord[ser] = last_ord.get(ser, 0) + 1
                 else:
-                    if num < b[0]: b[0] = num
-                    if num > b[1]: b[1] = num
-                    b[2] += num; b[3] += 1
+                    last_ms[ser] = t_ms
+                    last_ord[ser] = 0
+                pending.append((ser, t_ms, last_ord[ser], num))
+                stored += 1
+                if len(pending) >= _BATCH:
+                    conn.executemany(
+                        "INSERT OR REPLACE INTO samples.sample VALUES (?,?,?,?)",
+                        pending)
+                    pending.clear()
 
-                # fault bits become intervals rather than samples
-                if klass in ("fault", "sticky_fault"):
-                    high = num > 0
-                    if high and ser not in fault_open:
-                        fault_open[ser] = s.t_ms
-                    elif not high and ser in fault_open:
-                        faults.append((session_id, did, sid,
-                                       1 if klass == "sticky_fault" else 0,
-                                       fault_open.pop(ser), s.t_ms))
-                    continue          # fault bits never enter `sample`
-
-                prev = last_val.get(ser)
-                if prev is None or prev != num:
-                    last_val[ser] = num
-                    # `ord` disambiguates two different values in one millisecond
-                    if last_ms.get(ser) == s.t_ms:
-                        last_ord[ser] = last_ord.get(ser, 0) + 1
-                    else:
-                        last_ms[ser] = s.t_ms
-                        last_ord[ser] = 0
-                    pending.append((ser, s.t_ms, last_ord[ser], num))
-                    stored += 1
-                    if len(pending) >= _BATCH:
-                        conn.executemany(
-                            "INSERT OR REPLACE INTO samples.sample VALUES (?,?,?,?)",
-                            pending)
-                        pending.clear()
-
-                if raw % _PROGRESS_EVERY == 0:
-                    say(f"{raw:,} rows · {stored:,} stored", read / total_bytes)
+            if raw % _PROGRESS_EVERY == 0:
+                say(f"{raw:,} rows · {stored:,} stored", src.fraction())
 
         if pending:
             conn.executemany(
@@ -309,23 +525,29 @@ def import_log(
         if raw == 0:
             conn.rollback()
             raise ImportError_(
-                f"{path.name} contains no recognisable log lines — is it a "
-                f"Phoenix 'detailed' export?")
+                f"{path.name} contains no recognisable log records. A .txt has "
+                f"to be a Phoenix “detailed” export; a .wpilog has to carry "
+                f"entries the robot actually wrote.")
 
         conn.commit()
         say("Done", 1.0)
 
         return ImportResult(
-            session_id=session_id, raw_rows=raw, stored_rows=stored,
+            session_id=session_id, source_kind=src.kind,
+            raw_rows=raw, stored_rows=stored,
             constants=len(constants), faults=len(faults), series=len(ser_cache),
             devices=len(dev_cache), signals=len(sig_cache),
-            new_devices=new_devices, duration_s=duration,
+            new_devices=new_devices, skipped=src.skipped,
+            clock_dropped=clock_dropped,
+            enum_overflow=sorted(src.enum_overflow), duration_s=duration,
             elapsed_s=round(time.time() - t0, 1), source_bytes=total_bytes,
         )
     except Exception:
         conn.rollback()
         raise
     finally:
+        if src is not None:
+            src.close()
         conn.close()
 
 

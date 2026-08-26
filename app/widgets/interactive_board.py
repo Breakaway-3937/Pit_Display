@@ -26,6 +26,7 @@ from PyQt6.QtGui import QFont, QFontMetrics
 
 from app import brand
 from app.config import config
+from app.touch import is_touch
 from app.widgets.brand_widgets import RoundedFrame, RoundedButton, Trace
 
 
@@ -317,6 +318,11 @@ class _CardButton(RoundedFrame):
         if self._down and self.rect().contains(e.position().toPoint()):
             self.clicked.emit()
         self._down = False
+        # A touchscreen never sends leaveEvent, so without this the accent
+        # border stays painted on the last card anyone tapped — the board ends
+        # the day covered in them.
+        if is_touch(e):
+            self.set_border(self._border_rest)
 
 
 class _StatNumber(QLabel):

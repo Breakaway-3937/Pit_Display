@@ -274,3 +274,54 @@ def _v7_robot_logs(conn: sqlite3.Connection) -> None:
         """
     )
     conn.execute("CREATE INDEX idx_fault_session ON fault_event(session_id, device_id)")
+
+
+@register_migration
+def _v8_checklists(conn: sqlite3.Connection) -> None:
+    """
+    Pit checklists shown on the overhead screens.
+
+    Several named lists, because a pit runs more than one — pre-match, end of
+    day, load-out. A presentation screen points at one of them by id (the
+    per-screen `checklist_id` setting), so the two overhead screens can show
+    different lists at the same time.
+
+    `done` lives here rather than in memory on purpose: the crew ticks items
+    off across a whole match cycle, and closing the app between matches must
+    not silently un-tick the work. The control screen has an explicit Reset.
+    """
+    conn.execute(
+        """
+        CREATE TABLE checklist (
+            id         INTEGER PRIMARY KEY,
+            name       TEXT    NOT NULL UNIQUE,
+            position   INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+    # position, not id, is the display order — items get reordered, and a row
+    # that moves must not have to be deleted and re-inserted to do it.
+    conn.execute(
+        """
+        CREATE TABLE checklist_item (
+            id           INTEGER PRIMARY KEY,
+            checklist_id INTEGER NOT NULL
+                         REFERENCES checklist(id) ON DELETE CASCADE,
+            text         TEXT    NOT NULL,
+            position     INTEGER NOT NULL DEFAULT 0,
+            done         INTEGER NOT NULL DEFAULT 0,
+            done_at      TEXT
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX idx_checklist_item_list "
+        "ON checklist_item(checklist_id, position)"
+    )
+
+    # One empty list so the feature has somewhere to put its first item. The
+    # items themselves are the team's to write — see the empty state in
+    # ChecklistOverlay, which says where to add them.
+    conn.execute("INSERT INTO checklist (name, position) VALUES ('Pit Checklist', 0)")

@@ -45,6 +45,13 @@ class _AppConfig(QObject):
     # args: screen_id (str), key (str), value (object)
     screen_setting_changed = pyqtSignal(str, str, object)
 
+    # Emitted when a robot log is imported or deleted. App-global state that
+    # several screens react to — the slide rotation regenerates its fun facts,
+    # the diagnostics boards re-read the database, the control screen's slide
+    # picker rebuilds. It lives here, beside team and mode, rather than in a
+    # tenth singleton created for one signal.
+    logs_changed = pyqtSignal()
+
     def __init__(self):
         super().__init__()
         self._active_team: Team = get_team(3937) or all_teams()[0]
@@ -93,6 +100,12 @@ class _AppConfig(QObject):
 
     def screen_theme(self, screen: str) -> str:
         return self.get(screen, "theme", "dark")
+
+    # ── Robot logs ────────────────────────────────────────────────────────
+
+    def notify_logs_changed(self) -> None:
+        """Tell every screen the imported-log set has changed."""
+        self.logs_changed.emit()
 
 
 config: _AppConfig = LazyProxy("config", "init_config")  # type: ignore[assignment]

@@ -29,6 +29,7 @@ from app.widgets.brand_widgets import (
     RoundedButton, RoundedFrame, eyebrow, mono_font,
 )
 from app.widgets.cad_upload_panel import CADSettingsPanel
+from app.widgets.checklist_panel import ChecklistPanel
 from app.widgets.admin_bar import AdminBar
 from app.widgets.helpers import clear_layout, divider, label
 from app.widgets.led_panel import LEDPanel
@@ -197,6 +198,7 @@ class _Thumbnail(QFrame):
     def __init__(self, index: int, path: Path):
         super().__init__()
         self._index = index
+        self._down = False
         self.setFixedWidth(self._W + 8)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -230,8 +232,19 @@ class _Thumbnail(QFrame):
             f" background-color: {brand.CARBON_SURF}; }}"
         )
 
-    def mousePressEvent(self, _event):
-        judges_slides.go_to(self._index)
+    # Fires on release-inside, not on press. On the touch panel a press is also
+    # how a drag-scroll of the thumbnail strip begins, and the touch router
+    # unlatches that press with a release *outside* the rect (see app/touch.py)
+    # — so a swipe along the strip scrolls it instead of jumping the slide.
+    def mousePressEvent(self, event):
+        self._down = True
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self._down and self.rect().contains(event.position().toPoint()):
+            judges_slides.go_to(self._index)
+        self._down = False
+        event.accept()
 
 
 # ── Judges slide picker ───────────────────────────────────────────────────────
@@ -349,11 +362,14 @@ class _StandardSlideRow(QFrame):
 
     clicked = pyqtSignal(int)
 
-    def __init__(self, index: int, title: str, body: str, is_fact: bool):
+    def __init__(self, index: int, title: str, body: str, is_fact: bool,
+                 kind: str = ""):
         super().__init__()
         self.index = index
         self._active = False
+        self._down = False
         self._is_fact = is_fact
+        self._kind = kind
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         # QLabel subclasses QFrame, so a bare `QFrame { border-left: … }` rule
         # paints that border on every child label too. Scope it by object name.
@@ -373,12 +389,18 @@ class _StandardSlideRow(QFrame):
         self._title = label(title, "stat_value")
         self._title.setWordWrap(True)
         head.addWidget(self._title, stretch=1)
-        if is_fact:
-            # Authored slides are edited in code; fact slides regenerate from
-            # the log. Worth telling them apart at a glance.
-            tag = label("FROM LOG", "stat_label")
+        # Three kinds of entry, and the operator needs to tell them apart:
+        # authored slides are edited in code, fact slides regenerate from the
+        # log, and the board is a live widget rather than a slide at all.
+        tag_text, tag_color = "", ""
+        if kind == "board":
+            tag_text, tag_color = "LIVE BOARD", brand.STATUS_PENDING
+        elif is_fact:
+            tag_text, tag_color = "FROM LOG", brand.STATUS_ONLINE
+        if tag_text:
+            tag = label(tag_text, "stat_label")
             tag.setFont(mono_font(9))
-            tag.setStyleSheet(f"color: {brand.STATUS_ONLINE}; background: transparent;")
+            tag.setStyleSheet(f"color: {tag_color}; background: transparent;")
             head.addWidget(tag)
         row.addLayout(head)
 
@@ -412,8 +434,27 @@ class _StandardSlideRow(QFrame):
             self._num.setStyleSheet(
                 f"color: {brand.FAINT_DARK}; background: transparent;")
 
-    def mousePressEvent(self, _event):
-        self.clicked.emit(self.index)
+    # Release-inside, for the same reason as _Thumbnail above: this row lives in
+    # a scroll list that the operator drags with a finger.
+    def mousePressEvent(self, event):
+        self._down = True
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self._down and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit(self.index)
+        self._down = False
+        event.accept()
+
+
+# The four faces of Standard mode, in the order an operator would reach for
+# them. Values match `PresentationScreen._CONTENT_PAGES` plus "rotation".
+_CONTENT_CHOICES = [
+    ("rotation",    "Slide rotation"),
+    ("checklist",   "Pit checklist"),
+    ("diagnostics", "Robot diagnostics"),
+    ("robot_info",  "Robot info"),
+]
 
 
 class _StandardSlidePicker(QWidget):
@@ -434,6 +475,7 @@ class _StandardSlidePicker(QWidget):
         config.screen_setting_changed.connect(self._on_setting_changed)
         config.mode_changed.connect(lambda _m: self._refresh_enabled())
         config.team_changed.connect(self._on_team_changed)
+        config.logs_changed.connect(self._rebuild)
         self._rebuild()
 
     def _build_ui(self):
@@ -485,32 +527,57 @@ class _StandardSlidePicker(QWidget):
 
     # ── Build the list ────────────────────────────────────────────────────
 
-    def _slides(self) -> list[tuple[str, str]]:
+    def _screen_cls(self):
         from app.windows.presentation_a import PresentationScreenA
         from app.windows.presentation_b import PresentationScreenB
-        cls = (PresentationScreenA if self._screen_id == "presentation_a"
-               else PresentationScreenB)
+        return (PresentationScreenA if self._screen_id == "presentation_a"
+                else PresentationScreenB)
+
+    def _slides(self) -> list[tuple[str, str]]:
+        """
+        Every stop in the cycle — slides, then this screen's board.
+
+        Deliberately the same call the presentation screen makes, so an index
+        written here means the same stop there. If these two ever disagree, a
+        click lands on the wrong slide.
+        """
+        cls = self._screen_cls()
         try:
-            return cls.rotation_slides()
+            return cls.rotation_entries()
         except Exception:
             return list(cls.SLIDES)
+
+    def _board_index(self) -> int | None:
+        cls = self._screen_cls()
+        try:
+            return (len(cls.rotation_slides())
+                    if cls.board_entry() is not None else None)
+        except Exception:
+            return None
 
     def _rebuild(self):
         clear_layout(self._list)
         self._rows.clear()
         slides = self._slides()
         authored = len(self._authored())
+        board = self._board_index()
         for i, (title, body) in enumerate(slides):
-            row = _StandardSlideRow(i, title, body, is_fact=i >= authored)
+            is_board = board is not None and i == board
+            row = _StandardSlideRow(
+                i, title, body,
+                is_fact=(not is_board) and i >= authored,
+                kind="board" if is_board else "")
             row.clicked.connect(self._jump)
             self._rows.append(row)
             self._list.addWidget(row)
         self._list.addStretch()
 
-        facts = len(slides) - authored
+        n_slides = len(slides) - (1 if board is not None else 0)
+        facts = n_slides - authored
         self._count_lbl.setText(
-            f"{len(slides)} slides — {authored} authored"
-            + (f", {facts} from the robot log" if facts else ""))
+            f"{n_slides} slides — {authored} authored"
+            + (f", {facts} from the robot log" if facts else "")
+            + (" · + the live board" if board is not None else ""))
         self._refresh_active()
         self._refresh_enabled()
 
@@ -702,6 +769,43 @@ class ScreenSettingsPanel(QWidget):
 
         # Judges content — only relevant for presentation screens
         if screen_id in ("presentation_a", "presentation_b"):
+            # What this screen shows in Standard mode. Per-screen, not a global
+            # mode: the useful arrangement is one overhead screen on the
+            # checklist while the other keeps rotating for visitors.
+            outer.addWidget(label("Standard Content", "screen_title"))
+            outer.addSpacing(4)
+            outer.addWidget(label(
+                "What this overhead screen shows in Standard mode. Rotation "
+                "cycles the slides and finishes on the diagnostics board; "
+                "anything else pins that page and stops the 45-second timer "
+                "touching this screen.",
+                "stat_label"))
+            outer.addSpacing(8)
+
+            # A combo, not a toggle: there are four faces now, and a two-state
+            # switch cannot say which of them you meant.
+            self._pres_content = QComboBox()
+            for value, text in _CONTENT_CHOICES:
+                self._pres_content.addItem(text, value)
+            current = config.get(screen_id, "content", "rotation")
+            idx = self._pres_content.findData(current)
+            self._pres_content.setCurrentIndex(idx if idx >= 0 else 0)
+            self._pres_content.setFixedWidth(220)
+            self._pres_content.currentIndexChanged.connect(
+                self._on_pres_content_changed)
+
+            outer.addWidget(SettingRow(
+                label_text="Screen content",
+                description="Rotation, the checklist, or a robot board pinned.",
+                control=self._pres_content,
+            ))
+            outer.addSpacing(8)
+            outer.addWidget(ChecklistPanel(screen_id))
+            outer.addSpacing(16)
+
+            outer.addWidget(divider())
+            outer.addSpacing(12)
+
             outer.addWidget(label("Standard Slides", "screen_title"))
             outer.addSpacing(4)
             outer.addWidget(label(
@@ -774,6 +878,9 @@ class ScreenSettingsPanel(QWidget):
     def _on_theme_toggled(self, light: bool):
         self._theme_label.setText("Light" if light else "Dark")
         config.set(self._screen_id, "theme", "light" if light else "dark")
+
+    def _on_pres_content_changed(self, _index: int):
+        config.set(self._screen_id, "content", self._pres_content.currentData())
 
     def _on_content_toggled(self, board: bool):
         self._content_label.setText("Impact Board" if board else "CAD Viewer")
