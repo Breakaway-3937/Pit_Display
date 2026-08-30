@@ -132,6 +132,25 @@ has already fired by the time the router decides the gesture was a scroll, so
 activate on release-inside instead — `_Thumbnail` and `_StandardSlideRow` in
 the control screen were converted for exactly this reason.
 
+**A synthesized press does not move keyboard focus, and the router has to do
+it by hand.** Qt focuses a widget on click inside its *native* mouse dispatch
+(`QApplicationPrivate::giveFocusAccordingToFocusPolicy`), which an event built
+and handed to `sendEvent()` never goes through — so a finger on a text field
+blinked a caret that no keystroke ever reached. `_focus_on_press` does both
+halves Qt would: activate the window (keystrokes go to the *active* window
+first) and walk up from the tapped widget to the first one accepting
+`ClickFocus`, before the press is delivered.
+
+This was invisible while the control screen was the only window — whatever had
+focus at startup still had it — and appeared the moment a second window existed
+to hold the focus instead. **The symptom was "open any other screen and the
+control panel stops accepting keyboard input."** Two more things belt-and-brace
+it: `_on_power_toggled` hands activation back to the control screen after
+`show()`, and the two presentation screens carry
+`WindowDoesNotAcceptFocus` — they have no input widget on them, so they can
+never take the keyboard in the first place. The **project** screen deliberately
+does not, being a touch panel with a web view that wants ordinary focus.
+
 **A touchscreen sends no `leaveEvent`**, so anything that paints itself on
 hover has to undo that itself. Synthesized events carry the real touch device,
 so `touch.is_touch(event)` tells a tap from a click; `_CardButton` uses it to

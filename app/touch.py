@@ -51,6 +51,13 @@ settings column activates whatever happened to be under the fingertip.
 Synthesized events carry the real touch device, so a widget can tell a tap from
 a click with `is_touch()`. That matters for hover state: a touchscreen sends no
 leaveEvent, so anything that paints itself on hover has to undo that itself.
+
+Focus
+-----
+A synthesized press does **not** move keyboard focus. Qt does focus-on-click in
+its native dispatch, which `sendEvent()` bypasses entirely, so the router has to
+do it by hand — see `_focus_on_press`. Without it a tap on a text field blinks a
+caret that no keystroke ever reaches.
 """
 
 from __future__ import annotations
@@ -174,6 +181,9 @@ class _TouchRouter(QObject):
         target = self._widget_at(window, gpos)
         if target is None:
             return
+        # Focus first, then the press — Qt's own order. A synthesized event
+        # does not move focus on its own; see `_focus_on_press`.
+        _focus_on_press(window, target)
         # A press for a point id we still hold means we missed a release
         # (window hidden mid-touch, device reset). Drop the stale one.
         self._points.pop(key, None)
@@ -245,6 +255,43 @@ class _TouchRouter(QObject):
             v.setValue(v.value() - dy)
         if h.maximum() > h.minimum():
             h.setValue(h.value() - dx)
+
+
+def _focus_on_press(window: QWidget, target: QWidget) -> None:
+    """
+    Give the tapped widget the keyboard, the way a real click would.
+
+    **Qt does focus-on-click inside its own native mouse dispatch**
+    (`QApplicationPrivate::giveFocusAccordingToFocusPolicy`), which runs in
+    `QApplication::notify` *before* the widget sees the press. An event we build
+    and hand to `sendEvent()` never goes through that path, so without this a
+    finger moves the caret and the highlight but not the keyboard — you tap a
+    field, the cursor blinks in it, and every keystroke goes somewhere else.
+
+    Invisible while the control screen is the only window, because whatever had
+    focus at startup still had it. The moment a second window exists to hold the
+    focus instead, every text field on the panel goes dead.
+
+    Two halves, and both are needed: keystrokes go to the **active window**
+    first and to the **focus widget** within it second, so a tap has to claim
+    both. Called before the press is delivered, matching Qt's order.
+    """
+    if not window.isActiveWindow():
+        window.activateWindow()
+
+    click_focus = Qt.FocusPolicy.ClickFocus.value
+    w = target
+    while w is not None:
+        try:
+            if w.focusPolicy().value & click_focus:
+                if not w.hasFocus():
+                    w.setFocus(Qt.FocusReason.MouseFocusReason)
+                return
+            if w.isWindow():
+                return
+            w = w.parentWidget()
+        except RuntimeError:        # widget deleted mid-gesture
+            return
 
 
 def _mouse_event(etype, local: QPointF, gpos: QPointF, device,

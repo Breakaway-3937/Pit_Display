@@ -1163,6 +1163,12 @@ class ControlScreen(QMainWindow):
             return
         if on:
             window.show()
+            # `show()` activates the window it shows, and keystrokes go to the
+            # active window. The audience screens never need a keyboard, so
+            # letting one take it means the operator's next keystroke — a CAN-id
+            # name, a checklist item, the admin password — lands on a slide
+            # rotation instead. Hand activation straight back.
+            self.activateWindow()
         else:
             window.hide()
 

@@ -37,6 +37,7 @@ Subclasses provide `SCREEN_ID`, `SLIDES`, and `BOARD_CONTENT` — which of the t
 boards is this screen's own.
 """
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QMainWindow, QStackedWidget
 
 from app.cad_assets import cad_assets
@@ -91,6 +92,16 @@ class PresentationScreen(QMainWindow):
             f"Pit Display — {SCREEN_LABELS.get(self.SCREEN_ID, self.SCREEN_ID)}"
         )
         self.setMinimumSize(320, 240)
+        # An audience screen has no input widget on it — no field, no button,
+        # nothing to type into. Saying so to the window manager means it can
+        # never take the keyboard from the operator's panel, which is stronger
+        # than handing activation back after the fact: there is no window in
+        # which the control screen has lost it.
+        #
+        # The **project** screen deliberately does not get this. It is a touch
+        # panel visitors drive, and the CAD web view wants ordinary focus.
+        self.setWindowFlag(
+            Qt.WindowType.WindowDoesNotAcceptFocus, True)
         self._build_ui()
 
         # Honour the operator's commands: team, mode, and per-screen settings.
