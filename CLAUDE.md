@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-@BREAKAWAY_BRAND.md
+@breakaway_branding.md
 
 ## Running the app
 
