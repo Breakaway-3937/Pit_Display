@@ -34,7 +34,7 @@ TEAMS: dict[int, Team] = {
     3937: Team(
         number=3937,
         name="Breakaway",
-        primary_color="#C82027",   # Breakaway Red
+        primary_color="#BA141A",   # Breakaway Red
         secondary_color="#ffffff",
         location="Searcy, Arkansas",
     ),

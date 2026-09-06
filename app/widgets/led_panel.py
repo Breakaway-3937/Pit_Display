@@ -106,7 +106,7 @@ class LEDPanel(QWidget):
         # Master ----------------------------------------------------------
         master_row = QHBoxLayout()
         master_row.setContentsMargins(0, 0, 0, 0)
-        self._enable_toggle = ToggleSwitch(color_on=config.active_team.primary_color)
+        self._enable_toggle = ToggleSwitch()
         self._enable_toggle.setChecked(True)
         self._enable_toggle.toggled.connect(self._on_enable_toggled)
         master_row.addWidget(self._enable_toggle)
@@ -230,7 +230,7 @@ class LEDPanel(QWidget):
         row = QWidget()
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
-        toggle = ToggleSwitch(color_on=config.active_team.primary_color)
+        toggle = ToggleSwitch()
         toggle.setChecked(checked)
         toggle.toggled.connect(handler)
         h.addWidget(toggle)
@@ -287,9 +287,8 @@ class LEDPanel(QWidget):
 
     def _on_team_changed(self, team):
         color = team.primary_color
-        for toggle in (self._enable_toggle, self._follow_team_toggle,
-                       self._follow_mode_toggle):
-            toggle.set_color_on(color)
+        # The toggles stay green — see ToggleSwitch. Only the controls whose
+        # colour *is* the meaning follow the team.
         for btn in self._preset_buttons.values():
             btn.set_accent(color)
         for btn, hex_color in self._swatch_buttons:

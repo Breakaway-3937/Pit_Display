@@ -1,206 +1,133 @@
 """
-Lunch overlay — drawn entirely in paintEvent.
+Lunch — the holding card.
 
-All previous approaches used QLabel inside a layout; Qt's label size-hint
-system capped the rendered font regardless of what pixel size was set.
-paintEvent bypasses the layout engine entirely — font size is calculated
-from the live widget dimensions every frame, guaranteed to fill the screen.
+The pit is unattended. Say so warmly, keep the brand on screen, and be the
+calmest surface in the room: this is the one that runs for forty minutes with
+nobody watching it, so it is one enormous line of type and nothing competing.
+
+**On the same chassis as everything else.** It used to be a bespoke
+`paintEvent` with a wordmark plate, a red pill divider and red eyebrow type —
+three things the brand system now rules out:
+
+- **The wordmark artwork is out.** Identity is carried by the type in the
+  header band, which frees the whole red budget for functional shapes and
+  removes the white media plate that was breaking the dark surface.
+- **Red on carbon is 2.8:1 and forbidden for type.** The eyebrow goes muted;
+  the one red thing is the **Trace**, a filled shape leading into the headline.
+- The plate, the header and the footer ledger come from `Chassis`, so an
+  operator flipping between Standard and Lunch sees the same room.
+
+**The headline auto-fits.** It has to genuinely fill a 55" panel, and the
+message is short and known, so it is measured against the stage rather than set
+at a size that happens to work on one machine.
 """
 
-from pathlib import Path
+from __future__ import annotations
 
-from PyQt6.QtWidgets import QWidget, QSizePolicy
-from PyQt6.QtCore import Qt, QRect, QRectF
-from PyQt6.QtGui import (
-    QPainter, QPixmap, QFont, QFontMetrics, QColor, QPen,
-    QResizeEvent, QShowEvent,
-)
+from PyQt6.QtCore import QPointF, QRectF
+from PyQt6.QtGui import QColor, QFont, QFontMetricsF, QPainter
 
 from app import brand
 from app.config import config
+from app.widgets.brand_widgets import paint_trace
+from app.widgets.chassis import Chassis
 
-_LOGO_DIR   = Path(__file__).parent.parent.parent / "assets" / "logos"
-_LOGO_NAMES = ["2026 Wordmark.png", "breakaway_logo.png", "breakaway_logo.jpg"]
+HEADLINE = "We'll Be Right Back"
+SUBLINE = ("Our team is on a lunch break and will return shortly. "
+           "Thank you for stopping by our pit.")
 
-_HEADLINE = "We'll Be Right Back"
-_SUB      = "Our team is on a lunch break and will return shortly.\nThank you for stopping by our pit!"
-
-# Layout fractions of widget height
-_LOGO_H_FRAC      = 0.22
-_DIVIDER_Y_FRAC   = 0.34
-_HEADLINE_Y_FRAC  = 0.40
-_HEADLINE_H_FRAC  = 0.20
-_SUB_Y_FRAC       = 0.64
-_SUB_H_FRAC       = 0.22
-
-
-def _find_logo() -> Path | None:
-    for name in _LOGO_NAMES:
-        p = _LOGO_DIR / name
-        if p.exists():
-            return p
-    return None
+# Design sizes at 1920×1080. The headline is a ceiling, not a size — `_fit()`
+# takes it down until the line fits the stage.
+_HEAD_MAX = 200
+_HEAD_MIN = 48
+_EYEBROW = 24
+_BODY = 34
+_TRACE_W = 400
 
 
-def _fit_font(text: str, weight: QFont.Weight, max_w: int, max_h: int,
-              family: str = brand.FONT_DISPLAY) -> QFont:
-    """Largest font pixel size where text fits within max_w × max_h."""
-    f = QFont(family)
-    f.setWeight(weight)
-    size = max(8, min(max_h, max_w))
-    f.setPixelSize(size)
-    fm = QFontMetrics(f)
-    while size > 8 and fm.horizontalAdvance(text) > max_w:
-        size -= 2
-        f.setPixelSize(size)
-        fm = QFontMetrics(f)
-    return f
-
-
-def _font(pixel_size: int, weight: QFont.Weight = QFont.Weight.Normal,
-          family: str = brand.FONT_BODY) -> QFont:
-    f = QFont(family)
-    f.setPixelSize(max(8, pixel_size))
-    f.setWeight(weight)
-    return f
-
-
-class LunchOverlay(QWidget):
+class LunchOverlay(Chassis):
+    """The unattended-pit card, on the shared chassis."""
 
     def __init__(self, screen_id: str = "", parent=None):
-        super().__init__(parent)
-        self._screen_id = screen_id
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
-        self._logo_pixmap: QPixmap | None = None
-        self._load_logo()
-        config.team_changed.connect(self.update)
-        config.screen_setting_changed.connect(self._on_setting_changed)
+        super().__init__(screen_id=screen_id, parent=parent)
+        config.team_changed.connect(lambda *_: self.update())
 
-    def _on_setting_changed(self, screen: str, key: str, _value):
-        if screen == self._screen_id and key == "theme":
-            self.update()
+    # ── Chassis hooks ─────────────────────────────────────────────────────
 
-    def _load_logo(self):
-        path = _find_logo()
-        if path:
-            raw = QPixmap(str(path))
-            self._logo_pixmap = raw.scaled(
-                1400, 600,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+    @property
+    def _screen_letter(self) -> str:
+        return "B" if self.screen_id.endswith("_b") else "A"
 
-    # ── Paint ─────────────────────────────────────────────────────────────
+    def header_right(self) -> list[tuple]:
+        return [("mono", f"SCREEN {self._screen_letter}  /  LUNCH")]
 
-    def paintEvent(self, _event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-
-        w, h = self.width(), self.height()
-
-        theme = config.screen_theme(self._screen_id) if self._screen_id else "dark"
-        pal = brand.palette(theme)
-        headline_color = brand.WHITE if theme != "light" else pal["ink"]
-
-        # Background
-        p.fillRect(0, 0, w, h, QColor(pal["bg"]))
-
-        # ── Logo ─────────────────────────────────────────────────────────
-        logo_h = int(h * _LOGO_H_FRAC)
-        if self._logo_pixmap:
-            scaled = self._logo_pixmap.scaled(
-                w - 160, logo_h,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            lx = (w - scaled.width()) // 2
-            ly = int(h * 0.06)
-            p.drawPixmap(lx, ly, scaled)
-        else:
-            p.setPen(QPen(QColor(pal["line"]), 2, Qt.PenStyle.DashLine))
-            p.setBrush(QColor(pal["surface"]))
-            logo_max_w = min(700, w - 160)
-            pr = QRect((w - logo_max_w) // 2, int(h * 0.06), logo_max_w, logo_h)
-            p.drawRoundedRect(pr, 12, 12)
-
-        # ── Eyebrow (Chakra Petch, tracked caps, team red) ────────────────
+    def footer_items(self) -> tuple[str, str]:
+        # The eyebrow already says "back shortly"; the ledger says where you
+        # are, which is the other thing a visitor standing here wants.
         team = config.active_team
-        eyebrow = (f"{team.name} {team.number}" if team.name
-                   else f"Team {team.number}").upper()
-        accent = QColor(team.primary_color)
-        eb_font = _font(max(12, int(h * 0.028)), QFont.Weight.DemiBold, brand.FONT_DISPLAY)
-        eb_font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 130)
-        p.setFont(eb_font)
-        p.setPen(accent)
-        p.drawText(
-            QRect(40, int(h * (_DIVIDER_Y_FRAC - 0.055)), w - 80, int(h * 0.05)),
-            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-            eyebrow,
-        )
+        where = (team.location or "").upper()
+        return "", where or "THANKS FOR STOPPING BY"
 
-        # ── Accent divider — Rounded pill bar (§5.1) ──────────────────────
-        div_w = max(160, min(320, w // 6))
-        div_bar_h = max(5, h // 120)
-        dx = (w - div_w) // 2
-        dy = int(h * _DIVIDER_Y_FRAC)
-        radius = div_bar_h / 2
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(accent)
-        p.drawRoundedRect(QRectF(dx, dy, div_w, div_bar_h), radius, radius)
+    # ── The stage ─────────────────────────────────────────────────────────
 
-        # ── Headline ─────────────────────────────────────────────────────
-        headline_rect = QRect(
-            40,
-            int(h * _HEADLINE_Y_FRAC),
-            w - 80,
-            int(h * _HEADLINE_H_FRAC),
-        )
-        headline_font = _fit_font(
-            _HEADLINE,
-            QFont.Weight.Bold,
-            headline_rect.width(),
-            headline_rect.height(),
-        )
-        p.setFont(headline_font)
-        p.setPen(QColor(headline_color))
-        p.drawText(headline_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, _HEADLINE)
+    def _fit(self, p: QPainter, text: str, max_w: float,
+             max_px: float) -> QFont:
+        """The largest display size at which `text` still fits on one line."""
+        px = max_px
+        while px > _HEAD_MIN:
+            f = self.display(px, 700, -0.018)
+            if QFontMetricsF(f).horizontalAdvance(text) <= max_w:
+                return f
+            px *= 0.94
+        return self.display(_HEAD_MIN, 700, -0.018)
 
-        # ── Sub-line ─────────────────────────────────────────────────────
-        sub_px = min(int(h * 0.055), int((w - 160) // 38))
-        p.setFont(_font(max(8, sub_px)))
-        p.setPen(QColor(pal["muted"]))
-        sub_rect = QRect(
-            80,
-            int(h * _SUB_Y_FRAC),
-            w - 160,
-            int(h * _SUB_H_FRAC),
-        )
-        p.drawText(
-            sub_rect,
-            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
-            _SUB,
-        )
+    def paint_stage(self, p: QPainter, rect: QRectF):
+        eyebrow = "Back shortly"
+        f_eye = self.display(_EYEBROW, 600, 0.16)
+        f_head = self._fit(p, HEADLINE, rect.width(), _HEAD_MAX)
+        f_body = self.body(_BODY)
 
-        p.end()
+        trace_w = min(self.s(_TRACE_W), rect.width() * 0.35)
+        trace_h = trace_w * 62 / 300
 
-    # ── Keep repaint on resize ────────────────────────────────────────────
+        eye_h = QFontMetricsF(f_eye).height()
+        head_h = QFontMetricsF(f_head).height()
+        body_h = self.draw_wrapped(p, rect.x(), 0, min(self.s(1100),
+                                                       rect.width()),
+                                   SUBLINE, f_body, self.body_ink, 1.5,
+                                   measure_only=True)
 
-    def resizeEvent(self, event: QResizeEvent):
-        super().resizeEvent(event)
-        self.update()
+        gap_a, gap_b, gap_c = self.s(16), self.s(12), self.s(34)
+        total = eye_h + gap_a + trace_h + gap_b + head_h + gap_c + body_h
+        # Centred on the stage: the card is looked at, not read through, so it
+        # sits in the middle of its room rather than hanging off the top rule.
+        y = rect.y() + max(0.0, (rect.height() - total) / 2)
 
-    def showEvent(self, event: QShowEvent):
-        super().showEvent(event)
-        self.update()
+        p.setFont(f_eye)
+        p.setPen(QColor(self.muted))
+        p.drawText(QPointF(rect.x(), y + QFontMetricsF(f_eye).ascent()),
+                   eyebrow.upper())
+        y += eye_h + gap_a
 
-    # ── Public ───────────────────────────────────────────────────────────
+        # The one red thing on the surface, and it is a shape, not type.
+        paint_trace(p, rect.x(), y, trace_w, brand.RED)
+        y += trace_h + gap_b
+
+        p.setFont(f_head)
+        p.setPen(QColor(self.ink))
+        p.drawText(QPointF(rect.x(), y + QFontMetricsF(f_head).ascent()),
+                   HEADLINE)
+        y += head_h + gap_c
+
+        self.draw_wrapped(p, rect.x(), y, min(self.s(1100), rect.width()),
+                          SUBLINE, f_body, self.body_ink, 1.5)
+
+    # ── Kept for the presentation screen's mode switch ────────────────────
 
     def apply_fonts(self):
-        """No-op — paintEvent handles sizing. Kept for call-site compatibility."""
+        """Nothing to cache any more; the stage measures itself every paint."""
         self.update()
 
     def reload_logo(self):
-        self._load_logo()
+        """The wordmark artwork is no longer used — see the module docstring."""
         self.update()

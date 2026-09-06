@@ -14,8 +14,10 @@ Breakaway brand devices as reusable Qt widgets (Brand System v2.0, §5).
                   signals robot / CAD / machine content. Engineering surfaces
                   only. `pocket_path()` is the geometry helper.
   Trace         — the leading line (§5.4): a 45° diagonal entry that bends once
-                  to flat and lands in a rectangular pad, leading the eye to a
-                  headline / score. Use once per surface.
+                  to flat and lands in a hollow circle terminal, leading the
+                  eye to a headline / score. Use once per surface. Geometry is
+                  locked to the playbook's 300×62 box — `paint_trace()` is the
+                  painter helper, and it can draw the line on progressively.
   eyebrow()     — Chakra Petch 600, uppercase, tracked — the brand eyebrow.
 
 Qt has no CSS radius/clip on custom paints, so these paint themselves. One
@@ -26,11 +28,23 @@ is the shell underneath. The logo is never a device.
 import math
 
 from PyQt6.QtWidgets import QFrame, QPushButton, QLabel, QWidget, QSizePolicy
-from PyQt6.QtCore import Qt, QRectF, QSize
+from PyQt6.QtCore import Qt, QRectF, QSize, QPointF
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QPainterPath
 
 from app import brand
 from app.brand import FONT_MONO_STACK
+
+
+def _radius(radius: float, rect: QRectF) -> float:
+    """
+    The corner radius a rect can actually take.
+
+    `R_PILL` is 999 — a sentinel meaning "fully round", not a measurement. Qt's
+    `drawRoundedRect` clamps the x and y radii independently to half the width
+    and half the height, so passing 999 for both turns a 200×56 chip into an
+    **ellipse**. A pill is half the *height* on both axes.
+    """
+    return max(0.0, min(radius, rect.height() / 2, rect.width() / 2))
 
 
 # ── Bracket — focus accent (§5.2) ────────────────────────────────────────────
@@ -124,7 +138,7 @@ class RoundedFrame(QFrame):
         inset = 0.75 if self._border else 0.0
         rect = QRectF(inset, inset,
                       self.width() - 2 * inset, self.height() - 2 * inset)
-        r = self._radius
+        r = _radius(self._radius, rect)
 
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(self._fill)
@@ -148,12 +162,13 @@ class RoundedButton(QPushButton):
     """
     Button with the Rounded shell (10px) and the brand's three variants.
 
-      primary   — red fill, white text (default CTA)
-      secondary — white/surface fill, red text + 1.5px red border
-      ghost     — transparent, ink text
+      primary   — accent fill, white text. The ONE call to action on a panel.
+      secondary — neutral 1.5px outline, muted text. The workhorse.
+      ghost     — transparent, muted text.
 
-    `accent` overrides the red used for primary fill / secondary border — pass
-    the active team color so buttons follow the team.
+    `accent` overrides the red used for the primary fill and for the `_active`
+    state — pass the active team color so the CTA follows the team, or a status
+    colour where "selected" means something (a green checklist tick).
     """
 
     def __init__(
@@ -200,7 +215,17 @@ class RoundedButton(QPushButton):
         super().leaveEvent(e)
 
     def _colors(self):
-        """Return (fill, text, border) QColors for the current state."""
+        """
+        (fill, text, border) for the current state.
+
+        **`secondary` is neutral, not red.** It used to be a red outline with
+        red type, which meant an operator panel with a dozen ordinary controls
+        on it had a dozen red things — the red budget (§03) spent entirely on
+        "here are some buttons". `primary` keeps the accent, and there is one
+        of those per panel; `_active` keeps it too, because the only widgets
+        that set it mean a *colour* by it (a green checklist tick, the selected
+        LED preset).
+        """
         accent = self._accent
         pressed = self.isDown()
 
@@ -212,12 +237,17 @@ class RoundedButton(QPushButton):
                     else accent)
             return fill, QColor(brand.WHITE), None
         if self._variant == "secondary":
-            if self._hover or pressed:
-                return accent, QColor(brand.WHITE), accent
-            return QColor(0, 0, 0, 0), accent, accent
+            border = QColor(brand.N600)
+            if pressed:
+                return QColor(brand.RAISED_DARK), QColor(brand.WHITE), border
+            if self._hover:
+                return QColor(0, 0, 0, 0), QColor(brand.WHITE), QColor(brand.N400)
+            return QColor(0, 0, 0, 0), QColor(brand.N300), border
         # ghost
-        if self._hover or pressed:
-            return QColor(accent.red(), accent.green(), accent.blue(), 28), accent, None
+        if pressed:
+            return QColor(brand.RAISED_DARK), QColor(brand.WHITE), None
+        if self._hover:
+            return QColor(0, 0, 0, 0), QColor(brand.WHITE), None
         return QColor(0, 0, 0, 0), QColor(brand.MUTED_DARK), None
 
     def paintEvent(self, _event):
@@ -229,7 +259,7 @@ class RoundedButton(QPushButton):
         inset = 0.75 if border is not None else 0.0
         rect = QRectF(inset, inset,
                       self.width() - 2 * inset, self.height() - 2 * inset)
-        r = self._radius
+        r = _radius(self._radius, rect)
 
         p.setPen(Qt.PenStyle.NoPen)
         if fill.alpha() > 0:
@@ -248,6 +278,29 @@ class RoundedButton(QPushButton):
         p.setFont(self.font())
         p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.text())
         p.end()
+
+
+class SelectableChip(RoundedButton):
+    """
+    A one-of-many chip whose selected state is **white**, not the accent.
+
+    Mode buttons, CAD subsystem chips and EQ presets are all the same object:
+    a row where exactly one is chosen. Selected-is-red would put three or four
+    red things on a panel that is allowed one, and "this is the one that is on"
+    is not the exceptional state the budget is reserved for (§03). White fill,
+    carbon type — the same mark the live slide row and the selected nav row use.
+    """
+
+    def __init__(self, text: str = "", radius: int = brand.R_BTN, parent=None):
+        super().__init__(text, variant="secondary", radius=radius, parent=parent)
+
+    def _colors(self):
+        if self._active:
+            return QColor(brand.N50), QColor(brand.CARBON), None
+        if self.isDown():
+            return (QColor(brand.RAISED_DARK), QColor(brand.WHITE),
+                    QColor(brand.N600))
+        return QColor(0, 0, 0, 0), QColor(brand.N300), QColor(brand.N600)
 
 
 # ── Pocket — engineering scope (§5.3) ────────────────────────────────────────
@@ -325,14 +378,74 @@ class Pocket(QWidget):
 
 # ── Trace — the leading line (§5.4) ──────────────────────────────────────────
 
+# The locked geometry, in the playbook's own viewBox units (300 × 62):
+#   M10,54 L52,14 L252,14   plus a hollow circle at (264, 14) r 9, stroke 6.
+# Everything scales off `unit = width / 300`, so the 45° entry, the single
+# mitered bend and the terminal's stroke weight can never drift apart.
+_TRACE_VB_W   = 300.0
+_TRACE_VB_H   = 62.0
+_TRACE_STROKE = 6.0
+_TRACE_LEN    = 258.0   # path length in viewBox units — the comp's dasharray
+
+
+def trace_size(width: float) -> tuple[float, float]:
+    """(width, height) of a Trace drawn at `width`, keeping the locked ratio."""
+    return width, width * _TRACE_VB_H / _TRACE_VB_W
+
+
+def paint_trace(p: QPainter, x: float, y: float, width: float,
+                color: str = brand.RED, progress: float = 1.0,
+                mirrored: bool = False) -> None:
+    """
+    The leading line (§5.4), drawn into `p` with its top-left at (x, y).
+
+    `progress` draws it on from the entry corner — 0 is nothing, 1 is the whole
+    line — which is how the slide transition redraws it as a slide arrives. The
+    terminal is not animated: it is the thing being led *to*, so it is already
+    there when the line reaches it.
+    """
+    u = width / _TRACE_VB_W
+    s = _TRACE_STROKE * u
+
+    def px(vx: float) -> float:
+        return x + (_TRACE_VB_W - vx if mirrored else vx) * u
+
+    def py(vy: float) -> float:
+        return y + vy * u
+
+    pen = QPen(QColor(color), s, Qt.PenStyle.SolidLine,
+               Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.MiterJoin)
+    progress = max(0.0, min(1.0, progress))
+    if progress < 1.0:
+        # Same trick the comp uses: one dash as long as the whole path, walked
+        # in from the far end. Qt's dash lengths are in pen widths.
+        seg = _TRACE_LEN * u / s
+        pen.setDashPattern([seg, seg])
+        pen.setDashOffset(seg * (1.0 - progress))
+    p.setPen(pen)
+    p.setBrush(Qt.BrushStyle.NoBrush)
+
+    path = QPainterPath()
+    path.moveTo(px(10), py(54))
+    path.lineTo(px(52), py(14))
+    path.lineTo(px(252), py(14))
+    p.drawPath(path)
+
+    # Hollow circle terminal, at the same stroke weight (locked).
+    p.setPen(QPen(QColor(color), s, Qt.PenStyle.SolidLine,
+                  Qt.PenCapStyle.FlatCap, Qt.PenJoinStyle.MiterJoin))
+    p.drawEllipse(QPointF(px(264), py(14)), 9 * u, 9 * u)
+
+
 class Trace(QWidget):
     """
     A leading line: a 45° diagonal enters from the bottom corner, bends ONCE to
-    horizontal, and terminates in a rectangular pad — pointing the eye at the
-    headline / score. Use once per surface. Purely decorative — no interaction.
+    horizontal, and terminates in a hollow circle at the same stroke weight —
+    pointing the eye at the headline / score. Use once per surface. Purely
+    decorative — no interaction.
 
-      direction "left"  → enters bottom-left, pad on the right (default)
-      direction "right" → mirrored (enters bottom-right, pad on the left)
+      direction "left"  → enters bottom-left, terminal on the right (default)
+      direction "right" → mirrored
     """
 
     def __init__(
@@ -346,60 +459,40 @@ class Trace(QWidget):
         self._color = QColor(color)
         self._stroke = stroke
         self._dir = direction
-        self._drop = max(20.0, 4.0 * stroke)   # 45° vertical travel of the entry
+        self._progress = 1.0
+        # The geometry is locked to a 300×62 box, so the stroke the caller asks
+        # for is what fixes the overall size — not the other way round.
+        self._width = _TRACE_VB_W * stroke / _TRACE_STROKE
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setFixedHeight(int(2 * stroke + self._drop))
+        self.setFixedHeight(int(round(self._width * _TRACE_VB_H / _TRACE_VB_W)))
 
     # A bare QWidget has an invalid sizeHint, so any layout that positions this
     # by its hint — addWidget(..., alignment=...) does exactly that — gave it
     # zero width and the Trace silently never painted. Declare a real one.
     def sizeHint(self) -> QSize:
-        return QSize(int(self._drop + 12 * self._stroke), self.height())
+        return QSize(int(round(self._width)), self.height())
 
     def minimumSizeHint(self) -> QSize:
-        # Enough for the diagonal, a short flat run, and the pad.
-        return QSize(int(self._drop + 5 * self._stroke), self.height())
+        return self.sizeHint()
 
     def set_color(self, hex_color: str):
         self._color = QColor(hex_color)
         self.update()
 
+    def set_progress(self, progress: float):
+        """0 → 1 draws the line on from its entry corner."""
+        self._progress = progress
+        self.update()
+
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        w, h = self.width(), self.height()
-        s = self._stroke
-        drop = min(self._drop, h - s)
-        y0 = s                                  # flat leg near the top
-        pad_w, pad_h = 2.5 * s, 1.5 * s
-
-        pen = QPen(self._color, s, Qt.PenStyle.SolidLine,
-                   Qt.PenCapStyle.FlatCap, Qt.PenJoinStyle.MiterJoin)
-        p.setPen(pen)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-
-        path = QPainterPath()
-        if self._dir == "right":
-            entry_x, bend_x = w - s / 2, w - s / 2 - drop   # enter bottom-right
-            flat_end = s / 2 + pad_w
-            path.moveTo(entry_x, y0 + drop)
-            path.lineTo(bend_x, y0)
-            path.lineTo(flat_end, y0)
-            pad_x = s / 2
-        else:
-            entry_x, bend_x = s / 2, s / 2 + drop           # enter bottom-left
-            flat_end = w - s / 2 - pad_w
-            path.moveTo(entry_x, y0 + drop)
-            path.lineTo(bend_x, y0)
-            path.lineTo(flat_end, y0)
-            pad_x = w - s / 2 - pad_w
-        p.drawPath(path)
-
-        # Rectangular pad terminal (radius 2) just past the headline.
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(self._color)
-        p.drawRoundedRect(QRectF(pad_x, y0 - pad_h / 2, pad_w, pad_h), 2, 2)
+        # Keep the locked ratio inside whatever the layout handed us: the
+        # geometry is reproduce-exactly, so it scales but never stretches.
+        w = min(float(self.width()), self.height() * _TRACE_VB_W / _TRACE_VB_H)
+        x = 0.0 if self._dir == "left" else self.width() - w
+        paint_trace(p, x, 0.0, w, self._color.name(), self._progress,
+                    mirrored=(self._dir == "right"))
         p.end()
 
 
@@ -429,8 +522,16 @@ def mono_font(px: int | None = None, tabular: bool = True) -> QFont:
 
 # ── Eyebrow label ───────────────────────────────────────────────────────────
 
-def eyebrow(text: str, color: str = brand.RED) -> QLabel:
-    """Chakra Petch 600, uppercase, +0.16em tracking — the brand eyebrow (§2)."""
+def eyebrow(text: str, color: str = brand.N400) -> QLabel:
+    """
+    Chakra Petch 600, uppercase, +0.16em tracking — the brand eyebrow (§2).
+
+    **Muted by default, not red.** Red on carbon is 2.8:1 and forbidden for
+    type, and a panel with four sections had four red eyebrows on it — the
+    whole red budget spent on labels. On every dark surface here the one red
+    thing is a filled shape and never a letterform. Pass a colour explicitly
+    where an eyebrow really is the focal element on a light ground.
+    """
     lbl = QLabel(text.upper())
     f = QFont(brand.FONT_DISPLAY)
     f.setWeight(QFont.Weight.DemiBold)

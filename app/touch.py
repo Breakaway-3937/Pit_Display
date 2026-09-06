@@ -143,6 +143,17 @@ class _TouchRouter(QObject):
         window.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents, True)
         if window not in self._windows:
             self._windows.append(window)
+            # Powering a screen off destroys the window now, so the router
+            # cannot hold it for the life of the app: a destroyed widget left
+            # in this list is a dangling pointer that `obj not in …` walks over
+            # on every touch event.
+            window.destroyed.connect(lambda *_, w=window: self._forget(w))
+
+    def _forget(self, window) -> None:
+        try:
+            self._windows.remove(window)
+        except ValueError:
+            pass
 
     # ── Routing ───────────────────────────────────────────────────────────
 
@@ -276,7 +287,14 @@ def _focus_on_press(window: QWidget, target: QWidget) -> None:
     first and to the **focus widget** within it second, so a tap has to claim
     both. Called before the press is delivered, matching Qt's order.
     """
-    if not window.isActiveWindow():
+    # A window that refuses focus must never be asked for it: Qt's
+    # `requestActivate()` warns and returns, once per tap. Only the control and
+    # project screens are routed here and neither carries the flag, but the
+    # guard costs nothing and stops a future registration from spamming the
+    # console the way `showFullScreen()` did (see app/display.py).
+    if (not window.isActiveWindow()
+            and not (window.windowFlags()
+                     & Qt.WindowType.WindowDoesNotAcceptFocus)):
         window.activateWindow()
 
     click_focus = Qt.FocusPolicy.ClickFocus.value

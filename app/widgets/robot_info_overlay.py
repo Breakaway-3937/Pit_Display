@@ -1,5 +1,5 @@
 """
-Robot Info — screen B's companion to the diagnostics board on screen A.
+Robot Info — Screen B's companion to the diagnostics board on Screen A.
 
 ## Why two screens and not one big one
 
@@ -12,447 +12,360 @@ nobody can use, so the split is by **question**, not by column count:
 | **A — Diagnostics** | *is anything wrong right now?* | vitals, subsystem status |
 | **B — Robot Info** | *what is wrong, on which motor, and what was this log?* | the fault list by name, the per-motor table, provenance |
 
-A is glanceable from ten feet: a headline and a grid of numbers. B is the thing
-you walk up to when A has gone amber, and it is dense on purpose — the fault
-names and CAN ids are what you take to the robot.
+A is glanceable from ten feet. B is the thing you walk up to when A has gone
+amber, and it is dense on purpose — the fault names and CAN ids are what you
+take to the robot.
 
-Both read `app.robot.diagnostics`; neither computes anything. Both scale from
-the live widget height, like every other overlay here.
+## Same chassis, different question
 
-**The motor table shows the operator's names, not CAN ids** — `DeviceRow.display`
+It runs the plate, the header band and the footer ledger from
+`app/widgets/chassis.py`, exactly as A and the slide rotation do. The design
+canvas comps A; carrying its chassis here is the point of having one — two
+overhead panels in the same glance showing two different visual languages is
+the failure the shared plate exists to prevent.
+
+**Red still means a latched fault and nothing else.** The fault list spends it
+on the rows that latched; the motor table spends it on their dots. A clean
+robot puts no red on this surface either.
+
+**The motor table shows the operator's names, not CAN ids** — `MotorRow.label`
 falls back to `TalonFX 11` only where nobody has typed one. Naming motors in
 Control → Pit Systems → Robot Logs is what turns this screen from a list of
 addresses into a list of mechanisms.
+
+Both boards read `app.robot.diagnostics`; neither computes anything.
 """
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
-)
+from __future__ import annotations
+
+from PyQt6.QtCore import QPointF, QRectF, Qt
+from PyQt6.QtGui import QColor, QPainter, QPen
 
 from app import brand
 from app.config import config
 from app.robot import diagnostics as dg
-from app.widgets.brand_widgets import Trace
-from app.widgets.diagnostics_overlay import (
-    _STATUS_COLOR, StatusDot, clamp, scaled_font,
-)
-
-# Hard caps, not a measured fit.
-#
-# An earlier version measured where the table had landed and hid whatever fell
-# past the fold. It read geometry that had not settled yet, so it hid rows there
-# was room for — and the failure was silent, which is the worst way for a
-# diagnostics screen to be wrong. Column flow made caps viable instead: six
-# faults and eight motors in two columns always fit a 720p panel, so the
-# arithmetic is done here once rather than guessed at every resize.
-#
-# Both lists are sorted worst-first upstream, so what a cap drops is always the
-# healthy end.
-_MAX_FAULT_ROWS = 6
-_MAX_MOTOR_ROWS = 8
+from app.widgets.chassis import Chassis
+from app.widgets.diagnostics_overlay import _STATUS_COLOR, _band
 
 
-def _budget(h: int) -> tuple[int, int, bool]:
-    """
-    (faults, motors, show the CAN-id line) for a panel this tall.
-
-    Banded rather than continuous, so the board does not reshuffle while a
-    window is being dragged, and computed from the height alone rather than
-    from measured geometry — the numbers below are what actually fits, checked
-    against a render at each size.
-    """
-    if h >= 900:                       # 1080p and up: everything
-        return _MAX_FAULT_ROWS, _MAX_MOTOR_ROWS, True
-    if h >= 760:
-        return 5, 6, True
-    if h >= 620:                       # 720p: the id list is unreadable anyway
-        return 5, 6, False
-    return 4, 4, False                 # a cart monitor
-
-# A motor column holds a name and three numbers; narrower and the name elides.
-_MIN_MOTOR_COL_W = 420
+# Hard caps, not a measured fit. An earlier version measured where the table had
+# landed and hid whatever fell past the fold; it read geometry that had not
+# settled, so it hid rows there was room for — silently. Both lists are sorted
+# worst-first upstream, so what a cap drops is always the healthy end.
+def _budget(height: int) -> tuple[int, int, bool]:
+    """(fault rows, motor rows, show the CAN id) for a panel this tall."""
+    return {
+        "large":  (6, 9, True),
+        "medium": (5, 6, True),
+        "small":  (4, 4, False),
+    }[_band(height)]
 
 
-class _FaultRow(QFrame):
-    """One latched fault: what it was, how many motors, and which."""
-
-    def __init__(self, reading: dg.Reading, parent=None):
-        super().__init__(parent)
-        self.setObjectName("fault_row")
-        self._reading = reading
-
-        row = QHBoxLayout(self)
-        row.setContentsMargins(14, 8, 14, 8)
-        row.setSpacing(12)
-
-        self._dot = StatusDot(reading.status)
-        row.addWidget(self._dot)
-
-        text = QVBoxLayout()
-        text.setContentsMargins(0, 0, 0, 0)
-        text.setSpacing(1)
-        self._name = QLabel(reading.label)
-        text.addWidget(self._name)
-        self._who = QLabel(reading.detail)
-        self._who.setWordWrap(True)
-        text.addWidget(self._who)
-        row.addLayout(text, stretch=1)
-
-        self._count = QLabel(f"{reading.value} {reading.unit}".strip())
-        self._count.setAlignment(Qt.AlignmentFlag.AlignRight
-                                 | Qt.AlignmentFlag.AlignVCenter)
-        row.addWidget(self._count)
-
-    def apply_scale(self, name_px: int, who_px: int, dot_px: int, pad: int,
-                    show_who: bool = True):
-        self.layout().setContentsMargins(pad, int(pad * 0.55), pad,
-                                         int(pad * 0.55))
-        self._dot.set_side(dot_px)
-        self._name.setFont(scaled_font(brand.FONT_DISPLAY, name_px,
-                                       QFont.Weight.DemiBold))
-        self._who.setFont(scaled_font(brand.FONT_BODY, who_px,
-                                      QFont.Weight.Normal))
-        self._count.setFont(scaled_font("", name_px, QFont.Weight.Bold,
-                                        mono=True))
-        # The CAN-id list is the first thing to go on a short screen: at that
-        # size nobody can read it, and the fault name is what matters.
-        self._who.setVisible(show_who and bool(self._reading.detail)
-                             and who_px >= 10)
-
-    def apply_colors(self, pal: dict):
-        colour = _STATUS_COLOR.get(self._reading.status, brand.STATUS_IDLE)
-        self.setStyleSheet(
-            f"#fault_row {{ background: {pal['surface']};"
-            f" border-radius: {brand.R_BTN}px; }}")
-        self._name.setStyleSheet(f"color: {colour}; background: transparent;")
-        self._who.setStyleSheet(f"color: {pal['faint']}; background: transparent;")
-        self._count.setStyleSheet(f"color: {pal['muted']}; background: transparent;")
-        self._dot.set_status(self._reading.status)
-
-
-class _MotorRow(QFrame):
-    """One CAN device across the table: name, temp, current, volts."""
-
-    _COLS = ("temp", "amps", "volts")
-
-    def __init__(self, motor: dg.MotorRow | None, header: bool = False,
-                 parent=None):
-        super().__init__(parent)
-        self.setObjectName("motor_row")
-        self._motor = motor
-        self._header = header
-
-        row = QHBoxLayout(self)
-        row.setContentsMargins(14, 4, 14, 4)
-        row.setSpacing(10)
-
-        self._dot = StatusDot(motor.status if motor else dg.IDLE)
-        self._dot.setVisible(not header)
-        row.addWidget(self._dot)
-
-        self._name = QLabel("MOTOR" if header else motor.label)
-        row.addWidget(self._name, stretch=1)
-
-        if header:
-            values = ("TEMP", "PEAK A", "MIN V")
-        else:
-            values = (
-                "—" if motor.temp_c is None else f"{motor.temp_c:,.0f}°C",
-                "—" if motor.stator_a is None else f"{abs(motor.stator_a):,.0f}",
-                "—" if motor.supply_v is None else f"{motor.supply_v:,.2f}",
-            )
-        self._cells = []
-        for v in values:
-            lbl = QLabel(v)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignRight
-                             | Qt.AlignmentFlag.AlignVCenter)
-            row.addWidget(lbl)
-            self._cells.append(lbl)
-
-    def apply_scale(self, h: int, text_px: int, dot_px: int):
-        self.setFixedHeight(h)
-        self._dot.set_side(dot_px)
-        self._name.setFont(scaled_font(
-            brand.FONT_DISPLAY if self._header else brand.FONT_BODY,
-            int(text_px * (0.82 if self._header else 1.0)),
-            QFont.Weight.DemiBold if self._header else QFont.Weight.Medium))
-        num = scaled_font(brand.FONT_DISPLAY if self._header else "",
-                          int(text_px * (0.74 if self._header else 0.94)),
-                          QFont.Weight.DemiBold, mono=not self._header)
-        for cell in self._cells:
-            cell.setFont(num)
-            cell.setFixedWidth(int(text_px * 4.4))
-
-    def apply_colors(self, pal: dict):
-        if self._header:
-            self.setStyleSheet("#motor_row { background: transparent; }")
-            for w in (self._name, *self._cells):
-                w.setStyleSheet(
-                    f"color: {pal['faint']}; background: transparent;"
-                    " letter-spacing: 2px;")
-            return
-        colour = _STATUS_COLOR.get(self._motor.status, brand.STATUS_IDLE)
-        self.setStyleSheet(
-            f"#motor_row {{ background: {pal['surface']};"
-            f" border-radius: {brand.R_BTN}px; }}")
-        self._name.setStyleSheet(f"color: {pal['ink']}; background: transparent;")
-        self._cells[0].setStyleSheet(
-            f"color: {colour if self._motor.status == dg.FAULT else pal['muted']};"
-            f" background: transparent;")
-        for cell in self._cells[1:]:
-            cell.setStyleSheet(f"color: {pal['muted']}; background: transparent;")
-        self._dot.set_status(self._motor.status)
-
-
-class RobotInfoOverlay(QWidget):
-    """Screen B's board."""
+class RobotInfoOverlay(Chassis):
+    """Screen B's board, on the shared chassis."""
 
     def __init__(self, screen_id: str = "", parent=None):
-        super().__init__(parent)
-        self._screen_id = screen_id
-        self._fault_rows: list[_FaultRow] = []
-        self._motor_rows: list[_MotorRow] = []
+        super().__init__(screen_id=screen_id, parent=parent)
         self._data = dg.Dashboard()
-        self._motor_cols = 0
-        self._shown_motors = _MAX_MOTOR_ROWS
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-
-        self._build_ui()
-        config.team_changed.connect(lambda *_: self._refresh_style())
-        config.screen_setting_changed.connect(self._on_setting_changed)
-        # Self-subscribed, like every other overlay here: the board re-reads the
-        # database whenever the imported-log set changes, whoever owns it. It
-        # must not depend on a parent remembering to call `reload()`.
-        config.logs_changed.connect(self.reload)
         self.reload()
-
-    def _build_ui(self):
-        root = QVBoxLayout(self)
-        root.setContentsMargins(44, 36, 44, 36)
-        root.setSpacing(0)
-        self._root = root
-
-        self._eyebrow = QLabel("")
-        root.addWidget(self._eyebrow)
-        root.addSpacing(4)
-        self._title = QLabel("")
-        root.addWidget(self._title)
-
-        # Held to a fraction of the width in `_apply_scale` — a Trace stretched
-        # edge to edge reads as a horizontal rule, not a leading line.
-        trace_row = QHBoxLayout()
-        trace_row.setContentsMargins(0, 0, 0, 0)
-        self._trace = Trace()
-        trace_row.addWidget(self._trace)
-        trace_row.addStretch()
-        root.addLayout(trace_row)
-        root.addSpacing(16)
-
-        self._fault_caption = QLabel("")
-        root.addWidget(self._fault_caption)
-        root.addSpacing(6)
-        self._fault_host = QWidget()
-        self._fault_box = QVBoxLayout(self._fault_host)
-        self._fault_box.setContentsMargins(0, 0, 0, 0)
-        self._fault_box.setSpacing(6)
-        root.addWidget(self._fault_host)
-
-        root.addSpacing(18)
-        self._motor_caption = QLabel("")
-        root.addWidget(self._motor_caption)
-        root.addSpacing(4)
-        self._motor_host = QWidget()
-        self._motor_box = QGridLayout(self._motor_host)
-        self._motor_box.setContentsMargins(0, 0, 0, 0)
-        self._motor_box.setSpacing(4)
-        root.addWidget(self._motor_host)
-
-        self._empty = QLabel("")
-        self._empty.setWordWrap(True)
-        self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        root.addWidget(self._empty, stretch=1)
-
-        root.addStretch()
-
-        self._footer = QLabel("")
-        self._footer.setWordWrap(True)
-        # Fixed, so the provenance line keeps its own space instead of being
-        # painted over by a motor table that ran long.
-        self._footer.setSizePolicy(QSizePolicy.Policy.Preferred,
-                                   QSizePolicy.Policy.Fixed)
-        root.addWidget(self._footer)
-
-    # ── Data ──────────────────────────────────────────────────────────────
+        config.logs_changed.connect(self.reload)
+        config.team_changed.connect(lambda _t: self.update())
 
     def reload(self):
         try:
             self._data = dg.dashboard()
         except Exception:
             self._data = dg.Dashboard()
-        self._rebuild()
+        self.update()
 
-    def _rebuild(self):
-        for r in self._fault_rows:
-            self._fault_box.removeWidget(r)
-            r.deleteLater()
-        self._fault_rows = []
-        for r in self._motor_rows:
-            self._motor_box.removeWidget(r)
-            r.deleteLater()
-        self._motor_rows = []
+    # ── Chassis hooks ─────────────────────────────────────────────────────
 
-        for reading in self._data.faults[:_MAX_FAULT_ROWS]:
-            row = _FaultRow(reading)
-            self._fault_box.addWidget(row)
-            self._fault_rows.append(row)
+    def header_right(self) -> list[tuple]:
+        live = not self._data.empty
+        return [("dot", brand.STATUS_ONLINE if live else brand.STATUS_IDLE, live),
+                ("mono", "SCREEN B  /  ROBOT INFO")]
 
-        for m in self._data.motors[:_MAX_MOTOR_ROWS]:
-            self._motor_rows.append(_MotorRow(m))
-        self._motor_cols = 0
-
-        has = bool(self._fault_rows or self._motor_rows)
-        self._empty.setVisible(not has)
-        self._trace.setVisible(has)
-        self._fault_host.setVisible(bool(self._fault_rows))
-        self._fault_caption.setVisible(bool(self._fault_rows))
-        self._motor_host.setVisible(bool(self._motor_rows))
-        self._motor_caption.setVisible(bool(self._motor_rows))
-        self._relayout_motors()
-        self._refresh_style()
-        self._apply_scale()
-
-    def _relayout_motors(self):
-        """
-        Flow the motor rows into columns.
-
-        Eleven motors plus a header is more rows than a 1080p panel has room
-        for under the fault list, and each row is a short name and three
-        numbers — the width is there.
-        """
-        if not self._motor_rows:
-            return
-        n = min(len(self._motor_rows), self._shown_motors)
-        want = 2 if n > 4 else 1
-        cols = max(1, min(want, max(1, self.width() // _MIN_MOTOR_COL_W)))
-        if cols == self._motor_cols:
-            return
-        self._motor_cols = cols
-        per_col = -(-n // cols)
-        for i, row in enumerate(self._motor_rows):
-            row.setVisible(i < n)
-            if i < n:
-                self._motor_box.addWidget(row, i % per_col, i // per_col)
-        for c in range(cols):
-            self._motor_box.setColumnStretch(c, 1)
-
-    # ── Scale ─────────────────────────────────────────────────────────────
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._relayout_motors()
-        self._apply_scale()
-
-    def _apply_scale(self):
-        h = self.height()
-        if h <= 0:
-            return
-        pad_x = clamp(h * 0.048, 18, 80)
-        pad_y = clamp(h * 0.038, 14, 64)
-        self._root.setContentsMargins(pad_x, pad_y, pad_x, pad_y)
-
-        eyebrow_px = clamp(h * 0.022, 10, 30)
-        title_px = clamp(h * 0.062, 17, 74)
-        self._eyebrow.setFont(scaled_font(brand.FONT_DISPLAY, eyebrow_px,
-                                          QFont.Weight.DemiBold))
-        self._title.setFont(scaled_font(brand.FONT_DISPLAY, title_px,
-                                        QFont.Weight.Bold))
-        for cap in (self._fault_caption, self._motor_caption):
-            cap.setFont(scaled_font(brand.FONT_DISPLAY, eyebrow_px,
-                                    QFont.Weight.DemiBold))
-        self._footer.setFont(scaled_font("", clamp(h * 0.018, 9, 22),
-                                         QFont.Weight.Normal, mono=True))
-        self._empty.setFont(scaled_font(brand.FONT_BODY, clamp(h * 0.030, 12, 32),
-                                        QFont.Weight.Normal))
-
-        gap = clamp(h * 0.010, 4, 14)
-        self._fault_box.setSpacing(gap)
-        self._motor_box.setSpacing(max(2, gap // 2))
-
-        max_faults, max_motors, show_who = _budget(h)
-        fault_px = clamp(h * 0.030, 12, 36)
-        for i, row in enumerate(self._fault_rows):
-            row.setVisible(i < max_faults)
-            row.apply_scale(fault_px, clamp(fault_px * 0.60, 9, 22),
-                            clamp(fault_px * 0.52, 7, 20),
-                            clamp(h * 0.016, 8, 24), show_who)
-
-        title_w = self._title.fontMetrics().horizontalAdvance(self._title.text())
-        self._trace.setFixedWidth(clamp(title_w * 1.4, 160, self.width() * 0.62))
-
-        if self._motor_rows:
-            if max_motors != self._shown_motors:
-                self._shown_motors = max_motors
-                self._motor_cols = 0            # the flow depends on the count
-                self._relayout_motors()
-            row_h = clamp(h * 0.036, 18, 54)
-            for row in self._motor_rows:
-                row.apply_scale(row_h, clamp(row_h * 0.46, 10, 28),
-                                clamp(row_h * 0.28, 6, 18))
-
-
-    # ── Style ─────────────────────────────────────────────────────────────
-
-    def _on_setting_changed(self, screen: str, key: str, _value):
-        if screen == self._screen_id and key == "theme":
-            self._refresh_style()
-
-    def _refresh_style(self):
-        theme = config.screen_theme(self._screen_id) if self._screen_id else "dark"
-        pal = brand.palette(theme)
-        accent = config.active_team.primary_color
-        team = config.active_team
-        team_label = (f"{team.name} {team.number}" if team.name
-                      else f"Team {team.number}").upper()
-        d = self._data
-
-        self._eyebrow.setText(f"{team_label}  ·  ROBOT INFO")
-        self._title.setText("Nothing latched" if not d.faults else "What tripped")
-        self._fault_caption.setText("LATCHED FAULTS")
-        self._motor_caption.setText("MOTORS  ·  PEAK TEMP / CURRENT / MIN VOLTS")
-        self._empty.setText(
-            "No robot log imported yet.\n\n"
-            "Import one on the control screen:\nPit Systems → Robot Logs."
-        )
-        self._footer.setText(self._provenance())
-
-        self.setStyleSheet(f"background-color: {pal['bg']};")
-        self._eyebrow.setStyleSheet(
-            f"color: {accent}; background: transparent; letter-spacing: 3px;")
-        self._title.setStyleSheet(f"color: {pal['title']}; background: transparent;")
-        for cap in (self._fault_caption, self._motor_caption):
-            cap.setStyleSheet(
-                f"color: {pal['muted']}; background: transparent;"
-                " letter-spacing: 3px;")
-        self._empty.setStyleSheet(f"color: {pal['muted']}; background: transparent;")
-        self._footer.setStyleSheet(f"color: {pal['faint']}; background: transparent;")
-        self._trace.set_color(accent)
-
-        for row in self._fault_rows:
-            row.apply_colors(pal)
-        for row in self._motor_rows:
-            row.apply_colors(pal)
-
-    def _provenance(self) -> str:
-        """Which log this came from — the screen has to be able to say."""
+    def footer_items(self) -> tuple[str, str]:
         d = self._data
         if d.empty:
-            return ""
-        bits = list(d.sources) or [d.source_name]
-        stamp = []
+            return "NO LOG IMPORTED", "CONTROL → PIT SYSTEMS → ROBOT LOGS"
+        left = f"{len(d.motors)} DEVICES  ·  {d.duration_s / 60:.1f} MIN"
         if d.match_key:
-            stamp.append(d.match_key.upper())
-        if d.started_at:
-            stamp.append(d.started_at)
-        return "  ·  ".join(stamp + bits)
+            left = f"{d.match_key.upper()}  ·  {left}"
+        # Two files usually make one match — name both rather than showing
+        # whichever was imported last.
+        return left, "  ·  ".join(list(d.sources) or [d.source_name])
+
+    # ── The stage ─────────────────────────────────────────────────────────
+
+    def paint_stage(self, p: QPainter, rect: QRectF):
+        if self._data.empty:
+            self._paint_empty(p, rect)
+            return
+
+        head = QRectF(rect.x(), rect.y(), rect.width(), self.s(150))
+        self._paint_head(p, head)
+
+        body = QRectF(rect.x(), head.bottom() + self.s(34), rect.width(),
+                      rect.bottom() - head.bottom() - self.s(34))
+        gap = self.s(48)
+        left_w = (body.width() - gap) * 0.40
+        self._paint_faults(p, QRectF(body.x(), body.y(), left_w, body.height()))
+        self._paint_motors(p, QRectF(body.x() + left_w + gap, body.y(),
+                                     body.width() - left_w - gap, body.height()))
+
+    def _paint_empty(self, p: QPainter, rect: QRectF):
+        y = rect.y() + rect.height() * 0.18
+        p.setFont(self.display(24, 600, 0.16))
+        p.setPen(QColor(self.muted))
+        p.drawText(QPointF(rect.x(), y + p.fontMetrics().ascent()),
+                   "NO ROBOT LOG YET")
+        y = self.draw_wrapped(p, rect.x(), y + self.s(60), rect.width(),
+                              "Nothing to report", self.display(108, 700, -0.02),
+                              self.ink, 1.0)
+        self.draw_wrapped(
+            p, rect.x(), y + self.s(24), min(self.s(1200), rect.width()),
+            "Import a log from Control → Pit Systems → Robot Logs. Name the CAN "
+            "ids there too, and this table lists mechanisms instead of addresses.",
+            self.body(32), self.body_ink, 1.4)
+
+    # ── Head ──────────────────────────────────────────────────────────────
+
+    def _paint_head(self, p: QPainter, rect: QRectF):
+        d = self._data
+        latched = [f for f in d.faults if f.status == dg.FAULT]
+        warns = [f for f in d.faults if f.status == dg.WARN]
+
+        if latched:
+            eyebrow, headline = "What tripped", latched[0].label
+            colour = brand.STATUS_FAULT
+        elif warns:
+            eyebrow, headline = "Worth a look", warns[0].label
+            colour = brand.STATUS_PENDING
+        else:
+            eyebrow, headline = "What tripped", "Nothing latched"
+            colour = brand.STATUS_ONLINE
+
+        p.setFont(self.display(24, 600, 0.16))
+        p.setPen(QColor(self.muted))
+        p.drawText(QPointF(rect.x(), rect.y() + p.fontMetrics().ascent()),
+                   eyebrow.upper())
+
+        y = rect.y() + self.s(38)
+        f = self.display(84, 700, -0.02)
+        p.setFont(f)
+        p.setPen(QColor(self.ink))
+        fm = p.fontMetrics()
+        p.drawText(QPointF(rect.x(), y + fm.ascent()),
+                   fm.elidedText(headline, Qt.TextElideMode.ElideRight,
+                                 int(rect.width() * 0.62)))
+
+        # The count block sits right-flush: the number of things to fix.
+        count = len(latched) or len(warns)
+        if count:
+            side = self.s(84)
+            block = QRectF(rect.right() - side, y, side, side)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(colour))
+            p.drawRoundedRect(block, self.s(14), self.s(14))
+            p.setFont(self.display(46, 700))
+            p.setPen(QColor(brand.WHITE))
+            p.drawText(block, int(Qt.AlignmentFlag.AlignCenter), str(count))
+
+    # ── The fault list ────────────────────────────────────────────────────
+
+    def _paint_faults(self, p: QPainter, rect: QRectF):
+        max_rows, _, _ = _budget(self.height())
+        y = self._section(p, rect, "Latched faults",
+                          f"{len(self._data.faults)}")
+        # The band is the cap; the space actually left under the heading is the
+        # count. Without this second bound a 720p panel drew its fifth row
+        # straight through the footer rule — the cap alone cannot know how much
+        # room the head band took.
+        rows = self._data.faults[:self._fit_rows(
+            rect.bottom() - y, max_rows, self.s(58), self.s(14))]
+        if not rows:
+            p.setFont(self.body(28))
+            p.setPen(QColor(self.muted))
+            p.drawText(QPointF(rect.x(), y + p.fontMetrics().ascent() + self.s(18)),
+                       "Clean log — nothing to carry to the robot.")
+            return
+
+        gap = self.s(14)
+        h = min(self.s(104), (rect.bottom() - y - gap * (len(rows) - 1))
+                / len(rows))
+        for i, reading in enumerate(rows):
+            self._paint_fault_row(
+                p, QRectF(rect.x(), y + i * (h + gap), rect.width(), h), reading)
+
+    def _paint_fault_row(self, p: QPainter, rect: QRectF, reading):
+        colour = _STATUS_COLOR.get(reading.status, brand.STATUS_IDLE)
+        r = self.s(14)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(self.tile))
+        p.drawRoundedRect(rect, r, r)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(brand.FAULT_EDGE if reading.status == dg.FAULT
+                             else self.rule), max(1.0, self.s(1.5))))
+        p.drawRoundedRect(rect, r, r)
+
+        pad = self.s(24)
+        x = rect.x() + pad
+        dot = self.s(16)
+        # Two lines when the row is tall enough for both, one centred line when
+        # it is not — the cap decides how many rows fit, not how they read.
+        two_line = rect.height() >= self.s(62) and bool(reading.detail)
+        cy = rect.y() + rect.height() * (0.34 if two_line else 0.5)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(colour))
+        p.drawEllipse(QPointF(x + dot / 2, cy), dot / 2, dot / 2)
+
+        name_x = x + dot + self.s(14)
+        count = f"{reading.value} {reading.unit}".strip()
+        p.setFont(self.mono(22, 500, 0.10))
+        cfm = p.fontMetrics()
+        count_w = cfm.horizontalAdvance(count)
+        p.setPen(QColor(self.muted))
+        p.drawText(QPointF(rect.right() - pad - count_w,
+                           cy + cfm.ascent() / 2 - cfm.descent() / 2), count)
+
+        p.setFont(self.display(34, 700))
+        fm = p.fontMetrics()
+        p.setPen(QColor(self.ink))
+        p.drawText(QPointF(name_x, cy + fm.ascent() / 2 - fm.descent() / 2),
+                   fm.elidedText(reading.label, Qt.TextElideMode.ElideRight,
+                                 int(rect.right() - pad - count_w - name_x
+                                     - self.s(16))))
+
+        if two_line:
+            p.setFont(self.body(21))
+            dfm = p.fontMetrics()
+            p.setPen(QColor(self.muted))
+            p.drawText(QPointF(name_x, rect.y() + rect.height() * 0.88),
+                       dfm.elidedText(reading.detail,
+                                      Qt.TextElideMode.ElideRight,
+                                      int(rect.right() - pad - name_x)))
+
+    # ── The motor table ───────────────────────────────────────────────────
+
+    def _paint_motors(self, p: QPainter, rect: QRectF):
+        _, max_rows, show_id = _budget(self.height())
+        y = self._section(p, rect, "Motors",
+                          f"{len(self._data.motors)} ON THE BUS")
+        header_h = self.s(46)
+        rows = self._data.motors[:self._fit_rows(
+            rect.bottom() - y - header_h, max_rows, self.s(34))]
+        if not rows:
+            return
+
+        # Columns from the right: peak amps, min volts, temperature. The name
+        # takes whatever is left, because the name is the part that matters.
+        num_w = self.s(150)
+        cols = [("TEMP", num_w), ("PEAK A", num_w), ("MIN V", num_w)]
+        self._paint_motor_row(p, QRectF(rect.x(), y, rect.width(), header_h),
+                              None, cols, show_id, header=True)
+        y += header_h
+        h = min(self.s(72), max(self.s(34),
+                                (rect.bottom() - y) / max(1, len(rows))))
+        for i, motor in enumerate(rows):
+            self._paint_motor_row(
+                p, QRectF(rect.x(), y + i * h, rect.width(), h),
+                motor, cols, show_id, index=i)
+
+    def _paint_motor_row(self, p: QPainter, rect: QRectF, motor, cols,
+                         show_id: bool, header: bool = False, index: int = 0):
+        if not header and index % 2:
+            # Zebra: the table is read across, and a row stripe is the cheapest
+            # thing that keeps an eye on one line at fifteen feet.
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(brand.TILE_DARK if self.dark else brand.N100))
+            p.drawRoundedRect(rect, self.s(8), self.s(8))
+
+        pad = self.s(16)
+        x = rect.x() + pad
+        cy = rect.center().y()
+
+        if header:
+            p.setFont(self.display(20, 600, 0.14))
+            fm = p.fontMetrics()
+            p.setPen(QColor(self.faint))
+            p.drawText(QPointF(x, cy + fm.ascent() / 2 - fm.descent() / 2),
+                       "MOTOR")
+            cx = rect.right() - pad
+            for name, w in reversed(cols):
+                p.drawText(QRectF(cx - w, rect.y(), w, rect.height()),
+                           int(Qt.AlignmentFlag.AlignRight |
+                               Qt.AlignmentFlag.AlignVCenter), name)
+                cx -= w
+            p.setPen(QPen(QColor(self.rule), self.m("rule")))
+            p.drawLine(QPointF(rect.x(), rect.bottom()),
+                       QPointF(rect.right(), rect.bottom()))
+            return
+
+        dot = self.s(14)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(_STATUS_COLOR.get(motor.status, brand.STATUS_IDLE)))
+        p.drawEllipse(QPointF(x + dot / 2, cy), dot / 2, dot / 2)
+        x += dot + self.s(14)
+
+        # The CAN id in mono, then the operator's name. The id is what you look
+        # for on the robot; the name is what you look for on the board.
+        if show_id:
+            p.setFont(self.mono(22, 500))
+            ifm = p.fontMetrics()
+            id_text = f"{motor.can_id:>2}"
+            p.setPen(QColor(self.faint))
+            p.drawText(QPointF(x, cy + ifm.ascent() / 2 - ifm.descent() / 2),
+                       id_text)
+            x += ifm.horizontalAdvance("00") + self.s(16)
+
+        name_w = rect.right() - pad - sum(w for _, w in cols) - x - self.s(10)
+        p.setFont(self.body(28, 500))
+        nfm = p.fontMetrics()
+        p.setPen(QColor(self.ink))
+        p.drawText(QPointF(x, cy + nfm.ascent() / 2 - nfm.descent() / 2),
+                   nfm.elidedText(motor.label, Qt.TextElideMode.ElideRight,
+                                  int(max(40.0, name_w))))
+
+        values = (
+            "—" if motor.temp_c is None else f"{motor.temp_c:,.0f}°C",
+            "—" if motor.stator_a is None else f"{abs(motor.stator_a):,.0f}",
+            "—" if motor.supply_v is None else f"{motor.supply_v:,.2f}",
+        )
+        p.setFont(self.mono(26, 500))
+        p.setPen(QColor(self.body_ink))
+        cx = rect.right() - pad
+        for (_, w), value in zip(reversed(cols), reversed(values)):
+            p.drawText(QRectF(cx - w, rect.y(), w, rect.height()),
+                       int(Qt.AlignmentFlag.AlignRight |
+                           Qt.AlignmentFlag.AlignVCenter), value)
+            cx -= w
+
+    # ── Shared ────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _fit_rows(available: float, cap: int, min_h: float,
+                  gap: float = 0.0) -> int:
+        """How many rows of at least `min_h` fit in `available`, capped."""
+        if available <= 0 or min_h <= 0:
+            return 0
+        fits = int((available + gap) // (min_h + gap))
+        return max(0, min(cap, fits))
+
+    def _section(self, p: QPainter, rect: QRectF, title: str,
+                 note: str = "") -> float:
+        """Eyebrow + rule heading a column. Returns the y its content starts at."""
+        p.setFont(self.display(22, 600, 0.16))
+        fm = p.fontMetrics()
+        p.setPen(QColor(self.muted))
+        p.drawText(QPointF(rect.x(), rect.y() + fm.ascent()), title.upper())
+        if note:
+            p.setFont(self.mono(20, 500, 0.10))
+            nfm = p.fontMetrics()
+            p.setPen(QColor(self.faint))
+            p.drawText(QPointF(rect.right() - nfm.horizontalAdvance(note),
+                               rect.y() + fm.ascent()), note)
+        y = rect.y() + fm.height() + self.s(14)
+        p.setPen(QPen(QColor(self.rule), self.m("rule")))
+        p.drawLine(QPointF(rect.x(), y), QPointF(rect.right(), y))
+        return y + self.s(20)

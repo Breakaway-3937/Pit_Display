@@ -20,7 +20,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from app.cad_assets import cad_assets
 from app.config import config
 from app.lazy_proxy import LazyProxy
-from app.leds import effects
+from app.leds import effects, palette
 from app.leds.link import make_link
 from app.leds.protocol import (
     ALL_SEGMENTS, DeviceInfo, Mode, Op,
@@ -61,6 +61,18 @@ class _LEDService(QObject):
         config.team_changed.connect(self._on_team_changed)
         config.mode_changed.connect(self._on_mode_changed)
         cad_assets.subsystem_focused.connect(self._on_subsystem_focused)
+
+    @staticmethod
+    def _wire_rgb(hex_color: str) -> tuple[int, int, int]:
+        """
+        Brand hex → the bytes actually sent to the strips.
+
+        Snapped to a saturated primary: RGBW pixels render a mixed brand hex
+        washed out (the team red came out pink), and a pit strip's job is to
+        read as the team colour across a venue, not to match a swatch. See
+        app/leds/palette.py for the measurements behind that.
+        """
+        return palette.snap(hex_to_rgb(hex_color))
 
     def start(self) -> None:
         self._link.start()
@@ -164,8 +176,10 @@ class _LEDService(QObject):
             self._follow_team = False
         if normalized == self._color:
             return
+        # self._color keeps the true brand hex — the control panel and every
+        # screen still show the real colour. Only the wire gets the snap.
         self._color = normalized
-        self._send(Op.SET_COLOR, payload_color(rgb, ALL_SEGMENTS))
+        self._send(Op.SET_COLOR, payload_color(palette.snap(rgb), ALL_SEGMENTS))
         self.state_changed.emit()
 
     def set_mode(self, mode: Mode) -> None:
@@ -228,7 +242,7 @@ class _LEDService(QObject):
         if self._device is None or not self._enabled:
             return
         self._link.send(Op.SET_BRIGHT, payload_brightness(self._brightness))
-        self._link.send(Op.SET_COLOR, payload_color(hex_to_rgb(self._color),
+        self._link.send(Op.SET_COLOR, payload_color(self._wire_rgb(self._color),
                                                     ALL_SEGMENTS))
         self._link.send(Op.SET_MODE, payload_mode(self._mode, self._speed))
 
@@ -279,7 +293,8 @@ class _LEDService(QObject):
                 except ValueError:
                     return          # a malformed colour in the config is not
                                     # worth interrupting a judges demo over
-                self._send(Op.SET_COLOR, payload_color(rgb, ALL_SEGMENTS))
+                self._send(Op.SET_COLOR,
+                           payload_color(palette.snap(rgb), ALL_SEGMENTS))
             return
 
 

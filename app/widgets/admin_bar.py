@@ -251,7 +251,9 @@ class AdminBar(QWidget):
         line of its own — it replaces it, so the bar never grows a second row
         just to say something short.
         """
-        color = brand.RED if error else brand.MUTED_DARK
+        # Never red type on a dark ground (2.8:1). Amber is the
+        # brand's pending status and reads at a glance.
+        color = brand.STATUS_PENDING if error else brand.MUTED_DARK
         target = self._unlocked_msg if admin.unlocked else self._locked_msg
         default = ("LED tuning and the equaliser are editable." if admin.unlocked
                    else "Unlocks LED tuning and the equaliser.")

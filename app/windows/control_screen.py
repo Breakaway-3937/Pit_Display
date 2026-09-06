@@ -10,23 +10,27 @@ Only the control screen boots. Other screens are opened/closed via power toggles
 """
 
 from pathlib import Path
+from typing import Callable
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QFrame, QPushButton, QComboBox, QSizePolicy, QScrollArea,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
 
 from app import brand
 from app.admin import admin
 from app.cad_assets import cad_assets
+from app import display
 from app.config import config, MODES, MODE_LABELS, SCREENS, SCREEN_LABELS
 from app.judges_slides import judges_slides
+from app.rotation import rotation
+from app.slides import Slide, coerce
 from app.teams import all_teams
 from app.theme import apply_theme
 from app.widgets.brand_widgets import (
-    RoundedButton, RoundedFrame, eyebrow, mono_font,
+    RoundedButton, RoundedFrame, SelectableChip, eyebrow, mono_font,
 )
 from app.widgets.cad_upload_panel import CADSettingsPanel
 from app.widgets.checklist_panel import ChecklistPanel
@@ -43,28 +47,52 @@ from app.leds import leds
 SYSTEMS = ["leds", "music", "robot"]
 SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music", "robot": "Robot Logs"}
 
+# One muted line under each panel's title — where the thing physically is and
+# what it is doing, which is what an operator standing at the panel needs
+# before they need any of the controls.
+_SCREEN_BLURBS = {
+    "presentation_a": "Overhead left · 1920×1080 · the glanceable board",
+    "presentation_b": "Overhead right · 1920×1080 · the board you walk up to",
+    "project":        "Pit front · 1080×1920 portrait · touched by visitors",
+    "control":        "This panel. Always on.",
+}
+
 
 # ── Mode button ──────────────────────────────────────────────────────────────
 
-class ModeButton(RoundedButton):
+class ModeButton(SelectableChip):
     """
-    One of the three mode selector buttons in the top bar. Rounded shell:
-    active = red fill (team accent), inactive = ghost. Recolors with the team.
+    One of the three mode selector buttons in the top bar.
+
+    **Standard active is white; Judges and Lunch active are red.** Red here
+    then means "the installation is in an exceptional state" — which is true
+    about five percent of the day and worth noticing from across the pit. The
+    rotation running normally is the opposite of that, so it does not get to
+    spend the surface's one red; nor does the brand chip, nor the selected
+    sidebar row. One red, always, and it is on the thing that is unusual.
     """
 
+    # Standard is the resting state of the whole installation.
+    _RESTING = "standard"
+
     def __init__(self, mode: str, team_color: str):
-        super().__init__(
-            MODE_LABELS.get(mode, mode.title()),
-            variant="ghost",
-            accent=team_color,
-            radius=brand.R_BTN,
-        )
+        super().__init__(MODE_LABELS.get(mode, mode.title()),
+                         radius=brand.R_BTN)
         self.mode = mode
-        self.setMinimumWidth(124)
-        self.setFixedHeight(42)
+        self.setFixedSize(124, 46)
         f = self.font()
         f.setPixelSize(15)
+        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 110)
         self.setFont(f)
+        self.setText(self.text().upper())
+
+    def _colors(self):
+        # The one place a selected chip *is* red: Judges and Lunch are the
+        # exceptional states, and that is exactly what the budget is for.
+        if self._active and self.mode != self._RESTING:
+            return (QColor(brand.EMBER if self.isDown() else brand.RED),
+                    QColor(brand.WHITE), None)
+        return super()._colors()
 
 
 # ── Screen card (sidebar row) ─────────────────────────────────────────────────
@@ -92,11 +120,20 @@ class ScreenCard(QFrame):
 
     def _build(self, team_color: str):
         self.setFixedHeight(56)
+        self.setObjectName("nav_row")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 12, 0)
-        row.setSpacing(0)
+        row.setContentsMargins(11, 0, 12, 0)
+        row.setSpacing(10)
+
+        # The selected row is marked with a white bar, not the team accent —
+        # see ModeButton: the surface's one red belongs to the mode, not to
+        # which panel the operator happens to be looking at.
+        self._bar = QFrame()
+        self._bar.setObjectName("nav_bar")
+        self._bar.setFixedWidth(3)
+        row.addWidget(self._bar)
 
         # Name button (left — fills remaining space)
         self._name_btn = QPushButton(self._label_text)
@@ -112,15 +149,20 @@ class ScreenCard(QFrame):
         if not self._show_toggle:
             self._toggle = None
         elif self.screen_id != "control":
-            self._toggle = ToggleSwitch(color_on=team_color)
+            # Green, not the team accent: a powered screen is a *status*, and
+            # eight red pills down the sidebar would spend the whole budget on
+            # "things are normal".
+            self._toggle = ToggleSwitch(color_on=brand.STATUS_ONLINE)
             self._toggle.setChecked(False)
             self._toggle.toggled.connect(
                 lambda on: self.power_toggled.emit(self.screen_id, on)
             )
             row.addWidget(self._toggle, alignment=Qt.AlignmentFlag.AlignVCenter)
         else:
-            always_on = label("Always On", "stat_label")
-            always_on.setStyleSheet(f"color: {brand.STATUS_ONLINE}; font-size: 11px;")
+            always_on = label("ALWAYS ON", "stat_label")
+            always_on.setFont(mono_font(10))
+            always_on.setStyleSheet(
+                f"color: {brand.STATUS_ONLINE}; background: transparent;")
             row.addWidget(always_on, alignment=Qt.AlignmentFlag.AlignVCenter)
             self._toggle = None
 
@@ -132,8 +174,6 @@ class ScreenCard(QFrame):
 
     def apply_team_color(self, hex_color: str):
         self._team_color = hex_color
-        if self._toggle:
-            self._toggle.set_color_on(hex_color)
         self._apply_style()
 
     def set_checked(self, on: bool):
@@ -145,47 +185,156 @@ class ScreenCard(QFrame):
 
     def _apply_style(self):
         base = (
-            "border: none; border-radius: 0; text-align: left; padding-left: 16px;"
+            "background: transparent; border: none; text-align: left;"
+            # The app-wide QPushButton rule carries 16px of horizontal padding,
+            # which ate the end of every screen name in a 220px sidebar.
+            " padding: 0;"
             f' font-family: "{brand.FONT_DISPLAY}"; font-size: 15px;'
+            " font-weight: 600;"
         )
         if self._active:
-            qss = f"""
-                QPushButton {{ {base}
-                    background-color: {brand.CARBON_SURF}; color: {brand.WHITE};
-                    border-left: 3px solid {self._team_color}; font-weight: 600;
-                }}
-            """
+            self.setStyleSheet(
+                f"QFrame#nav_row {{ background-color: {brand.RAISED_DARK};"
+                f" border-radius: {brand.R_BTN}px; }}"
+                f"QFrame#nav_bar {{ background-color: {brand.WHITE};"
+                f" border-radius: 2px; margin: 15px 0; }}")
+            self._name_btn.setStyleSheet(
+                f"QPushButton {{ {base} color: {brand.WHITE}; }}")
         else:
-            qss = f"""
-                QPushButton {{ {base}
-                    background-color: transparent; color: {brand.MUTED_DARK};
-                    border-left: 3px solid transparent; font-weight: 500;
-                }}
-                QPushButton:hover {{
-                    background-color: {brand.CARBON_SURF}; color: {brand.INK_DARK};
-                }}
-            """
-        self._name_btn.setStyleSheet(qss)
+            self.setStyleSheet(
+                "QFrame#nav_row { background-color: transparent;"
+                f" border-radius: {brand.R_BTN}px; }}"
+                "QFrame#nav_bar { background-color: transparent; }")
+            self._name_btn.setStyleSheet(
+                f"QPushButton {{ {base} color: {brand.N400}; }}")
 
 
 # ── Setting row ───────────────────────────────────────────────────────────────
 
 class SettingRow(QWidget):
+    """
+    One line of the settings column: label left, control right, ruled below.
+
+    The column is a **ruled list**, which is a different object from the EQ
+    (an instrument) and the CAN table (a form) even though all three are built
+    from the same tokens. A list is scanned, so every row is the same height
+    and closed by the same hairline; nothing in it is a card.
+
+    64px is the floor and not the height — a row whose description runs to two
+    lines grows, because losing the sentence to keep the grid is the wrong
+    trade on a panel an operator reads under a six-minute clock.
+    """
+
+    _MIN_H = 64
+
     def __init__(self, label_text: str, description: str, control: QWidget):
         super().__init__()
+        self.setObjectName("setting_row")
+        # Without WA_StyledBackground a plain QWidget ignores a stylesheet
+        # border entirely — the rule simply never appears, silently.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setMinimumHeight(self._MIN_H)
+        self.setStyleSheet(
+            f"QWidget#setting_row {{ border-bottom: 1px solid"
+            f" {brand.RAISED_DARK}; }}")
+
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 8, 0, 8)
-        layout.setSpacing(16)
+        layout.setContentsMargins(0, 10, 0, 10)
+        layout.setSpacing(20)
 
         text_col = QVBoxLayout()
-        text_col.setSpacing(2)
-        text_col.addWidget(label(label_text, "stat_value"))
+        text_col.setSpacing(4)
+        name = label(label_text, "stat_value")
+        name.setStyleSheet("font-size: 15px;")
+        text_col.addWidget(name)
         if description:
             desc = label(description, "stat_label")
             desc.setWordWrap(True)
+            # Wrapped or not, a QLabel still asks for its full text width until
+            # it is told the layout may squeeze it.
+            desc.setSizePolicy(QSizePolicy.Policy.Ignored,
+                               QSizePolicy.Policy.Preferred)
+            desc.setMinimumWidth(0)
             text_col.addWidget(desc)
         layout.addLayout(text_col, stretch=1)
         layout.addWidget(control, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+
+def section(title: str, blurb: str = "") -> QWidget:
+    """
+    A heading inside the settings column: the name, then one wrapped line.
+
+    Prose goes through here rather than through `helpers.label()`, which does
+    not word-wrap: an unwrapped sentence asks the layout for its whole text
+    width, and a long one made the settings column wider than the window and
+    pushed the judges deck off the right edge.
+    """
+    host = QWidget()
+    col = QVBoxLayout(host)
+    col.setContentsMargins(0, 0, 0, 0)
+    col.setSpacing(4)
+    name = label(title, "screen_title")
+    name.setStyleSheet("font-size: 18px;")
+    col.addWidget(name)
+    if blurb:
+        text = label(blurb, "stat_label")
+        text.setWordWrap(True)
+        text.setSizePolicy(QSizePolicy.Policy.Ignored,
+                           QSizePolicy.Policy.Preferred)
+        text.setMinimumWidth(0)
+        col.addWidget(text)
+    return host
+
+
+class PanelHeader(QWidget):
+    """
+    The settings column's masthead: what you are configuring, and what it is.
+
+    An eyebrow naming the *kind* of thing, the name at 30px, and one muted line
+    of orientation — then a 2px rule. Every panel opens the same way, so an
+    operator who has switched panels knows where they are without reading.
+    """
+
+    def __init__(self, kind: str, title: str, subtitle: str = ""):
+        super().__init__()
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        eb = eyebrow(kind, brand.N500)
+        eb.setStyleSheet(f"color: {brand.N500}; background: transparent;")
+        outer.addWidget(eb)
+        outer.addSpacing(10)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(16)
+        name = label(title, "screen_title")
+        # Set the font on the widget, not only in its stylesheet: a QSS
+        # font-size does not always reach sizeHint() before the first layout
+        # pass, so the row was allocated a 22px line for 30px type and clipped
+        # the ascenders.
+        nf = QFont(brand.FONT_DISPLAY)
+        nf.setPixelSize(30)
+        nf.setWeight(QFont.Weight.Bold)
+        name.setFont(nf)
+        name.setStyleSheet(f"color: {brand.WHITE}; background: transparent;")
+        name.setMinimumHeight(nf.pixelSize() + 8)
+        row.addWidget(name)
+        if subtitle:
+            note = label(subtitle, "stat_label")
+            note.setWordWrap(True)
+            note.setStyleSheet(f"font-size: 14px; color: {brand.N500};")
+            note.setSizePolicy(QSizePolicy.Policy.Ignored,
+                               QSizePolicy.Policy.Preferred)
+            note.setMinimumWidth(0)
+            row.addWidget(note, stretch=1,
+                          alignment=Qt.AlignmentFlag.AlignBottom)
+        else:
+            row.addStretch(1)
+        outer.addLayout(row)
+        outer.addSpacing(16)
+        outer.addWidget(divider())
 
 
 # ── Judges slide thumbnail ────────────────────────────────────────────────────
@@ -357,10 +506,51 @@ class _SlidePicker(QWidget):
 
 # ── Standard slide picker ─────────────────────────────────────────────────────
 
+class _DwellRail(QWidget):
+    """
+    The live slide's dwell, drawn beside it in the picker.
+
+    So the operator can see where the rotation *is* without looking up at the
+    overhead panel — the same rail the audience screen shows in its ledger,
+    reading the same `rotation.progress()`, so the two can never disagree.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(90, 5)
+        self._timer = QTimer(self)
+        self._timer.setInterval(500)
+        self._timer.timeout.connect(self.update)
+
+    def showEvent(self, e):
+        self._timer.start()
+        super().showEvent(e)
+
+    def hideEvent(self, e):
+        self._timer.stop()
+        super().hideEvent(e)
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self.height() / 2
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(brand.N600))
+        p.drawRoundedRect(QRectF(0, 0, self.width(), self.height()), r, r)
+        w = rotation.progress() * self.width()
+        if w > 0:
+            p.setBrush(QColor(brand.N50))
+            p.drawRoundedRect(QRectF(0, 0, max(self.height(), w),
+                                     self.height()), r, r)
+        p.end()
+
+
 class _StandardSlideRow(QFrame):
     """One row in the standard-slide list: number, title, and a preview line."""
 
     clicked = pyqtSignal(int)
+
+    _HEIGHT = 58
 
     def __init__(self, index: int, title: str, body: str, is_fact: bool,
                  kind: str = ""):
@@ -374,65 +564,116 @@ class _StandardSlideRow(QFrame):
         # QLabel subclasses QFrame, so a bare `QFrame { border-left: … }` rule
         # paints that border on every child label too. Scope it by object name.
         self.setObjectName("slide_row")
+        # A fixed row is what makes the list scan as a list. The body line is
+        # elided rather than wrapped for the same reason: a two-line row and a
+        # one-line row next to each other read as two different kinds of thing.
+        self.setFixedHeight(self._HEIGHT)
 
-        row = QVBoxLayout(self)
-        row.setContentsMargins(11, 8, 11, 8)
-        row.setSpacing(2)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(11, 0, 16, 0)
+        row.setSpacing(14)
 
-        head = QHBoxLayout()
-        head.setContentsMargins(0, 0, 0, 0)
-        head.setSpacing(8)
+        self._bar = QFrame()
+        self._bar.setObjectName("slide_row_bar")
+        self._bar.setFixedWidth(3)
+        row.addWidget(self._bar)
+
         self._num = label(f"{index + 1:02d}", "stat_label")
-        self._num.setFont(mono_font(11))
-        self._num.setFixedWidth(22)
-        head.addWidget(self._num)
+        self._num.setFont(mono_font(14))
+        self._num.setFixedWidth(24)
+        row.addWidget(self._num)
+
+        text = QVBoxLayout()
+        text.setContentsMargins(0, 0, 0, 0)
+        text.setSpacing(5)
         self._title = label(title, "stat_value")
-        self._title.setWordWrap(True)
-        head.addWidget(self._title, stretch=1)
+        self._title.setStyleSheet("font-size: 15px;")
+        self._title_text = title
+        text.addWidget(self._title)
+        self._body = label(body, "stat_label")
+        self._body.setStyleSheet("font-size: 12px;")
+        self._body_text = body
+        text.addWidget(self._body)
+        # A single-line QLabel asks the layout for its whole text width, so a
+        # long slide body made the settings column wider than the window and
+        # pushed the judges deck off the right edge — the exact failure the
+        # CLAUDE.md "helpers.label() does not word-wrap" note describes. These
+        # elide instead, so the layout must be told not to ask.
+        for lbl in (self._title, self._body):
+            lbl.setSizePolicy(QSizePolicy.Policy.Ignored,
+                              QSizePolicy.Policy.Preferred)
+            lbl.setMinimumWidth(0)
+        row.addLayout(text, stretch=1)
+
         # Three kinds of entry, and the operator needs to tell them apart:
         # authored slides are edited in code, fact slides regenerate from the
         # log, and the board is a live widget rather than a slide at all.
         tag_text, tag_color = "", ""
         if kind == "board":
-            tag_text, tag_color = "LIVE BOARD", brand.STATUS_PENDING
+            tag_text, tag_color = "LIVE BOARD", brand.STATUS_ONLINE
         elif is_fact:
-            tag_text, tag_color = "FROM LOG", brand.STATUS_ONLINE
+            tag_text, tag_color = "FROM LOG", brand.STATUS_PENDING
         if tag_text:
             tag = label(tag_text, "stat_label")
-            tag.setFont(mono_font(9))
-            tag.setStyleSheet(f"color: {tag_color}; background: transparent;")
-            head.addWidget(tag)
-        row.addLayout(head)
+            tag.setFont(mono_font(10))
+            tag.setStyleSheet(
+                f"color: {tag_color}; background: transparent;"
+                f" border: 1.5px solid {brand.N600};"
+                f" border-radius: 13px; padding: 4px 12px;")
+            row.addWidget(tag)
 
-        self._body = label(body, "stat_label")
-        self._body.setWordWrap(True)
-        self._body.setContentsMargins(30, 0, 0, 0)
-        row.addWidget(self._body)
+        self._rail = _DwellRail()
+        self._rail.setVisible(False)
+        row.addWidget(self._rail)
 
         self._apply_style()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._elide()
+
+    def _elide(self):
+        for lbl, text in ((self._title, self._title_text),
+                          (self._body, self._body_text)):
+            lbl.setText(lbl.fontMetrics().elidedText(
+                text, Qt.TextElideMode.ElideRight, max(40, lbl.width())))
 
     def set_active(self, active: bool):
         if active != self._active:
             self._active = active
+            self._rail.setVisible(active)
             self._apply_style()
 
     def apply_team(self, _color: str):
         self._apply_style()
 
     def _apply_style(self):
-        accent = config.active_team.primary_color
+        # The live row is marked in **white**, not the team accent: red on this
+        # panel means "the installation is in an exceptional state", and the
+        # rotation running normally is the opposite of that.
         if self._active:
             self.setStyleSheet(
-                f"QFrame#slide_row {{ background-color: {brand.CARBON_SURF2};"
-                f" border-left: 3px solid {accent}; border-radius: 0; }}")
+                f"QFrame#slide_row {{ background-color: {brand.RAISED_DARK};"
+                f" border-radius: {brand.R_BTN}px; }}"
+                f"QFrame#slide_row_bar {{ background-color: {brand.WHITE};"
+                f" border-radius: 2px; }}")
             self._num.setStyleSheet(
-                f"color: {accent}; background: transparent;")
+                f"color: {brand.N400}; background: transparent;")
+            self._title.setStyleSheet(
+                f"font-size: 15px; color: {brand.WHITE};")
+            self._body.setStyleSheet(
+                f"font-size: 12px; color: {brand.N500};")
         else:
             self.setStyleSheet(
                 "QFrame#slide_row { background-color: transparent;"
-                " border-left: 3px solid transparent; border-radius: 0; }")
+                f" border-radius: {brand.R_BTN}px; }}"
+                "QFrame#slide_row_bar { background-color: transparent; }")
             self._num.setStyleSheet(
-                f"color: {brand.FAINT_DARK}; background: transparent;")
+                f"color: {brand.GRAPHITE}; background: transparent;")
+            self._title.setStyleSheet(
+                f"font-size: 15px; color: {brand.N300};")
+            self._body.setStyleSheet(
+                f"font-size: 12px; color: {brand.GRAPHITE};")
 
     # Release-inside, for the same reason as _Thumbnail above: this row lives in
     # a scroll list that the operator drags with a finger.
@@ -533,7 +774,7 @@ class _StandardSlidePicker(QWidget):
         return (PresentationScreenA if self._screen_id == "presentation_a"
                 else PresentationScreenB)
 
-    def _slides(self) -> list[tuple[str, str]]:
+    def _slides(self) -> list[Slide]:
         """
         Every stop in the cycle — slides, then this screen's board.
 
@@ -545,7 +786,7 @@ class _StandardSlidePicker(QWidget):
         try:
             return cls.rotation_entries()
         except Exception:
-            return list(cls.SLIDES)
+            return coerce(cls.SLIDES)
 
     def _board_index(self) -> int | None:
         cls = self._screen_cls()
@@ -561,10 +802,10 @@ class _StandardSlidePicker(QWidget):
         slides = self._slides()
         authored = len(self._authored())
         board = self._board_index()
-        for i, (title, body) in enumerate(slides):
+        for i, slide in enumerate(slides):
             is_board = board is not None and i == board
             row = _StandardSlideRow(
-                i, title, body,
+                i, slide.title, slide.body,
                 is_fact=(not is_board) and i >= authored,
                 kind="board" if is_board else "")
             row.clicked.connect(self._jump)
@@ -734,22 +975,16 @@ class ScreenSettingsPanel(QWidget):
         self._team_toggles: list[ToggleSwitch] = []
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(24, 20, 24, 20)
+        outer.setContentsMargins(30, 26, 30, 26)
         outer.setSpacing(4)
 
-        outer.addWidget(label(
-            SCREEN_LABELS.get(screen_id, screen_id).upper(), "section_header"
-        ))
-        outer.addWidget(label(
-            f"Configure settings for the {SCREEN_LABELS.get(screen_id, screen_id)} screen.",
-            "stat_label",
-        ))
-        outer.addSpacing(12)
-        outer.addWidget(divider())
+        outer.addWidget(PanelHeader(
+            "Screen", SCREEN_LABELS.get(screen_id, screen_id),
+            _SCREEN_BLURBS.get(screen_id, "")))
         outer.addSpacing(12)
 
         # ── Appearance ────────────────────────────────────────────────────
-        outer.addWidget(label("Appearance", "screen_title"))
+        outer.addWidget(section("Appearance"))
         outer.addSpacing(8)
 
         light = config.screen_theme(screen_id) == "light"
@@ -764,6 +999,38 @@ class ScreenSettingsPanel(QWidget):
             control=theme_row,
         ))
 
+        # ── Where it goes ─────────────────────────────────────────────────
+        # Every audience surface is designed at a fixed size and scaled by a
+        # contain fit against it, so a window that is not filling a monitor is
+        # showing a smaller copy of the design rather than the design. These
+        # two rows are what make a pit screen actually be a pit screen.
+        if screen_id != "control":
+            self._display_combo = QComboBox()
+            self._display_combo.setMinimumWidth(240)
+            self._populate_display_combo(screen_id)
+            self._display_combo.currentIndexChanged.connect(
+                self._on_display_selected)
+            outer.addWidget(SettingRow(
+                label_text="Display",
+                description="Which monitor this screen goes to when it is "
+                            "powered on.",
+                control=self._display_combo,
+            ))
+
+            fill = bool(config.get(screen_id, "fullscreen",
+                                   display.default_fullscreen()))
+            self._fill_toggle, self._fill_label, fill_row = \
+                self._labeled_toggle(
+                    checked=fill, text="Filling" if fill else "Windowed")
+            self._fill_toggle.toggled.connect(self._on_fill_toggled)
+            outer.addWidget(SettingRow(
+                label_text="Fill the display",
+                description="Off leaves it as a window — which is what you "
+                            "want while there is only one monitor, so the "
+                            "control panel never ends up behind it.",
+                control=fill_row,
+            ))
+
         outer.addWidget(divider())
         outer.addSpacing(12)
 
@@ -772,14 +1039,12 @@ class ScreenSettingsPanel(QWidget):
             # What this screen shows in Standard mode. Per-screen, not a global
             # mode: the useful arrangement is one overhead screen on the
             # checklist while the other keeps rotating for visitors.
-            outer.addWidget(label("Standard Content", "screen_title"))
-            outer.addSpacing(4)
-            outer.addWidget(label(
+            outer.addWidget(section(
+                "Standard Content",
                 "What this overhead screen shows in Standard mode. Rotation "
                 "cycles the slides and finishes on the diagnostics board; "
                 "anything else pins that page and stops the 45-second timer "
-                "touching this screen.",
-                "stat_label"))
+                "touching this screen."))
             outer.addSpacing(8)
 
             # A combo, not a toggle: there are four faces now, and a two-state
@@ -806,19 +1071,18 @@ class ScreenSettingsPanel(QWidget):
             outer.addWidget(divider())
             outer.addSpacing(12)
 
-            outer.addWidget(label("Standard Slides", "screen_title"))
-            outer.addSpacing(4)
-            outer.addWidget(label(
+            outer.addWidget(section(
+                "Standard Slides",
                 "Everything in this screen's Standard rotation. Click one to "
-                "put it on screen now; the 45-second timer carries on from there.",
-                "stat_label"))
+                "put it on screen now; the 45-second timer carries on from "
+                "there."))
             outer.addSpacing(8)
             outer.addWidget(_StandardSlidePicker(screen_id))
             outer.addSpacing(16)
             outer.addWidget(divider())
             outer.addSpacing(12)
 
-            outer.addWidget(label("Judges Slides", "screen_title"))
+            outer.addWidget(section("Judges Slides"))
             outer.addSpacing(8)
             outer.addWidget(_SlidePicker())
             outer.addSpacing(16)
@@ -826,14 +1090,14 @@ class ScreenSettingsPanel(QWidget):
             outer.addWidget(divider())
             outer.addSpacing(12)
 
-            outer.addWidget(label("Judges CAD", "screen_title"))
+            outer.addWidget(section("Judges CAD"))
             outer.addSpacing(8)
             outer.addWidget(_CADJudgesPicker())
             outer.addSpacing(12)
 
         # Project screen: pick which interactive view is shown, then CAD config.
         if screen_id == "project":
-            outer.addWidget(label("Display Content", "screen_title"))
+            outer.addWidget(section("Display Content"))
             outer.addSpacing(8)
 
             board = config.get(screen_id, "content", "cad") == "board"
@@ -850,7 +1114,7 @@ class ScreenSettingsPanel(QWidget):
 
             outer.addWidget(divider())
             outer.addSpacing(12)
-            outer.addWidget(label("CAD Viewer Config", "screen_title"))
+            outer.addWidget(section("CAD Viewer Config"))
             outer.addSpacing(8)
             outer.addWidget(CADSettingsPanel(), stretch=1)
 
@@ -860,7 +1124,7 @@ class ScreenSettingsPanel(QWidget):
 
     def _labeled_toggle(self, checked: bool, text: str) -> tuple[ToggleSwitch, QLabel, QWidget]:
         """A team-colored ToggleSwitch with a state label beside it."""
-        toggle = ToggleSwitch(color_on=config.active_team.primary_color)
+        toggle = ToggleSwitch()
         toggle.setChecked(checked)
         self._team_toggles.append(toggle)
 
@@ -879,6 +1143,26 @@ class ScreenSettingsPanel(QWidget):
         self._theme_label.setText("Light" if light else "Dark")
         config.set(self._screen_id, "theme", "light" if light else "dark")
 
+    def _populate_display_combo(self, screen_id: str):
+        self._display_combo.blockSignals(True)
+        self._display_combo.clear()
+        for i, name in enumerate(display.screen_names()):
+            self._display_combo.addItem(name, i)
+        current = int(config.get(screen_id, "display",
+                                 display.default_display(screen_id)))
+        # A monitor unplugged between sessions must not leave the picker on an
+        # index that no longer exists.
+        self._display_combo.setCurrentIndex(
+            min(max(0, current), max(0, self._display_combo.count() - 1)))
+        self._display_combo.blockSignals(False)
+
+    def _on_display_selected(self, index: int):
+        config.set(self._screen_id, "display", index)
+
+    def _on_fill_toggled(self, fill: bool):
+        self._fill_label.setText("Filling" if fill else "Windowed")
+        config.set(self._screen_id, "fullscreen", fill)
+
     def _on_pres_content_changed(self, _index: int):
         config.set(self._screen_id, "content", self._pres_content.currentData())
 
@@ -887,8 +1171,9 @@ class ScreenSettingsPanel(QWidget):
         config.set(self._screen_id, "content", "board" if board else "cad")
 
     def _on_team_changed(self, team):
-        for toggle in self._team_toggles:
-            toggle.set_color_on(team.primary_color)
+        # Toggles no longer follow the team: "on" is a status and stays green,
+        # so the surface's one red is free for whatever is exceptional.
+        pass
 
 
 # ── Pit subsystem panel ───────────────────────────────────────────────────────
@@ -914,14 +1199,12 @@ class SystemSettingsPanel(QWidget):
         self._system_id = system_id
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(24, 20, 24, 20)
+        outer.setContentsMargins(30, 26, 30, 26)
         outer.setSpacing(4)
 
-        outer.addWidget(label(SYSTEM_LABELS.get(system_id, system_id).upper(),
-                              "section_header"))
-        outer.addWidget(label(self._BLURBS.get(system_id, ""), "stat_label"))
-        outer.addSpacing(12)
-        outer.addWidget(divider())
+        outer.addWidget(PanelHeader(
+            "Pit system", SYSTEM_LABELS.get(system_id, system_id),
+            self._BLURBS.get(system_id, "")))
         outer.addSpacing(16)
 
         self.body = {"leds": LEDPanel, "music": MusicPanel,
@@ -941,15 +1224,42 @@ class ControlScreen(QMainWindow):
         self._screen_cards: dict[str, ScreenCard] = {}
         self._settings_panels: dict[str, ScreenSettingsPanel] = {}
         self._managed_windows: dict[str, QMainWindow] = {}
+        self._window_factories: dict[str, Callable[[], QMainWindow]] = {}
         self._mode_buttons: dict[str, ModeButton] = {}
         self._build_ui()
         config.team_changed.connect(self._on_team_changed)
+        config.mode_changed.connect(self._sync_mode_buttons)
         config.screen_setting_changed.connect(self._on_screen_setting_changed)
         leds.state_changed.connect(self._on_leds_state_changed)
 
-    def set_managed_windows(self, windows: dict[str, "QMainWindow"]) -> None:
-        """Called from main.py to hand over the other 3 window references."""
-        self._managed_windows = windows
+    def set_window_factories(self, factories: dict[str, "Callable[[], QMainWindow]"]) -> None:
+        """
+        How to *build* each managed screen, rather than the built screens.
+
+        Powering a screen off closes and destroys it, so there is nothing to
+        hold — the window only exists while it is on. That is what an operator
+        means by off: the CAD viewer's Chromium process is gone, the drift and
+        rotation timers are gone, and a screen that has picked up a stale state
+        is fixed by turning it off and on again, which is the first thing
+        anybody tries anyway.
+        """
+        self._window_factories = factories
+
+    def managed_window(self, screen_id: str):
+        """The live window for a screen, or None while it is powered off."""
+        return self._managed_windows.get(screen_id)
+
+    def shutdown_managed(self) -> None:
+        """Close every managed screen — called when the control panel closes."""
+        for screen_id in list(self._managed_windows):
+            self._destroy_window(screen_id)
+
+    def closeEvent(self, event):
+        # The audience windows are children of nothing, so closing the control
+        # panel has to take them with it or the app keeps running headless with
+        # three slide rotations nobody can see.
+        self.shutdown_managed()
+        super().closeEvent(event)
 
     # ── UI construction ───────────────────────────────────────────────────
 
@@ -979,23 +1289,30 @@ class ControlScreen(QMainWindow):
 
     def _top_bar(self) -> QFrame:
         bar = QFrame()
+        bar.setObjectName("top_bar")
         bar.setFixedHeight(76)
         bar.setStyleSheet(
-            f"QFrame {{ background-color: {brand.CARBON_SURF}; border: none;"
-            f" border-bottom: 1px solid {brand.CARBON_LINE}; }}"
+            f"QFrame#top_bar {{ background-color: #1A171A; border: none;"
+            f" border-bottom: 2px solid {brand.CARBON_LINE}; }}"
         )
 
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(18, 0, 20, 0)
-        layout.setSpacing(14)
+        layout.setContentsMargins(24, 0, 24, 0)
+        layout.setSpacing(26)
 
-        # Left: brand mark — rounded red chip with the team number + wordmark.
-        # Also the admin door: clicking it opens the admin bar (see _toggle_admin).
+        # Left: the brand chip. **White, not red** — the chip is a door, not a
+        # focal element, and the one red on this bar belongs to whichever mode
+        # is exceptional (see ModeButton).
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(14)
+
+        chip_col = QVBoxLayout()
+        chip_col.setSpacing(3)
+        # 76px is the bar; the chip (44) + the HOLD hairline has to fit inside
+        # it with air, so the margins are what give, not the bar's height.
+        chip_col.setContentsMargins(0, 6, 0, 6)
         self._brand_chip = RoundedFrame(
-            fill=config.active_team.primary_color,
-            border=None,
-            radius=brand.R_BTN,
-        )
+            fill=brand.N50, border=None, radius=brand.R_BTN)
         self._brand_chip.setFixedSize(58, 44)
         self._brand_chip.setCursor(Qt.CursorShape.PointingHandCursor)
         self._brand_chip.setToolTip("Admin — LED tuning and equaliser")
@@ -1005,75 +1322,124 @@ class ControlScreen(QMainWindow):
         self._chip_num = label(str(config.active_team.number), "",
                                Qt.AlignmentFlag.AlignCenter)
         self._chip_num.setStyleSheet(
-            f'color: #FFFFFF; background: transparent;'
-            f' font-family: "{brand.FONT_DISPLAY}"; font-size: 17px; font-weight: 700;'
-        )
+            f'color: {brand.CARBON}; background: transparent;'
+            f' font-family: "{brand.FONT_DISPLAY}"; font-size: 20px;'
+            f' font-weight: 700;')
         chip_l.addWidget(self._chip_num)
-        layout.addWidget(self._brand_chip)
+        chip_col.addWidget(self._brand_chip)
+
+        # The chip carried no affordance at all. A mono hairline under it is
+        # enough for an operator who has been told, and invisible to a visitor.
+        hold = label("HOLD", "", Qt.AlignmentFlag.AlignCenter)
+        hold.setFont(mono_font(9))
+        hold.setStyleSheet(
+            f"color: {brand.GRAPHITE}; background: transparent;")
+        chip_col.addWidget(hold)
+        brand_row.addLayout(chip_col)
 
         title_col = QVBoxLayout()
-        title_col.setSpacing(0)
-        self._title_label = eyebrow("Pit Display")
-        wordmark = label("BREAKAWAY", "screen_title")
+        title_col.setSpacing(5)
+        title_col.setContentsMargins(0, 12, 0, 12)
+        # No `screen_title` object name: that QSS role carries its own 22px
+        # font-size, so the label was laid out against a size it does not use.
+        wordmark = label("BREAKAWAY")
+        wf = QFont(brand.FONT_DISPLAY)
+        wf.setPixelSize(20)
+        wf.setWeight(QFont.Weight.Bold)
+        wf.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 104)
+        wordmark.setFont(wf)
         wordmark.setStyleSheet(
-            f'color: #FFFFFF; background: transparent;'
-            f' font-family: "{brand.FONT_DISPLAY}"; font-size: 20px;'
-            f' font-weight: 700; letter-spacing: 1px;'
-        )
-        title_col.addWidget(self._title_label)
+            f"color: {brand.WHITE}; background: transparent;")
         title_col.addWidget(wordmark)
-        layout.addLayout(title_col)
+        self._title_label = label("PIT DISPLAY")
+        self._title_label.setFont(mono_font(11))
+        self._title_label.setStyleSheet(
+            f"color: {brand.N500}; background: transparent;")
+        title_col.addWidget(self._title_label)
+        brand_row.addLayout(title_col)
+        layout.addLayout(brand_row)
 
-        layout.addStretch()
-
-        # Center: mode buttons
+        # Modes sit next to the identity, not centred: they are the first thing
+        # an operator reaches for, and a centred group moves as the bar resizes.
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(10)
         team_color = config.active_team.primary_color
         for mode in MODES:
             btn = ModeButton(mode, team_color)
             btn.set_active(mode == config.mode)
             btn.clicked.connect(lambda checked, m=mode: self._on_mode_clicked(m))
             self._mode_buttons[mode] = btn
-            layout.addWidget(btn)
+            mode_row.addWidget(btn)
+        layout.addLayout(mode_row)
 
         layout.addStretch()
 
-        # Right: team selector
-        team_col = QVBoxLayout()
-        team_col.setSpacing(2)
-        team_col.addWidget(eyebrow("Team", brand.MUTED_DARK))
+        # The wall clock. A pit runs on a six-minute cycle and the operator is
+        # standing, not looking at a laptop's menu bar.
+        self._clock = label("")
+        self._clock.setFont(mono_font(13))
+        self._clock.setStyleSheet(
+            f"color: {brand.N500}; background: transparent;")
+        layout.addWidget(self._clock, alignment=Qt.AlignmentFlag.AlignVCenter)
+        self._tick_clock()
+        self._clock_timer = QTimer(self)
+        self._clock_timer.setInterval(1000)
+        self._clock_timer.timeout.connect(self._tick_clock)
+        self._clock_timer.start()
+
         self._team_combo = QComboBox()
+        self._team_combo.setObjectName("team_pill")
+        self._team_combo.setFixedHeight(46)
         self._team_combo.setMinimumWidth(190)
+        self._team_combo.setStyleSheet(
+            f"QComboBox#team_pill {{ border: 1.5px solid {brand.N600};"
+            f" border-radius: 23px; padding: 0 20px; background: transparent;"
+            f' color: {brand.N50}; font-family: "{brand.FONT_DISPLAY}";'
+            f" font-size: 14px; font-weight: 600; }}")
         self._populate_team_combo()
         self._team_combo.currentIndexChanged.connect(self._on_team_selected)
-        team_col.addWidget(self._team_combo)
-        layout.addLayout(team_col)
+        layout.addWidget(self._team_combo,
+                         alignment=Qt.AlignmentFlag.AlignVCenter)
 
         return bar
+
+    def _tick_clock(self):
+        from datetime import datetime
+        self._clock.setText(datetime.now().strftime("%H:%M:%S"))
 
     def _populate_team_combo(self):
         self._team_combo.blockSignals(True)
         self._team_combo.clear()
         for i, team in enumerate(all_teams()):
-            self._team_combo.addItem(f"Team {team.display_name}", userData=team.number)
+            self._team_combo.addItem(
+                f"{team.number} {team.name}".strip(),
+                userData=team.number)
             if team.number == config.active_team.number:
                 self._team_combo.setCurrentIndex(i)
         self._team_combo.blockSignals(False)
 
+    def _nav_group(self, text: str) -> QLabel:
+        """A sidebar group label: mono caps, tracked, quiet."""
+        lbl = label(text.upper())
+        lbl.setFont(mono_font(11))
+        lbl.setStyleSheet(f"color: {brand.GRAPHITE}; background: transparent;")
+        lbl.setContentsMargins(10, 6, 0, 10)
+        return lbl
+
     def _left_sidebar(self) -> QFrame:
         sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(220)
         sidebar.setStyleSheet(
-            f"QFrame {{ background-color: {brand.CARBON_SURF}; border: none;"
-            f" border-right: 1px solid {brand.CARBON_LINE}; }}"
+            f"QFrame#sidebar {{ background-color: #1A171A; border: none;"
+            f" border-right: 2px solid {brand.CARBON_LINE}; }}"
         )
 
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(0, 18, 0, 16)
-        layout.setSpacing(0)
+        layout.setContentsMargins(12, 18, 12, 16)
+        layout.setSpacing(6)
 
-        hdr = eyebrow("Screens")
-        hdr.setContentsMargins(18, 0, 0, 10)
-        layout.addWidget(hdr)
+        layout.addWidget(self._nav_group("Screens"))
 
         team_color = config.active_team.primary_color
         for screen_id in SCREENS:
@@ -1083,10 +1449,8 @@ class ControlScreen(QMainWindow):
             self._screen_cards[screen_id] = card
             layout.addWidget(card)
 
-        layout.addSpacing(18)
-        sys_hdr = eyebrow("Pit Systems")
-        sys_hdr.setContentsMargins(18, 0, 0, 10)
-        layout.addWidget(sys_hdr)
+        layout.addSpacing(14)
+        layout.addWidget(self._nav_group("Pit Systems"))
 
         for system_id in SYSTEMS:
             # The LED card's toggle is the strip kill switch; music has no
@@ -1158,19 +1522,64 @@ class ControlScreen(QMainWindow):
         if screen_id == "leds":
             leds.set_enabled(on)
             return
+        if not on:
+            self._destroy_window(screen_id)
+            return
+
         window = self._managed_windows.get(screen_id)
         if window is None:
+            window = self._build_window(screen_id)
+        if window is None:
             return
-        if on:
-            window.show()
-            # `show()` activates the window it shows, and keystrokes go to the
-            # active window. The audience screens never need a keyboard, so
-            # letting one take it means the operator's next keystroke — a CAN-id
-            # name, a checklist item, the admin password — lands on a slide
-            # rotation instead. Hand activation straight back.
-            self.activateWindow()
-        else:
-            window.hide()
+        self._place(screen_id, window)
+        # `show()` activates the window it shows, and keystrokes go to the
+        # active window. The audience screens never need a keyboard, so letting
+        # one take it means the operator's next keystroke — a CAN-id name, a
+        # checklist item, the admin password — lands on a slide rotation
+        # instead. Hand activation straight back.
+        self.activateWindow()
+
+    def _build_window(self, screen_id: str):
+        factory = self._window_factories.get(screen_id)
+        if factory is None:
+            return None
+        window = factory()
+        self._managed_windows[screen_id] = window
+        return window
+
+    def _destroy_window(self, screen_id: str) -> None:
+        """
+        Close a screen and let it go.
+
+        `hide()` left the whole window alive — its timers, its signal
+        subscriptions, and for the project screen an entire Chromium render
+        process — for a screen the operator had switched off. `close()` runs
+        the normal teardown, and `deleteLater()` drops it; every connection it
+        made to `config`, `rotation`, `checklist` and `cad_assets` goes with the
+        QObject, so nothing has to be unwired by hand.
+        """
+        window = self._managed_windows.pop(screen_id, None)
+        if window is None:
+            return
+        window.close()
+        window.deleteLater()
+
+    def _place(self, screen_id: str, window) -> None:
+        """
+        Put an audience window on its monitor, at its monitor's size.
+
+        Every audience surface is designed at a fixed size and scaled by a
+        contain fit against it, so a window that is not filling a monitor is
+        showing a proportionally smaller copy of the design rather than the
+        design. `show()` on its own left them at a size hint on whichever
+        display the window manager chose.
+        """
+        display.place(
+            window, screen_id,
+            int(config.get(screen_id, "display",
+                           display.default_display(screen_id))),
+            bool(config.get(screen_id, "fullscreen",
+                            display.default_fullscreen())))
 
     def _on_team_selected(self, index: int):
         team_number = self._team_combo.itemData(index)
@@ -1179,12 +1588,23 @@ class ControlScreen(QMainWindow):
 
     def _on_mode_clicked(self, mode: str):
         config.set_mode(mode)
+
+    def _sync_mode_buttons(self, mode: str):
+        """
+        Follow `config.mode_changed`, not the click.
+
+        The buttons used to be updated only by the handler that set the mode,
+        so anything else that moved it — the music service following the mode,
+        a preset, anything added later — left the top bar claiming a mode that
+        was no longer live.
+        """
         for m, btn in self._mode_buttons.items():
             btn.set_active(m == mode)
 
     def _on_team_changed(self, team):
         # Brand chip follows the active team
-        self._brand_chip.set_fill(team.primary_color)
+        # The chip stays white whatever the team is: it is a door, and the
+        # bar's one red belongs to an exceptional mode. Only the number moves.
         self._chip_num.setText(str(team.number))
         # Mode buttons recolor
         for btn in self._mode_buttons.values():
@@ -1205,7 +1625,16 @@ class ControlScreen(QMainWindow):
         if card is not None:
             card.set_checked(leds.enabled)
 
+    def _replace_window(self, screen_id: str) -> None:
+        """Re-apply placement to a window that is already up."""
+        window = self._managed_windows.get(screen_id)
+        if window is not None and window.isVisible():
+            self._place(screen_id, window)
+            self.activateWindow()
+
     def _on_screen_setting_changed(self, screen_id: str, key: str, value):
+        if key in ("display", "fullscreen"):
+            self._replace_window(screen_id)
         # Managed windows subscribe to this signal themselves; the control
         # window is the only one nobody else re-themes.
         if screen_id == "control" and key == "theme":

@@ -14,8 +14,21 @@ def label(text: str, obj_name: str = "",
 
 
 def divider() -> QFrame:
+    """
+    The section rule in the settings column — 2px, not a hairline.
+
+    The column is a ruled list: 1px `#262227` closes a *row*, 2px closes a
+    *section*. Two weights is what lets an operator see the grouping at a
+    glance instead of reading every label.
+    """
+    from app import brand
+
     line = QFrame()
-    line.setFrameShape(QFrame.Shape.HLine)
+    line.setObjectName("section_rule")
+    line.setFixedHeight(2)
+    line.setStyleSheet(
+        f"QFrame#section_rule {{ background-color: {brand.CARBON_LINE};"
+        f" border: none; }}")
     return line
 
 

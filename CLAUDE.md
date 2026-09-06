@@ -26,19 +26,48 @@ presets, the music library and all robot-log metadata; `data/pit_display_samples
 is ATTACHed as `samples` and holds only bulk telemetry. The second is disposable
 by design and its schema is deliberately unversioned.
 
+## Packaging and deployment
+
+**[`DEPLOYMENT.md`](DEPLOYMENT.md) is the reference** — what ships, what does
+not, how to build for Windows, and what the data directory is. Two things
+belong here because they constrain how code is written:
+
+- **Nothing outside `app/paths.py` may build a path from `__file__`.** A frozen
+  app has a read-only resource tree (inside the bundle; `Program Files` on
+  Windows) and a writable data tree (per-user), and they are different
+  directories. `paths.resource()`, `paths.data()` and `paths.find()` are the
+  only correct ways to ask. From a checkout both are the repo, so the dev loop
+  is unchanged.
+- **`main.py --self-check` boots everything offscreen and reports**, exit 0/1.
+  It exists because packaging failures are invisible: the app starts, and only
+  the one screen that needed the missing file ever finds out. It has already
+  caught PyInstaller dropping Chromium's helper process *and* its resource
+  `.pak`s — both of which leave the CAD viewer dead and nothing else complaining.
+
 ## Architecture
 
-Four-window PyQt6 desktop app for FRC pit displays. All windows are created at startup; only the control screen is shown on boot. The other three are shown/hidden by power toggles in the control screen sidebar.
+Four-window PyQt6 desktop app for FRC pit displays. **Only the control screen is
+built at startup**; the other three are built on demand by the power toggles in
+its sidebar and **destroyed when switched off** — the control screen holds
+factories, not instances (`set_window_factories`). Off means off: no timers, no
+signal subscriptions, and for the project screen no Chromium process. Two
+consequences worth knowing:
+
+- **A screen is rebuilt from scratch each time it is powered on**, so it re-reads
+  slides, fun facts and boards. "Turn it off and on again" genuinely resets it.
+- **Anything holding a window reference has to let go.** `touch.py`'s router
+  connects to `destroyed` and forgets the widget; a stale entry there is a
+  dangling pointer walked on every touch event.
 
 **Window roles:**
 - `ControlScreen` — operator panel (team selector, mode buttons, per-screen settings, judges slide picker)
 - `PresentationScreenA` / `PresentationScreenB` — audience-facing rotating slides; switch to `LunchOverlay` or `JudgesOverlay` based on mode
-- `ProjectScreen` — shell, currently a placeholder
+- `ProjectScreen` — the pit-front touch panel: one interpretive surface with the CAD as its top band (`content="board"`), or the CAD alone (`content="cad"`)
 
 **Three display modes** (set globally via `config.set_mode()`):
-- `standard` — rotating `SlidePanel` with 45-second auto-advance driven by `RotationManager`
-- `judges` — `JudgesOverlay` showing slides from `assets/judges_slides/`; controlled from the control screen thumbnail picker
-- `lunch` — `LunchOverlay` painted entirely in `paintEvent` (bypasses Qt layout for guaranteed full-screen font sizing)
+- `standard` — the painted `SlidePanel` with 45-second auto-advance driven by `RotationManager`
+- `judges` — `JudgesOverlay` showing slides from `assets/judges_slides/`; controlled from the control screen thumbnail picker. The **artwork is full-bleed** — it is the team's own finished graphic and boxing it inside the plate would put two containers around one image — but the header band follows the chassis
+- `lunch` — `LunchOverlay`, the holding card, on the chassis. One enormous auto-fitted line and nothing competing; the Trace is its one red
 
 ### Global singletons (lazy-proxy pattern)
 
@@ -181,11 +210,120 @@ Also: **`helpers.label()` does not word-wrap.** A long unwrapped label forces it
 whole panel wider than the window and pushes table columns off-screen. Call
 `setWordWrap(True)` on any prose.
 
+### The Plate — the chassis (`app/widgets/chassis.py`)
+
+**Every full-screen surface is built on one inset panel.** The slide rotation,
+both robot boards and the pit-front panel all subclass `Chassis`, which paints
+the ground, the plate, the header band and the footer ledger; subclasses fill in
+`paint_stage()` and, where they want more than two mono strings, `paint_footer()`.
+Two overhead panels are in the same glance all day — if they do not share a
+chassis they read as two apps.
+
+    ┌─ 40px inset ──────────────────────────────────┐
+    │  BREAKAWAY 3937           SCREEN A / STANDARD │  header, top 56, h 94
+    │ ───────────────────────────────────────────── │  2px rule at 150
+    │  the stage                                    │  216 → height−168
+    │ ───────────────────────────────────────────── │  2px rule
+    │  01 / 07  ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔     ROTATION A │  footer ledger
+    └───────────────────────────────────────────────┘
+
+Three things about it are load bearing:
+
+- **Every number is a *design* measurement, converted by `s()`.** A pit panel
+  is 1080 tall and the machine you are developing on is not, so a literal pixel
+  count is always wrong somewhere.
+- **The scale is a contain fit — `min(w/DESIGN_W, h/DESIGN_H)` — never one
+  axis.** A single-axis rule is right until a window is the wrong shape: the
+  pit-front panel is drawn at 1080×1920 and scaling it by width alone meant a
+  window opened at 1920×1000 set every figure at **1.78×**, drawing a 1153px
+  CAD stage into a 1000px window. That is not a clipped edge, it is a layout
+  collapsing through itself. `DESIGN_W`/`DESIGN_H` also drive `sizeHint()`, so
+  a portrait surface opens portrait — inheriting the landscape hint is what put
+  that window at 1920 wide in the first place.
+- **The background is cached** (`_ground`). The ambient light-fall drifts on a
+  34s cycle, so the widget repaints on a timer; rebuilding the plate gradient
+  and its cast shadow every tick would be pure waste.
+- **The light theme is a derivative, not a token swap.** The same depth logic
+  survives: the ambient wash becomes a cast shadow, rules go to N200, and the
+  one red thing stays red.
+
+`PlatePanel` is the container variant — same plate, but the inside is a Qt
+layout instead of a `paint_stage()`. The pit-front panel needs it, because it
+hosts a live `QWebEngineView` and a finger-dragged scroll area.
+
+### Putting a screen on a monitor (`app/display.py`)
+
+**A window that is not filling a monitor is not showing the design.** Every
+audience surface is drawn at a fixed size and scaled by a contain fit against
+it, so a half-size window is a proportionally smaller copy of the design rather
+than the design. The power toggles used to call `show()` and nothing else, which
+left every screen at a size hint on whichever display the window manager chose.
+
+Two settings per screen, in `config`:
+
+| key | meaning |
+|---|---|
+| `display` | monitor index; an unplugged one falls back to the primary rather than stranding the window off-canvas |
+| `fullscreen` | fill that monitor, or float as a windowed 16:9 (portrait 3:4 for the pit-front panel) |
+
+Powering a screen **off destroys the window**, so `place()` is called on a
+freshly built one every time it comes back — there is no hidden window to
+restore.
+
+**`default_fullscreen()` is `len(screens) > 1`** — and that is load bearing. On
+a single-display machine a full-screen audience window covers the control panel,
+and the control panel is the only way to turn it off again. One monitor means
+windowed, always.
+
+`place()` moves the window onto the target monitor **before** going full-screen;
+the other order makes Qt fill whichever monitor it was already on.
+
+**Never call `showFullScreen()` on an audience screen.** Qt's version ends with
+an unconditional `activateWindow()`, and those two windows carry
+`WindowDoesNotAcceptFocus` on purpose (see the touch section), so every power-on
+printed `requestActivate() called for QWidgetWindow(…) which has
+Qt::WindowDoesNotAcceptFocus set.` Both halves are right — a panel must never
+take the keyboard from the operator, and it must fill its monitor — so
+`display._show_fullscreen()` does the window-state change and leaves the
+activation out. `touch._focus_on_press` carries the same guard.
+
+### Three painting traps this codebase has already hit
+
+- **`R_PILL` is 999 — a sentinel, not a measurement.** `drawRoundedRect` clamps
+  the x and y radii *independently* to half the width and half the height, so
+  passing 999 for both turns a 200×56 chip into an **ellipse**. A pill is half
+  the *height* on both axes; `brand_widgets._radius()` is the clamp, and every
+  `RoundedFrame` / `RoundedButton` goes through it.
+- **A widget may not carry another size's geometry.** `ToggleSwitch` painted a
+  literal 52-wide track and a 24px thumb; the moment it was resized to fit the
+  220px sidebar it drew both larger than itself and Qt clipped them. Everything
+  is derived from `self.rect()` now.
+- **A resting visual state must be derived, not remembered.** The same switch
+  moved its thumb only from the `toggled` signal, and callers set it with
+  `blockSignals()` — so it drew a green "on" track with the thumb still on the
+  left. The animation is the *transition*; where the thumb sits is a function of
+  `isChecked()`, resolved in `paintEvent`.
+
 ### Theming
 
 Both stylesheets are rendered from one QSS template in `app/theme.py`, fed by the `DARK` / `LIGHT` palette bundles in `app/brand.py` — change a token there and both themes update. `theme.dark_qss()` is set app-wide at startup; light theme is applied per-window via `app.theme.apply_theme(window, "light")`. Clearing the window stylesheet (setting `""`) falls back to the app-level dark QSS.
 
 Accent colors come from the active team's `primary_color` field and are applied inline via `setStyleSheet()` wherever the team color is needed dynamically.
+
+**Where the red is allowed to go.** The playbook's budget is one red thing per
+surface, and on a dark ground it is a *filled shape*, never a letterform — red
+on carbon is 2.8:1 and forbidden for type. Four rules follow from that, and all
+four were violations before:
+
+- `RoundedButton`'s **`secondary` variant is a neutral outline**, not a red one.
+  A panel with a dozen ordinary controls had a dozen red things. `primary` keeps
+  the accent and there is one of those per panel.
+- **Sliders, progress bars and list selection fill with white on dark / carbon
+  on light**, not red.
+- **`eyebrow()` and `QLabel#section_header` are muted**, not red.
+- On the control screen, **red means the installation is in an exceptional
+  state**: Judges or Lunch active. Standard active, the brand chip and the
+  selected sidebar row are all **white**.
 
 ### Fonts
 
@@ -211,11 +349,64 @@ Windows pit machine.
 
 Edit `app/teams.py` — add an entry to the `TEAMS` dict. The control screen combo box picks it up automatically.
 
+### The audience rotation (`app/slides.py`, `app/widgets/slide_panel.py`)
+
+**One shell, four archetypes, chosen by the shape of the content** — never by
+slide number. `Slide` in `app/slides.py` carries the kind:
+
+| kind | what it is | where the one red goes |
+|---|---|---|
+| `statement` | authored headline + sentence | the **Trace** |
+| `figure` | a real number out of a robot log | the **FROM LOG** seal |
+| `roster` | a grid of sponsor marks | **nowhere** — the marks are the colour |
+| `board` | the live diagnostics board | a latched fault, or nothing |
+
+A surface is allowed zero red; it is never allowed two. That is why `roster`
+spends none: a sponsor mark brings its own colour and would be the second.
+
+**The stage is painted, not laid out.** The panel was a `QStackedWidget` of
+`QLabel`s, which is why it could only ever be one template and why the
+transition could only be an instant swap. Two things Qt's layout system cannot
+express are load bearing here: a 140px headline sized from the live widget
+height, and `line-height: 1.0` at that size — `QPainter.drawText()` spaces lines
+by the font's own leading, which is far looser, so the headline that fits in the
+design runs off the stage. Every multi-line block goes through
+`Chassis.draw_wrapped()`, which uses `QTextLayout` for exactly that reason.
+
+**The transition** is a `QVariantAnimation` over a painted opacity/offset pair:
+260ms out (opacity→0, y −22, InCubic), 80ms of empty stage, 420ms in
+(opacity→1, y +26→0, OutCubic). It runs 1240ms even though the slide has settled
+at 760ms, because the Trace is still drawing on behind it over 900ms OutExpo.
+
+**A and B share the chassis and differ by one thing:** the ledger reads
+`ROTATION A` / `ROTATION B` and the rail sits left on A, right on B.
+
+**The dwell rail reads `rotation.progress()`** — the live 45s timer — rather
+than counting for itself. Two clocks for one dwell is exactly the kind of thing
+that drifts apart and nobody notices.
+
+**The rail is a child widget (`chassis.SmoothRail`) on its own 50ms tick.**
+Repainting a full-screen painted stage — a 140px headline, its layout, the
+plate — fast enough for a rail to look smooth is absurd, so the panel keeps its
+slow tick and the rail keeps its own. At 45s across ~1500px the panel's 500ms
+tick stepped the fill **16px at a time**, which reads as a stutter rather than
+as time passing; 50ms makes it 1.7px. It has no background of its own, so it
+asks the chassis for the plate beneath it (`paint_ground_under`) — the ground is
+already a cached pixmap, and a flat fill would show a seam across the gradient.
+Its geometry is set from `resizeEvent`, never from inside a paint event.
+
+**`Slide.figure` is fitted, not fixed.** 260px is the design's *maximum*; a real
+log yields figures from `14.2` to `62,118,775`, and a ten-glyph numeral set at
+260 runs straight out of the plate. `_fit_figure()` scales the numeral and its
+unit together so their relationship survives.
+
 ### Standard slide picker
 
 **Control Screen → Presentation A/B → Standard Slides** lists every slide in
 that screen's rotation (authored + fun facts), highlights the live one, and
-jumps on click. Prev / Next / First / Reload underneath.
+jumps on click. Prev / Next / First / Reload underneath. The live row carries a
+dwell rail reading the same `rotation.progress()` the audience screen shows, so
+the operator can see where the rotation is without looking up at the panel.
 
 Jumps travel through `config.set(screen_id, "slide_index", n)` — the control
 screen never holds a reference to a presentation window, same as every other
@@ -292,11 +483,24 @@ the six minutes before the next match.
 | `app/widgets/robot_info_overlay.py` | Screen B's board — *what, on which motor?* |
 
 **Split by question, not by column count.** A is glanceable from ten feet: a
-headline that takes the worst status on the board, a grid of vitals, a subsystem
-strip. B is the board you walk up to when A has gone amber: the fault list by
-name, the per-motor table with CAN ids, and which log it all came from. Both
-widgets exist on both screens; `BOARD_CONTENT` on each subclass says which one
-joins that screen's rotation, and either can still be pinned on either screen.
+150px status block, a 108px headline naming the mechanism, four vitals, a
+subsystem strip. B is the board you walk up to when A has gone amber: the fault
+list by name, the per-motor table with CAN ids, and which log it all came from.
+Both widgets exist on both screens; `BOARD_CONTENT` on each subclass says which
+one joins that screen's rotation, and either can still be pinned on either screen.
+
+**Both sit on the shared chassis**, same as the slide rotation — the plate, the
+header band, the footer ledger. Two overhead panels showing two different visual
+languages in the same glance is the failure the chassis exists to prevent.
+
+**Each vital carries its shape across the match**, bled to the tile edge
+(`diagnostics.shape()`). A sag that dipped once reads differently from one that
+sat low all match — that is the difference between "carry on" and "change the
+battery", and a single number cannot say it. It reads `samples.sample_1s`, never
+`sample`: the per-second rollup is what it is for, and a full-resolution read of
+a nine-minute log to draw a 52-point line would be several hundred thousand rows
+for something two centimetres wide. The aggregate matches the tile's own figure,
+so the number and the line always agree.
 
 **Three ways to get a board on screen**, all through the same widget:
 
@@ -318,7 +522,14 @@ call it, and if they ever disagree a click lands on the wrong slide.
 [`DATABASE.md`](DATABASE.md) for the reasoning and the three published figures
 that *are* used. **Red on these boards means a latched fault and nothing else** —
 when the robot is clean there is no red on the board at all, which is where the
-brand's one-focal-red budget goes.
+brand's one-focal-red budget goes. When a fault does latch, red marks **the
+fault and its origin only**: the count block, the offending tile's dot and
+trace, and the offending subsystem. A second unrelated fault raises the count
+to `2`; it does not paint a second region.
+
+**Motion, almost none.** One 6s breathing dot in the header saying the feed is
+live. A fault arriving does *not* flash. Latched means latched — the board never
+animates to get attention twice.
 
 **Neither board computes anything.** If a figure is wrong, it is wrong in
 `diagnostics.py`.
@@ -336,14 +547,69 @@ import or a delete. That signal is also what finally wires `reload_slides()`,
 which existed and was documented but had never been called — so importing a log
 now regenerates the fun-fact slides too, with no power-cycle.
 
+### The pit-front panel (`app/widgets/interactive_board.py`)
+
+1080×1920 portrait, 32" at standing height, touched by strangers. **The tabs are
+gone.** Everything the board has to say is on one surface at one glance, stacked
+as an interpretive panel rather than paged as an app:
+
+    identity  →  CAD  →  Act 472  →  reach  →  programs  →  sponsors
+
+each on a 2px rule. **The order is the argument:** this is the robot, this is
+what the team changed, this is how far it reached. Tapping only ever *deepens*
+what is already visible; it never navigates away from it.
+
+- **The CAD is not a page.** It is the top 648px of the same panel — always
+  live, always orbitable, subsystem chips on its own floor. Focusing a subsystem
+  changes the caption under it and the pit LEDs; nothing else on the board moves.
+- **There is one CAD viewer and it moves.** A `QWebEngineView` is a whole
+  Chromium render process, so `ProjectScreen` *lends* its viewer to the board
+  (`attach_cad`) and takes it back for the full-screen `content="cad"` face
+  (`detach_cad`). Never build a second one.
+- **The red, spent once:** the Act 472 plate, a filled field with white type.
+  Chips, stats and cards stay carbon and white.
+- **About, collapsed to a line.** The About tab was a paragraph nobody standing
+  up will read; the five E's are now one mono rail under the wordmark.
+- **Detail rises, never replaces.** A tapped card raises `_DetailSheet` over the
+  lower two thirds — 340ms OutCubic — and **the CAD stays visible above it**. A
+  visitor who tapped a card has not asked to stop looking at the robot.
+- **Every card is still reachable.** The comp shows four programmes at rest; the
+  grid holds all of them and scrolls, because they are real programmes the team
+  runs and a kiosk that hides them is lying by omission.
+- **Type scales from the panel's own width** (`_apply_scale`), not from a fixed
+  px, and not from height — the design is drawn against the 1080 *width*.
+
+### Control screen re-execution
+
+Never seen by a visitor, so beauty here is **clarity under a six-minute clock**.
+The architecture was already right — top bar, 220px sidebar, settings column —
+so this is a re-execution, not a re-plan.
+
+- **Three kinds of interface, same tokens.** Settings are a **ruled list**
+  (`SettingRow`: label left, control right, 64px floor, 1px close). The EQ is an
+  **instrument**. The CAN table is a **form**. `divider()` is the 2px *section*
+  rule; a row closes with 1px. Two weights is what makes the grouping visible
+  without reading.
+- **`PanelHeader` opens every panel the same way** — eyebrow naming the kind,
+  the name at 30px, one muted line of orientation, then the section rule.
+- **The brand chip is the admin door and now says so**: a mono `HOLD` hairline
+  under it, enough for an operator who has been told and invisible to a visitor.
+- **Fingers, standing.** Mode buttons are 124×46, nav and setting rows 56–64px,
+  and nothing is smaller than a thumb.
+- **A `QWidget` ignores a stylesheet border unless `WA_StyledBackground` is
+  set** — the rule simply never appears, silently. `SettingRow` sets it.
+- **The app-wide `QPushButton` rule carries 16px of horizontal padding**, which
+  ate the end of every screen name in the 220px sidebar. `ScreenCard` resets it.
+
 ### Judges slides
 
 Drop numbered PNG/JPG files into `assets/judges_slides/` (e.g. `01_intro.png`, `02_robot.png`). Files are sorted alphabetically. Click "Reload" in the control screen to rescan.
 
 ### LED strips (`app/leds/`)
 
-USB serial to an Arduino Uno/Nano driving WS2812B. **The firmware owns the
-animation loop** — the app sends short commands, never pixel frames. This is not
+USB serial to an Arduino Uno/Nano driving **SK6812-class RGBW** strips.
+**The firmware owns the animation loop** — the app sends short commands, never
+pixel frames. This is not
 a style preference: on AVR, `FastLED.show()` disables interrupts for the whole
 strip write (~30µs/pixel, so ~9ms at 300 LEDs) and drops incoming serial bytes.
 Streaming corrupts, and worse the longer the strip. Commands also mean the pit
@@ -355,11 +621,52 @@ stays lit if this app crashes.
 | `link.py` | `SerialLink` QThread: VID/PID discovery, HELLO handshake, write queue, 1Hz heartbeat, reconnect w/ backoff. `MockLink` when `PIT_LEDS_FAKE=1` |
 | `effects.py` | Named presets; `MODE_PRESETS` maps display mode → preset |
 | `service.py` | `_LEDService` singleton — owns intent, replays it on reconnect |
+| `palette.py` | Brand hex → the saturated primary actually sent to the strips |
 | `firmware/pit_leds/pit_leds.ino` | The controller. Pins, per-unit pixel counts, strip placement and the switch pins are all in the config block at the top |
+| `firmware/pit_probe/pit_probe.ino` | Diagnostic sketch: finds which pin a run is on, how long it is, and its pixel format. Not the controller — flash `pit_leds` back afterwards |
+| `tools/led_probe.py` | Drives the probe. `id` / `ruler` / `solo` / `flood` / `rgbwraw` |
+| `tools/led_color_check.py` | Self-paced colour check against the real controller |
 
-**Three strips, one axis.** The pit is three units — LEFT, CENTRE, RIGHT — on
-three pins, driven from one `leds[]` array. Every animation is a function of a
-pixel's **distance from the true centre of the pit**, not from its own strip's
+**The strips are RGBW — four bytes per pixel, channel order RGBW.** This was
+measured on the real pit (2026-09-03), and getting it wrong is the single
+nastiest failure mode in this whole subsystem: drive an RGBW strip with 3-byte
+pixels and your groups slide against its 4-byte ones, realigning only every 12
+bytes, so a **solid colour comes back as a 3-pixel repeating green/white/blue
+pattern**. Black still works perfectly (zero bytes are zero at any alignment),
+so it reads as "the strip is half broken", not "wrong pixel format".
+
+**FastLED's own `setRgbw()` cannot be used on AVR** — it allocates a 4/3-size
+buffer on every show and there is no room. `packAndShow()` packs the bytes by
+hand into a shared `wire` buffer instead: three RGBW pixels occupy exactly four
+CRGB slots, so the stream is exact with no padding. The controllers are declared
+`RGB` (not `GRB`) so those bytes are emitted verbatim, brightness is applied
+during packing, and `showLeds(255)` is deliberate — any scaling FastLED did
+would corrupt bytes it thinks are colours but the strip reads as pixel data.
+For the same reason `setCorrection()`, `setDither()` and
+`setMaxPowerInVoltsAndMilliamps()` are all off; budget power with
+`MAX_BRIGHTNESS` instead.
+
+**Colours are snapped to saturated primaries before they hit the wire**
+(`palette.snap`). RGBW pixels render a mixed brand hex washed out — the team red
+`#C82027` is only 13% green and 15% blue and came out visibly **pink**, while
+pure `(200,0,0)` came out correctly red. Per-channel gain correction was tried
+and abandoned; it needs re-tuning per strip, per batch, per colour. The brand
+value is unchanged everywhere else — `leds.color` still reports the true hex and
+every screen still uses it. **Do not send brand hexes straight to the wire.**
+
+**Two channels, one axis.** The pit is three *units* but only **two electrical
+channels**, and that is a fact about the wiring, not a simplification: **pin 6
+feeds LEFT and RIGHT through a Y-split** (76 px each) and **pin 5 feeds CENTRE**
+(93 px). `LEFT_PIN 6` / `RIGHT_PIN 6` in the original sketch was never a typo —
+it described the splitter. Left and right therefore **always mirror and can
+never show different content**, which is what the centre-out animations want
+anyway: a left pixel and its mirrored right pixel are the same distance from the
+middle of the pit and should be the same colour. The sides are addressed by
+*distance* from centre (positive origin, `dir -1`) rather than a signed
+position, because one channel is at `+d` and `-d` at once.
+
+Every animation is a function of a pixel's
+**distance from the true centre of the pit**, not from its own strip's
 pixel 0, so a breathe blooms outward from the middle and reaches both far ends
 together. Each strip declares `origin` (where its pixel 0 sits, in pixel-widths
 from true centre) and `dir` (+1/-1) in the `strips[]` table; gaps between units,
@@ -368,26 +675,61 @@ are held in **half-pixel units** internally — an even-length strip has no pixe
 its own midpoint, and whole-pixel maths puts every "symmetric" effect half a pixel
 off on one side.
 
-`SET_COLOR`'s segment byte is now live: `0`/`1`/`2` are LEFT/CENTRE/RIGHT, `0xFF`
-all three. `INFO` reports three segments; the app already parses that and needs no
-change (it still sends `0xFF` everywhere).
+**Measured orientation — do not re-guess these.** Both came out wrong on the
+first build and only a *chase* reveals either; a breathe or a solid looks
+identical either way, so "the breathe looks fine" proves nothing about them.
 
-**Manual three-way switch.** An SPDT on-off-on wired to two pull-up inputs
-overrides the host: one throw forces all strips to Breakaway red, centre blanks
+- **The pit's centre point is pixel 0 of the CENTRE run** (the back end), so
+  that run has `origin 0`, not `-(count/2)`. It runs *away* from the middle of
+  the pit rather than spanning it. With `-(count/2)` the chase started halfway
+  along the strip and expanded both ways.
+- **`SIDES_INDEX0_OUTER` is 0** — a side run's pixel 0 is at its *inner* end,
+  nearest the centre. With this wrong the sides swept outside-in while the
+  centre swept middle-out, and the two halves of the pit visibly disagreed.
+
+`SET_COLOR`'s segment byte: `0` is CENTRE, `1` is SIDES, `0xFF` both. `INFO`
+reports **two** segments and 169 px; the app reads the count rather than
+assuming, so it needed no change (it still sends `0xFF` everywhere).
+
+**The manual switch is compiled out** (`HAS_MANUAL_SWITCH 0`) because none is
+wired. This matters: both inputs sit HIGH on their pull-ups when nothing is
+attached, which is indistinguishable from the centre detent — so a board with
+no switch reads OFF, boots dark, and ignores every host command. There is no
+way to tell the two apart electrically; it has to be declared. Set it to 1 when
+the SPDT goes in.
+
+**How the switch behaves once fitted.** An SPDT on-off-on wired to two pull-up
+inputs overrides the host: one throw forces all strips to red, centre blanks
 them, the other throw hands control back to the app. Serial keeps being read and
 ACKed in **every** position, and commands still land in `state` — so flicking back
 to host resumes on what the app has been asking for, with no round trip. The truth
 table lives only in `switchPosition()`.
 
-**SRAM ceiling:** the ATmega328P has 2KB and FastLED uses 3 bytes/pixel. The
-number that matters is the **total across all three strips**: 150px = 450B (fine),
-300px = 900B (the practical limit), 500px = 1500B (too tight — move to an ESP32).
-If you change the counts, nothing in the app needs editing: `HELLO` reports the
-geometry and the app adapts.
+**SRAM ceiling:** the ATmega328P has 2KB. RGBW costs a pixel buffer (3B/px) *and*
+a wire buffer (4B/px for the longest channel), so the current 169 px build sits
+at ~1560B with 488B free. Roughly 250 px total is the practical limit here;
+past that, move to an ESP32. If you change the counts, nothing in the app needs
+editing — `HELLO` reports the geometry and the app adapts.
 
-**`State` changed shape** when colour went per-strip, so `EEPROM_MAGIC` moved
-`0xB9` → `0xBA`. Move it again on any further change: an old saved struct read
-into a new layout garbles every field after it rather than failing.
+**A static frame must not keep re-clocking the strips.** Each `show()` holds
+interrupts off for milliseconds and the AVR's UART keeps only *two* bytes
+without its ISR, so any frame arriving mid-write is destroyed. At ~7ms of
+blackout per 16ms frame the HELLO handshake failed on almost every attempt —
+the board looked dead, exactly like the no-firmware case. The `dirty` flag
+fixes it: static modes (SOLID, OFF) draw once and then stop touching the
+strips, and `showAll()` drains the port between the two channel writes. **Keep
+that property** — anything that shows unconditionally every frame breaks the
+link, silently and intermittently.
+
+**`State` changed shape** twice — per-strip colour (`0xB9` → `0xBA`) and then
+three strips down to two (`0xBA` → `0xBB`). Move `EEPROM_MAGIC` again on any
+further change: an old saved struct read into a new layout garbles every field
+after it rather than failing.
+
+**Known bug, not yet fixed:** `SET_PIXELS` writes into `leds[]` and then
+`render()` overwrites it on the very next frame, because the op sets
+`state.mode = MODE_SOLID` and SOLID repaints every pixel from `state`. The op
+has therefore never worked. Nothing in the app sends it.
 
 Develop without hardware: `PIT_LEDS_FAKE=1 uv run main.py`.
 
@@ -461,6 +803,39 @@ docstring in `app/admin.py` says so at length; keep that framing honest.
 **Testing gated widgets:** use `w.isVisibleTo(panel)`, **not** `w.isVisible()`.
 The latter is False whenever any ancestor is hidden (e.g. a non-selected settings
 panel), which tells you nothing about the gate.
+
+### The equaliser (`app/widgets/eq_field.py`)
+
+**Ten sliders in a row is a list of ten numbers, and nobody tuning a room
+thinks in ten numbers.** They think in a shape — bottom pulled down, mud
+scooped, presence lifted — so the ten bands are drawn as the response curve
+they describe: a dashed 0 dB rule, a rail per band, one continuous white line
+through ten hollow handles, then the gain readout and the Hz row. The numbers
+are unchanged; only how they are shown is.
+
+- **±20 dB spans the full field**, so 0 dB is the centre and the dashed rule is
+  what the curve is read against.
+- **Press anywhere and the nearest band's handle goes there**, then follows the
+  finger and *stays on that band* — re-picking the band from x on every move
+  smears a drag across its neighbours. This panel is touched, so the whole
+  field is the target rather than ten 13px handles.
+- **Presets are chips, not a combo**: there are five, they are what an operator
+  reaches for, and a dropdown hides four of them behind a click mid-cycle.
+  `eq.all_presets()` returns the built-ins in **authored** order — Flat to judge
+  the room, then Pit Default, then the three exceptions — because sorting them
+  by name put "Crowded" first, which is nobody's starting point.
+- The preamp control lives **in the card header with its readout**, not in a row
+  of its own; two "Preamp −2" labels is the same value said twice.
+
+`SelectableChip` (`brand_widgets`) is the shared "one of many is chosen" mark —
+white fill, carbon type. Mode buttons, CAD subsystem chips and EQ presets are
+all the same object, and selected-is-red would put four red things on a panel
+allowed one. `ModeButton` is the single exception: Judges and Lunch active *are*
+red, because those are the exceptional states the budget exists for.
+
+**Mode buttons follow `config.mode_changed`, not the click.** They used to be
+updated only by the handler that set the mode, so anything else that moved it
+left the top bar claiming a mode that was no longer live.
 
 ### Media
 
@@ -580,9 +955,12 @@ rather than errors: the non-unique `(series_id, t_ms)` key, millisecond (not
 microsecond) timestamps, change-only samples needing zero-order-hold
 integration, and motor-shaft (not wheel) units on the drive motors.
 
-**Fun-fact slides.** `fun_facts.slides()` turns the imported log into
-(title, body) pairs that `PresentationScreen._rotation_slides()` appends to each
-screen's authored `SLIDES`. Two rules: **every number is real** (nothing invented
+**Fun-fact slides.** `fun_facts.slides()` turns the imported log into `Slide`
+objects that `PresentationScreen.rotation_slides()` appends to each screen's
+authored `SLIDES`. Every one is the **Figure** archetype, carrying `figure` and
+`unit` separately from its title rather than leaving the panel to parse a number
+back out of a string, plus an eyebrow naming what was measured — a visitor
+reading "187" needs "peak current draw" before the joke lands. Two rules: **every number is real** (nothing invented
 or rounded for effect — a visitor who asks "is that true?" gets a yes), and the
 jokes are at our own expense. Returns `[]` with no import, so the rotation just
 omits them. Facts are read at construction; `reload_slides()` picks up a new

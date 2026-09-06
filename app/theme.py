@@ -37,9 +37,11 @@ def _qss(p: dict) -> str:
     }}
 
     /* ── Type roles ─────────────────────────────────────────────────────── */
-    /* Eyebrow — Chakra Petch, tracked caps, red */
+    /* Eyebrows are muted, never red: red on carbon is 2.8:1 and forbidden for
+       type, so on every dark surface the one red thing is a filled shape and
+       never a letterform. */
     QLabel#section_header {{
-        color: {brand.RED};
+        color: {p["muted"]};
         font-family: "{brand.FONT_DISPLAY}";
         font-size: 12px; font-weight: 600; letter-spacing: 2px;
     }}
@@ -59,7 +61,8 @@ def _qss(p: dict) -> str:
     QTableWidget {{
         background-color: {p["surface"]}; border: none;
         gridline-color: {p["line"]};
-        selection-background-color: {brand.RED}; selection-color: {brand.WHITE};
+        selection-background-color: {p["surface2"]};
+        selection-color: {p["title"]};
     }}
     QTableWidget::item {{ padding: 6px 10px; border: none; }}
     QTableWidget::item:alternate {{ background-color: {p["surface2"]}; }}
@@ -124,7 +127,8 @@ def _qss(p: dict) -> str:
     QComboBox::drop-down {{ border: none; width: 22px; }}
     QComboBox QAbstractItemView {{
         background-color: {p["surface"]}; border: 1px solid {p["line"]};
-        selection-background-color: {brand.RED}; selection-color: {brand.WHITE};
+        selection-background-color: {p["surface2"]};
+        selection-color: {p["title"]};
         outline: none;
     }}
 
@@ -161,17 +165,21 @@ def _qss(p: dict) -> str:
     }}
 
     /* ── Sliders (LED brightness/speed, volume, EQ bands) ───────────────── */
+    /* The filled half is white on dark / carbon on light, NOT red. A panel
+       carrying six sliders would otherwise spend the whole red budget on
+       "here are some sliders" — red on this surface is reserved for the one
+       exceptional state (see ControlScreen's ModeButton). */
     QSlider::groove:horizontal {{
         height: 4px; background: {p["line"]}; border-radius: 2px;
     }}
     QSlider::sub-page:horizontal {{
-        background: {brand.RED}; border-radius: 2px;
+        background: {p["title"]}; border-radius: 2px;
     }}
     QSlider::handle:horizontal {{
-        background: {p["surface"]}; border: 2px solid {brand.RED};
+        background: {p["title"]}; border: 2px solid {p["title"]};
         width: 13px; height: 13px; margin: -6px 0; border-radius: 8px;
     }}
-    QSlider::handle:horizontal:hover {{ background: {brand.RED}; }}
+    QSlider::handle:horizontal:hover {{ border-color: {p["muted"]}; }}
 
     QSlider::groove:vertical {{
         width: 4px; background: {p["line"]}; border-radius: 2px;
@@ -183,10 +191,10 @@ def _qss(p: dict) -> str:
         background: {p["muted"]}; border-radius: 2px;
     }}
     QSlider::handle:vertical {{
-        background: {p["surface"]}; border: 2px solid {brand.RED};
+        background: {p["title"]}; border: 2px solid {p["title"]};
         width: 13px; height: 13px; margin: 0 -6px; border-radius: 8px;
     }}
-    QSlider::handle:vertical:hover {{ background: {brand.RED}; }}
+    QSlider::handle:vertical:hover {{ border-color: {p["muted"]}; }}
     QSlider:disabled::handle:horizontal, QSlider:disabled::handle:vertical {{
         border-color: {p["faint"]};
     }}
@@ -200,15 +208,17 @@ def _qss(p: dict) -> str:
         padding: 7px 9px; border-radius: 6px; color: {p["ink"]};
     }}
     QListWidget::item:hover {{ background: {p["surface2"]}; }}
+    /* A selected row is raised, not red: on a 149-track library the highlight
+       is navigation, not the one focal thing on the surface. */
     QListWidget::item:selected {{
-        background: {brand.RED}; color: {brand.WHITE};
+        background: {p["surface2"]}; color: {p["title"]};
     }}
 
     QProgressBar {{
         background: {p["line"]}; border: none; border-radius: 2px;
         height: 4px; text-align: center; color: transparent;
     }}
-    QProgressBar::chunk {{ background: {brand.RED}; border-radius: 2px; }}
+    QProgressBar::chunk {{ background: {p["title"]}; border-radius: 2px; }}
 
     /* ── Dialogs ────────────────────────────────────────────────────────── */
     QDialog, QMessageBox {{ background-color: {p["surface"]}; }}

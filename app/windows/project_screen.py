@@ -1,15 +1,24 @@
 """
-Project Screen — interactive touch display.
+Project Screen — the pit-front touch panel.
 
-Hosts two switchable views, chosen from the control panel:
-  • CAD viewer   — 3D robot model, free orbit + tap-to-isolate subsystems
-  • Impact board — tabbed outreach / awards kiosk board (wireframe)
+1080×1920 portrait at standing height. Two faces, chosen from the control
+panel by the per-screen `content` setting:
 
-The active view is driven by the per-screen "content" setting
-("cad" | "board"). Both honor team + theme commands.
+  • `"board"` (default) — the interpretive panel, with the CAD **inside** it as
+    its top band. This is the visitor-facing face: the robot, the law, the
+    numbers, the programs and the sponsors on one surface, no tabs.
+  • `"cad"` — the same viewer alone, filling the panel. Kept for judges, and
+    for anyone who wants the robot and nothing else.
+
+**There is one CAD viewer, and it moves between them.** A `QWebEngineView` is a
+whole Chromium render process; running a second one so two pages can each own a
+copy of the same robot is not a trade worth making. `InteractiveBoard.attach_cad()`
+takes it, `detach_cad()` hands it back, and re-parenting is all Qt needs.
 """
 
-from PyQt6.QtWidgets import QMainWindow, QStackedWidget
+from PyQt6.QtWidgets import (
+    QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
+)
 
 from app.cad_assets import cad_assets
 from app.config import config
@@ -42,14 +51,17 @@ class ProjectScreen(QMainWindow):
         self._viewer.set_accent(config.active_team.primary_color)
         self._board.apply_theme(theme)
         apply_theme(self, theme)
-        self._apply_content(config.get(SCREEN_ID, "content", "cad"))
+        self._apply_content(config.get(SCREEN_ID, "content", "board"))
 
     def _build_ui(self):
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
         self._viewer = CADViewerWidget()
-        self._stack.addWidget(self._viewer)     # 0
+        self._cad_page = QWidget()
+        page_lay = QVBoxLayout(self._cad_page)
+        page_lay.setContentsMargins(0, 0, 0, 0)
+        self._stack.addWidget(self._cad_page)    # 0
 
         self._board = InteractiveBoard()
         self._stack.addWidget(self._board)       # 1
@@ -59,9 +71,15 @@ class ProjectScreen(QMainWindow):
         self._viewer.set_mode("interactive")
 
     def _apply_content(self, content: str):
-        self._stack.setCurrentIndex(
-            _PAGE_BOARD if content == "board" else _PAGE_CAD
-        )
+        """Move the one viewer to whichever face is going on screen."""
+        if content == "cad":
+            self._board.detach_cad()
+            self._cad_page.layout().addWidget(self._viewer)
+            self._stack.setCurrentIndex(_PAGE_CAD)
+        else:
+            self._cad_page.layout().removeWidget(self._viewer)
+            self._board.attach_cad(self._viewer)
+            self._stack.setCurrentIndex(_PAGE_BOARD)
 
     def _on_team_changed(self, team):
         self._viewer.set_accent(team.primary_color)

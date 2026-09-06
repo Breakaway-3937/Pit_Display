@@ -44,9 +44,11 @@ import sqlite3
 from pathlib import Path
 from typing import Callable
 
+from app import paths
 from app.lazy_proxy import LazyProxy
 
-_DB_PATH = Path(__file__).parent.parent.parent / "data" / "pit_display.db"
+# Writable, per-machine — never inside the app bundle. See app/paths.py.
+_DB_PATH = paths.data("data", "pit_display.db")
 
 # Bulk telemetry lives here, attached as the `samples` schema. See the module
 # docstring — this file is disposable and rebuilt on demand.

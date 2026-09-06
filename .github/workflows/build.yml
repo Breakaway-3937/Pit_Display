@@ -1,0 +1,82 @@
+name: Build app
+
+# **This is how the Windows build happens.** PyInstaller does not
+# cross-compile: a Windows executable has to be produced on Windows, and the
+# pit machine is Windows while nothing this is developed on is. Push a tag or
+# run this workflow by hand and collect the artifact.
+#
+# The CAD model is not in git (it is ~340 MB), so CI builds `--no-model`. The
+# app ships without a robot and the crew uploads one from
+# Control → Project → CAD Viewer Config on first run. To ship *with* the model,
+# build locally on a machine that has it: `uv run tools/build_app.py --zip`.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      run_self_check:
+        description: "Run --self-check on the built app"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows
+          - os: macos-latest
+            label: macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group build
+
+      # The seed database is created by the app on first run and is not in git.
+      # `--self-check` builds it, which also proves the migrations apply to an
+      # empty file — the state every fresh install starts from.
+      - name: Create the seed database
+        run: uv run main.py --self-check
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PIT_LEDS_FAKE: "1"
+
+      - name: Build
+        run: uv run tools/build_app.py --no-model --zip
+
+      # Runs the *packaged* app, not the source. This is what catches the
+      # failures that only exist in a bundle — a missing QtWebEngineProcess, an
+      # unwritable data directory, an asset that never got collected.
+      - name: Self-check the packaged app (Windows)
+        if: runner.os == 'Windows' && inputs.run_self_check != false
+        run: |
+          & "dist\Breakaway Pit Display\Breakaway Pit Display.exe" --self-check
+        shell: pwsh
+
+      - name: Self-check the packaged app (macOS)
+        if: runner.os == 'macOS' && inputs.run_self_check != false
+        run: |
+          "dist/Breakaway Pit Display/Breakaway Pit Display" --self-check
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pit-display-${{ matrix.label }}
+          path: dist/Breakaway Pit Display.zip
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0   # the zip is already compressed

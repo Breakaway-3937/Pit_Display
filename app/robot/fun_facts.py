@@ -19,6 +19,7 @@ does not include them rather than showing empty frames.
 """
 
 from app.db import db
+from app.slides import Slide, FIGURE
 
 # A ream of 20 lb paper is about 0.1 mm per sheet; ~3,000 characters fits on a
 # printed page. Both are approximations and the slide says "about".
@@ -34,8 +35,16 @@ def _fmt(n: float, places: int = 0) -> str:
     return f"{n:,.{places}f}"
 
 
-def slides() -> list[tuple[str, str]]:
-    """(title, body) pairs for SlidePanel. Empty when nothing is imported."""
+def slides() -> list[Slide]:
+    """
+    Figure slides for the rotation. Empty when nothing is imported.
+
+    Every one of these is the **Figure** archetype: the numeral is the headline
+    and the sentence is the caption, so each carries `figure` and `unit`
+    separately from its title rather than leaving the panel to parse a number
+    back out of a string. The eyebrow names what was measured — a visitor
+    reading "187" needs "peak current draw" before the joke lands.
+    """
     session = db.fetchone(
         """SELECT raw_rows, stored_rows, duration_s, source_bytes
            FROM log_session WHERE raw_rows IS NOT NULL
@@ -47,35 +56,41 @@ def slides() -> list[tuple[str, str]]:
     stored = session["stored_rows"] or 0
     dur = session["duration_s"] or 0
     src_bytes = session["source_bytes"] or 0
-    out: list[tuple[str, str]] = []
+    out: list[Slide] = []
 
     # ── How much the robot says about itself ─────────────────────────────
     if dur > 0:
         per_sec = raw / dur
         multiples = raw / _ARKANSAS_POP
-        out.append((
-            f"{_fmt(raw)} Numbers",
-            f"Measurements our robot recorded in {dur/60:.1f} minutes — "
-            f"about {_fmt(per_sec)} every second. More numbers than there are "
-            f"people in Arkansas, roughly {multiples:.0f} times over."
+        out.append(Slide(
+            kind=FIGURE, eyebrow="Measurements taken",
+            figure=_fmt(raw), unit="values",
+            title=f"{_fmt(raw)} Numbers",
+            body=f"Measurements our robot recorded in {dur/60:.1f} minutes — "
+                 f"about {_fmt(per_sec)} every second. More numbers than there "
+                 f"are people in Arkansas, roughly {multiples:.0f} times over."
         ))
 
     if src_bytes > 0:
         pages = src_bytes / _CHARS_PER_PAGE
         metres = pages * _MM_PER_PAGE / 1000
-        out.append((
-            "A Very Tall Stack",
-            f"Printed, one log would run about {_fmt(pages)} pages — a stack "
-            f"roughly {metres:.0f} metres tall. Taller than the Statue of "
-            f"Liberty. We keep it on a laptop."
+        out.append(Slide(
+            kind=FIGURE, eyebrow="Printed out",
+            figure=_fmt(pages), unit="pages",
+            title="A Very Tall Stack",
+            body=f"Printed, one log would run about {_fmt(pages)} pages — a "
+                 f"stack roughly {metres:.0f} metres tall. Taller than the "
+                 f"Statue of Liberty. We keep it on a laptop."
         ))
 
     if stored:
-        out.append((
-            f"{100 - 100*stored/raw:.0f}% Was Repeats",
-            f"Only {_fmt(stored)} of {_fmt(raw)} measurements were the robot "
-            f"telling us something new. We keep the news and throw away the "
-            f"repetition."
+        out.append(Slide(
+            kind=FIGURE, eyebrow="Said twice",
+            figure=f"{100 - 100*stored/raw:.0f}", unit="%",
+            title=f"{100 - 100*stored/raw:.0f}% Was Repeats",
+            body=f"Only {_fmt(stored)} of {_fmt(raw)} measurements were the "
+                 f"robot telling us something new. We keep the news and throw "
+                 f"away the repetition."
         ))
 
     # ── The distance joke — the best one in the set ──────────────────────
@@ -87,11 +102,14 @@ def slides() -> list[tuple[str, str]]:
             avg_in = sum(x.inches for x in ds) / len(ds)
             moving = sum(x.moving_s for x in ds) / len(ds)
             if dur > 0 and avg_in > 0:
-                out.append((
-                    f"{avg_in:.0f} Inches",
-                    f"Total distance travelled in {dur/60:.1f} minutes. It was "
-                    f"awake the whole time and chose to move for {moving:.0f} "
-                    f"seconds of it. In fairness, it was on a bench."
+                out.append(Slide(
+                    kind=FIGURE, eyebrow="Distance driven",
+                    figure=f"{avg_in:.0f}", unit="in",
+                    title=f"{avg_in:.0f} Inches",
+                    body=f"Total distance travelled in {dur/60:.1f} minutes. It "
+                         f"was awake the whole time and chose to move for "
+                         f"{moving:.0f} seconds of it. In fairness, it was on a "
+                         f"bench."
                 ))
     except Exception:
         pass
@@ -105,18 +123,22 @@ def slides() -> list[tuple[str, str]]:
            JOIN signal s ON s.id=se.signal_id WHERE s.name='SupplyVoltage'""")
     if cur and cur["hi"] and volt and volt["hi"]:
         watts = cur["hi"] * volt["hi"]
-        out.append((
-            f"{cur['hi']:.0f} Amps",
-            f"Peak current through one motor — about {watts/1000:.1f} kilowatts, "
-            f"a kitchen microwave's worth, through something the size of a "
-            f"soda can."
+        out.append(Slide(
+            kind=FIGURE, eyebrow="Peak current draw",
+            figure=f"{cur['hi']:.0f}", unit="A",
+            title=f"{cur['hi']:.0f} Amps",
+            body=f"Peak current through one motor — about {watts/1000:.1f} "
+                 f"kilowatts, a kitchen microwave's worth, through something "
+                 f"the size of a soda can."
         ))
     if volt and volt["lo"]:
-        out.append((
-            f"{volt['lo']:.2f} Volts",
-            f"How far the battery sagged under load, down from "
-            f"{volt['hi']:.2f} V at rest. Every motor notices when that number "
-            f"drops. So do we."
+        out.append(Slide(
+            kind=FIGURE, eyebrow="Battery sag",
+            figure=f"{volt['lo']:.2f}", unit="V",
+            title=f"{volt['lo']:.2f} Volts",
+            body=f"How far the battery sagged under load, down from "
+                 f"{volt['hi']:.2f} V at rest. Every motor notices when that "
+                 f"number drops. So do we."
         ))
 
     # ── Faults, told honestly ────────────────────────────────────────────
@@ -125,21 +147,27 @@ def slides() -> list[tuple[str, str]]:
     live = db.fetchone(
         "SELECT COUNT(*) c FROM fault_event WHERE sticky=0")["c"]
     if sticky:
-        out.append((
-            f"{sticky} Complaints",
-            f"Warnings the robot latched onto and kept — brownouts, current "
-            f"limits, a sensor having a moment. Faults still active at the end: "
-            f"{live}. It files everything and forgives nothing."
+        out.append(Slide(
+            kind=FIGURE, eyebrow="Latched faults",
+            figure=str(sticky), unit="filed",
+            title=f"{sticky} Complaints",
+            body=f"Warnings the robot latched onto and kept — brownouts, "
+                 f"current limits, a sensor having a moment. Faults still "
+                 f"active at the end: {live}. It files everything and forgives "
+                 f"nothing."
         ))
 
     # ── Signals with nothing to say ──────────────────────────────────────
     quiet = db.fetchone("SELECT COUNT(*) c FROM session_constant")["c"]
     total = db.fetchone("SELECT COUNT(*) c FROM series")["c"]
     if quiet and total:
-        out.append((
-            f"{quiet} Silent Sensors",
-            f"Of {_fmt(total)} things we measured, {quiet} never changed once "
-            f"in {dur/60:.1f} minutes. Measuring nothing is still measuring."
+        out.append(Slide(
+            kind=FIGURE, eyebrow="Never moved",
+            figure=str(quiet), unit="signals",
+            title=f"{quiet} Silent Sensors",
+            body=f"Of {_fmt(total)} things we measured, {quiet} never changed "
+                 f"once in {dur/60:.1f} minutes. Measuring nothing is still "
+                 f"measuring."
         ))
 
     # ── Temperature ──────────────────────────────────────────────────────
@@ -148,10 +176,12 @@ def slides() -> list[tuple[str, str]]:
            WHERE s.name='DeviceTemp'""")
     if temp and temp["hi"]:
         f_hi = temp["hi"] * 9 / 5 + 32
-        out.append((
-            f"{temp['hi']:.0f}°C",
-            f"The hottest any motor got — {f_hi:.0f}°F. Cooler than a cup of "
-            f"coffee, and cooler than most people standing in this pit."
+        out.append(Slide(
+            kind=FIGURE, eyebrow="Hottest motor",
+            figure=f"{temp['hi']:.0f}", unit="°C",
+            title=f"{temp['hi']:.0f}°C",
+            body=f"The hottest any motor got — {f_hi:.0f}°F. Cooler than a cup "
+                 f"of coffee, and cooler than most people standing in this pit."
         ))
 
     return out

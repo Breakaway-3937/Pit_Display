@@ -13,9 +13,12 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QPixmap
 
+from app import paths
 from app.lazy_proxy import LazyProxy
 
-SLIDES_DIR = Path(__file__).parent.parent / "assets" / "judges_slides"
+# Writable: students drop files in here at an event, so it cannot be inside
+# the bundle. Seeded from the shipped copy on first run.
+SLIDES_DIR = paths.data_dir("assets", "judges_slides")
 _EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".gif"}
 
 

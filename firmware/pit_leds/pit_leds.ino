@@ -54,22 +54,87 @@
 
 // Data pins. These must be literal numbers: FastLED takes the pin as a
 // template argument, so it cannot come from a variable or a loop.
-#define LEFT_PIN     6          // FILLER
-#define CENTER_PIN   5          // FILLER
-#define RIGHT_PIN    6          // FILLER
+// MEASURED against the real pit on 2026-09-03 with firmware/pit_probe.
+// Nothing here is a guess any more; if you change the hardware, re-measure
+// with the probe rather than editing these by eye.
+#define CENTER_PIN   5
+#define SIDES_PIN    6
 
-// Pixel counts per unit.
-#define LEFT_COUNT   60         // FILLER
-#define CENTER_COUNT 60         // FILLER
-#define RIGHT_COUNT  60         // FILLER
+// LEFT AND RIGHT ARE ONE ELECTRICAL CHANNEL.
+// A Y-split off pin 6 feeds both runs, so whatever we send appears on both
+// simultaneously and they can never show different content. That is not a
+// limitation to work around — it is what the centre-out animations want
+// anyway, since a left pixel and its mirrored right pixel are the same
+// distance from the middle of the pit and should be the same colour.
+#define CENTER_COUNT 93         // measured 91-93; 93 overshoots harmlessly
+#define SIDES_COUNT  76         // each side; both driven by the one channel
 
-#define LED_TYPE     WS2812B
-#define COLOR_ORDER  GRB
+// ── The strips are RGBW, not RGB ────────────────────────────────────────
+// Four bytes per pixel, channel order R,G,B,W. This is the single fact that
+// broke everything before it was found: driving an RGBW strip with 3-byte
+// pixels makes our groups slide against theirs, realigning only every 12
+// bytes, so a solid colour comes back as a 3-pixel repeating pattern.
+//
+// Black is the one thing that still works when you get this wrong, because
+// zero bytes are zero at any alignment — which is exactly why it reads as
+// "the strip is dead or half-broken" instead of "wrong pixel format".
+//
+// FastLED's own setRgbw() is NOT usable here: it allocates a 4/3-size buffer
+// on every show, and an ATmega328P has no room for that. We pack the bytes
+// ourselves into `wire` below instead, which costs one fixed buffer.
+// ── Channel gain (colour correction) ────────────────────────────────────
+// On these RGBW strips the green and blue dies are noticeably brighter than
+// the red one, so a colour with only a little green and blue in it comes out
+// far more desaturated than the same numbers would on an RGB strip. The team
+// red #C82027 is (200,32,39) — 13% green, 15% blue — and it rendered PINK
+// while pure (200,0,0) rendered correctly. That is the whole symptom.
+//
+// This is what FastLED's setCorrection() does for RGB strips, and it is why
+// this file cannot use it: correction rescales the frame on its way out, and
+// our frame is a packed RGBW stream FastLED does not know it is carrying. So
+// the gain is applied during packing instead, before the bytes are laid down.
+//
+// Correct the STRIP here; never fix this by editing the brand colour in the
+// app. #C82027 is the team's red and has to stay that value everywhere else.
+// NEUTRAL (all 255) on purpose. Gain correction was tried and abandoned:
+// the app now snaps colours to saturated primaries before they reach the
+// wire (see app/leds/palette.py), so almost nothing arrives as a mix that
+// could wash out — and dimming green and blue would then just make a green
+// or blue pit darker than a red one for no gain.
+//
+// Left in place, and left documented, because it is the right lever if a
+// future strip batch has a genuinely skewed die. Re-tune it only against
+// the real hardware, never by eye on a screen.
+#define GAIN_R 255
+#define GAIN_G 255
+#define GAIN_B 255
+
+// Pull min(r,g,b) into the white LED? OFF, deliberately.
+//
+// It gives better whites and draws less current, but it desaturates every
+// mixed colour — and the brand red #C82027 is (200,32,39), so a third of its
+// blue and green would move to the W LED and the pit's red reads pink. The
+// one colour this installation must get right is the one it damages most.
+//
+// Turn it back on only if the pit starts showing mostly whites and greys.
+#define RGBW_EXTRACT_WHITE 0
+
+#define LED_TYPE     WS2812B    // timing only; the byte layout is ours
+// RGB, not GRB: the controllers emit our packed bytes verbatim and the
+// channel order is applied during packing. Setting GRB here would reorder
+// bytes that are pixel data to the strip but arbitrary numbers to FastLED.
+#define COLOR_ORDER  RGB
 
 // What the strips are actually plugged into, in milliamps. FastLED dims
 // globally rather than browning out the supply. Three strips draw three
 // times what one did — raise this to match the real PSU.
-#define PSU_MILLIAMPS 2000      // FILLER
+#define PSU_MILLIAMPS 2000      // informational only — see the note in setup()
+
+// Hard ceiling on brightness, the one power lever left now that FastLED's
+// own current limiter cannot be used on a packed RGBW stream. 169 pixels at
+// full white is roughly 10 A; this keeps it to something a bench supply and
+// the pit wiring can actually deliver.
+#define MAX_BRIGHTNESS 200
 
 // ── The three-way switch ────────────────────────────────────────────────
 // An SPDT on-off-on: common to GND, each throw to one input pin, both pins
@@ -85,15 +150,26 @@
 //
 // To reorder the positions, edit switchPosition() — it is the only place
 // the truth table lives.
+//
+// If the SPDT is not wired yet, set HAS_MANUAL_SWITCH to 0. Both inputs sit
+// HIGH on their pull-ups when nothing is attached, which is indistinguishable
+// from the centre detent — so a board with no switch on it reads OFF, boots
+// dark, and ignores every host command. There is no way to tell the two apart
+// electrically; it has to be declared.
+#define HAS_MANUAL_SWITCH 0    // FILLER — set to 1 once the SPDT is wired
+
 #define SW_PIN_A     7         // FILLER
 #define SW_PIN_B     2         // FILLER
 
 // The manual RED position is a hard override, so it does not read state
 // from the host or from EEPROM. Breakaway Red at a brightness that survives
 // pit lighting.
-#define OVERRIDE_R   200
-#define OVERRIDE_G   32
-#define OVERRIDE_B   39
+// Pure red, not the brand hex. The manual override exists so somebody can
+// force the pit red without a host, and on these RGBW strips (200,32,39)
+// renders pink — same reason the app snaps to primaries.
+#define OVERRIDE_R   255
+#define OVERRIDE_G   0
+#define OVERRIDE_B   0
 #define OVERRIDE_BRIGHTNESS 200 // FILLER
 
 // ── Strip placement on the shared axis ──────────────────────────────────
@@ -126,17 +202,52 @@ struct Strip {
   int8_t   dir;      // +1 rising index goes right, -1 goes left
 };
 
-#define NUM_STRIPS 3
-#define TOTAL_LEDS (LEFT_COUNT + CENTER_COUNT + RIGHT_COUNT)
+#define NUM_STRIPS 2
+#define TOTAL_LEDS (CENTER_COUNT + SIDES_COUNT)
 
 // Segment ids on the wire: SET_COLOR's first payload byte. 0xFF means all.
-enum : uint8_t { SEG_LEFT = 0, SEG_CENTER = 1, SEG_RIGHT = 2 };
+// Two, not three, because left and right are one channel — see the Y-split
+// note above. INFO reports two segments and the host reads the count.
+enum : uint8_t { SEG_CENTER = 0, SEG_SIDES = 1 };
+
+// How far the innermost side pixel sits from the pit's centre point, in
+// pixel-widths. Measured from the centre point itself (pixel 0 of the centre
+// run), so it is a real distance now rather than an offset from a strip edge.
+// Only affects how far an animation has travelled when it crosses from one
+// run to the other; nothing breaks if it is a little off.
+#define SIDES_GAP 20
+
+// Which end of a side run its pixel 0 sits at. The two sides are mirrored by
+// the Y-split, so index 0 lands at the same distance from the pit centre on
+// both — provided they are wired as mirror images of each other.
+//
+// MEASURED: 0. Pixel 0 is at the INNER end, nearest the pit centre. Verified
+// with a chase, which is the only effect that shows this: a breathe or a
+// solid looks identical either way, so the earlier "breathe looks fine" said
+// nothing about it. With this wrong, the sides ran outside-in while the
+// centre ran middle-out — the two halves of the pit disagreeing is the tell.
+#define SIDES_INDEX0_OUTER 0
+
+// The sides are addressed by DISTANCE from the pit centre, not by a signed
+// position: one channel drives both, so a pixel is at +d and -d at once.
+// Giving the run a positive origin and dir -1 walks it inward from the far
+// end, which is all axisDist() needs and keeps the existing maths unchanged.
+#define SIDES_INNER_POS (SIDES_GAP)
+#define SIDES_OUTER_POS (SIDES_GAP + SIDES_COUNT - 1)
 
 const Strip strips[NUM_STRIPS] = {
-  // start,                        count,        origin, dir
-  { 0,                             LEFT_COUNT,   -110,   +1 },  // FILLER
-  { LEFT_COUNT,                    CENTER_COUNT,  -30,   +1 },  // FILLER
-  { LEFT_COUNT + CENTER_COUNT,     RIGHT_COUNT,   +50,   +1 },  // FILLER
+  // start,          count,         origin,                dir
+  // CENTRE: origin 0, not -(count/2). The pit's centre point is this run's
+  // PIXEL 0 (the back end), not the middle of the strip — it runs away from
+  // the centre of the pit rather than spanning it. With -(count/2) the chase
+  // started halfway along and expanded both ways, which is right for a run
+  // that straddles the middle and wrong for this one.
+  { 0,               CENTER_COUNT,  0,                     +1 },
+#if SIDES_INDEX0_OUTER
+  { CENTER_COUNT,    SIDES_COUNT,   SIDES_OUTER_POS,       -1 },
+#else
+  { CENTER_COUNT,    SIDES_COUNT,   SIDES_INNER_POS,       +1 },
+#endif
 };
 
 #define FW_MAJOR 2
@@ -173,9 +284,23 @@ static const uint8_t  ALL_SEGMENTS = 0xFF;
 // read into the new layout would garble every field after `brightness`, so
 // the magic has to move whenever State's shape does.
 static const uint16_t EEPROM_MAGIC_ADDR = 0;
-static const uint8_t  EEPROM_MAGIC = 0xBA;
+// 0xBA -> 0xBB when NUM_STRIPS went 3 -> 2 (the Y-split). An old struct read
+// into the new layout garbles every field after `brightness` rather than
+// failing, so this has to move whenever State's shape does.
+static const uint8_t  EEPROM_MAGIC = 0xBB;
 
 CRGB leds[TOTAL_LEDS];
+
+// The RGBW wire buffer. An RGBW pixel is 4 bytes and a CRGB slot carries 3,
+// so three pixels occupy exactly four slots and a CRGB array can hold an
+// exact RGBW stream with no remainder. Sized for the LONGEST channel only —
+// the two are packed and shown one at a time, so they can share it.
+#define SLOTS_FOR(px)  (((uint16_t)(px) * 4 + 2) / 3)
+#define CENTER_SLOTS   SLOTS_FOR(CENTER_COUNT)
+#define SIDES_SLOTS    SLOTS_FOR(SIDES_COUNT)
+#define WIRE_SLOTS     (CENTER_SLOTS > SIDES_SLOTS ? CENTER_SLOTS : SIDES_SLOTS)
+
+CRGB wire[WIRE_SLOTS];
 
 struct State {
   uint8_t mode;
@@ -186,10 +311,13 @@ struct State {
 
 State state = {
   MODE_SOLID, 128, 180,
-  { 200, 200, 200 }, { 32, 32, 32 }, { 39, 39, 39 },   // Breakaway red
+  { 255, 255 }, { 0, 0 }, { 0, 0 },                    // pure red, see above
 };
 State fallback = state;          // what the watchdog reverts to
 bool  blanked = false;
+// Set whenever anything that affects the output changes. A static mode draws
+// one frame, clears this, and then stops touching the strips entirely.
+bool  dirty = true;
 unsigned long lastRx = 0;
 bool  hostSeen = false;
 
@@ -365,6 +493,7 @@ void handleFrame(uint8_t *body, uint8_t len) {
 
   lastRx = millis();
   hostSeen = true;
+  dirty = true;                  // cheap: a PING costs one redundant frame
 
   switch (op) {
     case OP_HELLO:
@@ -391,7 +520,10 @@ void handleFrame(uint8_t *body, uint8_t len) {
       break;
 
     case OP_SET_BRIGHT:
-      if (plen >= 1) { state.brightness = p[0]; blanked = false; }
+      if (plen >= 1) {
+        state.brightness = (p[0] > MAX_BRIGHTNESS) ? MAX_BRIGHTNESS : p[0];
+        blanked = false;
+      }
       break;
 
     case OP_SET_PIXELS: {
@@ -454,6 +586,10 @@ unsigned long swSince = 0;
 
 // The whole truth table, in one place. See the wiring comment at the top.
 uint8_t switchPosition() {
+#if !HAS_MANUAL_SWITCH
+  return SW_HOST;                            // no switch fitted — the app
+                                             // drives the pit, always.
+#else
   bool a = (digitalRead(SW_PIN_A) == LOW);   // pull-ups: closed reads LOW
   bool b = (digitalRead(SW_PIN_B) == LOW);
   if (a && !b) return SW_RED;
@@ -463,6 +599,7 @@ uint8_t switchPosition() {
                                              // SPDT, so it means a wiring
                                              // fault — leave the pit usable
                                              // rather than dark.
+#endif
 }
 
 // Toggles bounce for a few milliseconds. Without this a flick through the
@@ -477,6 +614,7 @@ void pollSwitch() {
   }
   if (swPending != swPos && (now - swSince) >= SW_DEBOUNCE_MS) {
     swPos = swPending;
+    dirty = true;
     sendLog(swPos == SW_RED  ? "switch=RED (manual override)"
           : swPos == SW_OFF  ? "switch=OFF (manual override)"
                              : "switch=HOST");
@@ -572,24 +710,102 @@ void render() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+//  RGBW output
+// ─────────────────────────────────────────────────────────────────────────
+//
+// FastLED drives 3-byte pixels; these strips want 4. Rather than fight that,
+// we hand FastLED a buffer of bytes it thinks are RGB pixels and the strip
+// reads as RGBW ones. Three RGBW pixels fit exactly four CRGB slots, so the
+// stream is exact — no padding, no second allocation, and the whole cost is
+// one WIRE_SLOTS buffer instead of a per-show heap block.
+//
+// Brightness is applied HERE, not by FastLED: showLeds(255) is deliberate,
+// because any scaling FastLED did would land on bytes that are pixel data to
+// the strip but meaningless numbers to it.
+
+void readSerial();          // defined below; showAll drains between writes
+
+void packAndShow(uint8_t ctrl, const CRGB *src, uint16_t npx, uint8_t bright) {
+  uint16_t nbytes = (uint16_t)npx * 4;
+  uint16_t nslots = (nbytes + 2) / 3;
+  if (nslots > WIRE_SLOTS) { nslots = WIRE_SLOTS; nbytes = nslots * 3; }
+
+  uint8_t *raw = (uint8_t *)wire;
+  for (uint16_t i = 0; i < npx; i++) {
+    // Brightness first, then the strip's channel gain. Both are plain
+    // multiplies, so the order only matters for rounding — but doing gain
+    // last keeps it a property of the hardware rather than of the level.
+    uint8_t r = scale8(scale8(src[i].r, bright), GAIN_R);
+    uint8_t g = scale8(scale8(src[i].g, bright), GAIN_G);
+    uint8_t b = scale8(scale8(src[i].b, bright), GAIN_B);
+    uint8_t w = 0;
+#if RGBW_EXTRACT_WHITE
+    // Whatever all three channels share is white light, and the dedicated
+    // white LED makes it better and cheaper than mixing it from RGB.
+    w = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    r -= w; g -= w; b -= w;
+#endif
+    uint16_t o = (uint16_t)i * 4;
+    if (o + 3 >= nbytes) break;
+    raw[o] = r; raw[o + 1] = g; raw[o + 2] = b; raw[o + 3] = w;   // RGBW
+  }
+  // The slack at the end of the last slot is not a pixel anyone owns; leaving
+  // it dirty would clock a garbage pixel onto the end of the run.
+  for (uint16_t i = (uint16_t)npx * 4; i < nslots * 3; i++) raw[i] = 0;
+
+  FastLED[ctrl].showLeds(255);
+}
+
+void showAll(uint8_t bright) {
+  packAndShow(0, &leds[strips[SEG_CENTER].start], CENTER_COUNT, bright);
+  // Drain the port between the two channel writes. Each show holds
+  // interrupts off for milliseconds and the AVR's UART keeps only two bytes
+  // without its ISR, so the gap between strips is the only chance an inbound
+  // frame gets. Halving the blackout roughly halves the loss.
+  readSerial();
+  packAndShow(1, &leds[strips[SEG_SIDES].start],  SIDES_COUNT,  bright);
+}
+
+// Whether this mode's output changes from frame to frame. A static mode that
+// keeps re-clocking the strips buys nothing and costs the serial link: at
+// ~7 ms of interrupts-off per 16 ms frame, most inbound frames land during a
+// write and are lost. SOLID is what the board sits in for hours at a time,
+// and the handshake happens in it, so this is the difference between a link
+// that connects first time and one that connects on the third attempt.
+static inline bool modeAnimates(uint8_t m) {
+  return !(m == MODE_SOLID || m == MODE_OFF);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
 
+#if HAS_MANUAL_SWITCH
   pinMode(SW_PIN_A, INPUT_PULLUP);
   pinMode(SW_PIN_B, INPUT_PULLUP);
+#endif
   swPos = swPending = switchPosition();     // start in the real position, no
                                             // flash of the wrong state at boot
 
-  FastLED.addLeds<LED_TYPE, LEFT_PIN,   COLOR_ORDER>(leds, strips[SEG_LEFT].start,   LEFT_COUNT)
-         .setCorrection(TypicalLEDStrip);
-  FastLED.addLeds<LED_TYPE, CENTER_PIN, COLOR_ORDER>(leds, strips[SEG_CENTER].start, CENTER_COUNT)
-         .setCorrection(TypicalLEDStrip);
-  FastLED.addLeds<LED_TYPE, RIGHT_PIN,  COLOR_ORDER>(leds, strips[SEG_RIGHT].start,  RIGHT_COUNT)
-         .setCorrection(TypicalLEDStrip);
+  // Both controllers read the SAME wire buffer, with their own lengths. They
+  // are only ever shown one at a time (see showAll), so they cannot contend,
+  // and sharing is what keeps this inside 2 KB.
+  //
+  // No setCorrection(): colour correction rescales channels, and these bytes
+  // are an RGBW stream FastLED does not know it is carrying.
+  FastLED.addLeds<LED_TYPE, CENTER_PIN, COLOR_ORDER>(wire, CENTER_SLOTS);
+  FastLED.addLeds<LED_TYPE, SIDES_PIN,  COLOR_ORDER>(wire, SIDES_SLOTS);
 
-  // A ceiling the supply can live with. FastLED dims globally to stay under
-  // it rather than letting the rail sag.
-  FastLED.setMaxPowerInVoltsAndMilliamps(5, PSU_MILLIAMPS);
+  // Dither would alter those same bytes between frames. Off, on both.
+  FastLED[0].setDither(DISABLE_DITHER);
+  FastLED[1].setDither(DISABLE_DITHER);
+
+  // NOTE: FastLED's setMaxPowerInVoltsAndMilliamps is deliberately NOT used.
+  // It works by scaling the frame it is about to send, which would corrupt a
+  // packed RGBW stream. Budget power with MAX_BRIGHTNESS instead — and note
+  // that white now comes from the W LED, which draws far less than firing
+  // R+G+B together for the same apparent brightness.
+  if (state.brightness > MAX_BRIGHTNESS) state.brightness = MAX_BRIGHTNESS;
 
   measureAxis();
   loadState();
@@ -606,39 +822,49 @@ void loop() {
     state = fallback;
     blanked = false;
     hostSeen = false;
+    dirty = true;
   }
 
   static unsigned long lastFrame = 0;
   unsigned long now = millis();
   if (now - lastFrame >= 16) {          // ~60fps
     lastFrame = now;
-    // speed maps to how fast the animation phase advances. Kept running in
-    // every switch position so returning to HOST resumes mid-stride instead
-    // of snapping back to phase zero.
-    animStep += 1 + (state.speed >> 5);
-    chasePos += 1 + (state.speed >> 6);
 
+    bool animating = (swPos == SW_HOST) && !blanked && modeAnimates(state.mode);
+    if (animating) {
+      // speed maps to how fast the animation phase advances. Only advanced
+      // while something is actually animating — a phase that keeps running
+      // behind a static frame just makes the next mode change jump.
+      animStep += 1 + (state.speed >> 5);
+      chasePos += 1 + (state.speed >> 6);
+    }
+    if (!animating && !dirty) return;   // nothing to redraw; leave the port
+                                        // alone so the host can be heard
+
+    uint8_t outBright;
     switch (swPos) {
       case SW_OFF:
         fill_solid(leds, TOTAL_LEDS, CRGB::Black);
-        FastLED.setBrightness(0);
+        outBright = 0;
         break;
 
       case SW_RED:
         fill_solid(leds, TOTAL_LEDS, CRGB(OVERRIDE_R, OVERRIDE_G, OVERRIDE_B));
-        FastLED.setBrightness(OVERRIDE_BRIGHTNESS);
+        outBright = OVERRIDE_BRIGHTNESS;
         break;
 
       default:                           // SW_HOST
         if (blanked) {
           fill_solid(leds, TOTAL_LEDS, CRGB::Black);
-          FastLED.setBrightness(0);
+          outBright = 0;
         } else {
           render();
-          FastLED.setBrightness(state.brightness);
+          outBright = state.brightness;
         }
         break;
     }
-    FastLED.show();
+    if (outBright > MAX_BRIGHTNESS) outBright = MAX_BRIGHTNESS;
+    showAll(outBright);
+    dirty = false;
   }
 }

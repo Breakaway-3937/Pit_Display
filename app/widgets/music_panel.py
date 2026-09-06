@@ -11,8 +11,8 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QInputDialog, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QSlider, QVBoxLayout, QWidget,
+    QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLineEdit, QListWidget,
+    QListWidgetItem, QSizePolicy, QSlider, QVBoxLayout, QWidget,
 )
 
 from app import brand
@@ -20,10 +20,11 @@ from app.admin import admin
 from app.config import config
 from app.music import music
 from app.music import eq as eq_module
+from app.widgets.eq_field import EQField
 from app.widgets.brand_widgets import (
-    RoundedButton, RoundedFrame, eyebrow, mono_font,
+    RoundedButton, RoundedFrame, SelectableChip, eyebrow, mono_font,
 )
-from app.widgets.helpers import divider, label
+from app.widgets.helpers import clear_layout, divider, label
 from app.widgets.toggle_switch import ToggleSwitch
 
 
@@ -39,8 +40,6 @@ class MusicPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._syncing = False
-        self._band_sliders: list[QSlider] = []
-        self._band_values: list[QLabel] = []
         self._build()
 
         music.now_playing_changed.connect(self._on_now_playing)
@@ -234,56 +233,83 @@ class MusicPanel(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        root.addWidget(eyebrow("Equaliser"))
-        root.addSpacing(8)
-
-        self._eq_combo = QComboBox()
-        self._eq_combo.currentIndexChanged.connect(self._on_eq_preset)
-        root.addWidget(self._eq_combo)
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(16)
+        head.addWidget(eyebrow("Equaliser · 10 band"))
+        head.addStretch(1)
         self._eq_desc = label("", "stat_label")
         self._eq_desc.setWordWrap(True)
-        root.addSpacing(6)
-        root.addWidget(self._eq_desc)
+        self._eq_desc.setSizePolicy(QSizePolicy.Policy.Ignored,
+                                    QSizePolicy.Policy.Preferred)
+        self._eq_desc.setMinimumWidth(0)
+        head.addWidget(self._eq_desc, stretch=2)
+        root.addLayout(head)
         root.addSpacing(12)
 
-        bands = QGridLayout()
-        bands.setSpacing(4)
-        for i, band_label in enumerate(eq_module.BAND_LABELS):
-            value_lbl = label("0", "stat_label", Qt.AlignmentFlag.AlignHCenter)
-            value_lbl.setFont(mono_font())
-            slider = QSlider(Qt.Orientation.Vertical)
-            slider.setRange(int(eq_module.GAIN_MIN), int(eq_module.GAIN_MAX))
-            slider.setValue(0)
-            slider.setMinimumHeight(96)
-            slider.valueChanged.connect(
-                lambda v, idx=i: self._on_band(idx, v))
-            name_lbl = label(band_label, "stat_label", Qt.AlignmentFlag.AlignHCenter)
-            bands.addWidget(value_lbl, 0, i)
-            bands.addWidget(slider, 1, i, Qt.AlignmentFlag.AlignHCenter)
-            bands.addWidget(name_lbl, 2, i)
-            self._band_sliders.append(slider)
-            self._band_values.append(value_lbl)
-        root.addLayout(bands)
-        root.addSpacing(6)
-        root.addWidget(label("Gain in dB per band · Hz", "stat_label",
-                             Qt.AlignmentFlag.AlignHCenter))
+        # Presets as chips, not a combo: there are five, they are the thing an
+        # operator actually reaches for, and a dropdown hides four of them
+        # behind a click during a match cycle.
+        self._preset_row = QHBoxLayout()
+        self._preset_row.setSpacing(10)
+        self._preset_row.setContentsMargins(0, 0, 0, 0)
+        self._preset_buttons: dict[str, SelectableChip] = {}
+        root.addLayout(self._preset_row)
         root.addSpacing(12)
 
-        self._preamp_slider, preamp_box, self._preamp_value = self._slider_row(
-            "Preamp", int(eq_module.GAIN_MIN), int(eq_module.GAIN_MAX),
-            0, self._on_preamp)
-        root.addWidget(preamp_box)
-        root.addSpacing(10)
+        # ── The instrument ───────────────────────────────────────────────
+        eq_card = RoundedFrame(fill="#1A171A", border=brand.CARBON_LINE,
+                               radius=brand.R_CARD)
+        card = QVBoxLayout(eq_card)
+        card.setContentsMargins(20, 18, 20, 18)
+        card.setSpacing(10)
+
+        card_head = QHBoxLayout()
+        card_head.setSpacing(16)
+        gain_lbl = label("GAIN dB")
+        gain_lbl.setFont(mono_font(11))
+        gain_lbl.setStyleSheet(f"color: {brand.GRAPHITE}; background: transparent;")
+        card_head.addWidget(gain_lbl)
+        hair = QFrame()
+        hair.setFixedHeight(1)
+        hair.setStyleSheet(f"background: {brand.RAISED_DARK}; border: none;")
+        hair.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        card_head.addWidget(hair, stretch=1)
+        preamp_lbl = label("PREAMP")
+        preamp_lbl.setFont(mono_font(11))
+        preamp_lbl.setStyleSheet(f"color: {brand.GRAPHITE}; background: transparent;")
+        card_head.addWidget(preamp_lbl)
+
+        # The control sits with its readout rather than in a row of its own:
+        # two "Preamp −2" labels 250px apart is the same value said twice.
+        self._preamp_slider = QSlider(Qt.Orientation.Horizontal)
+        self._preamp_slider.setRange(int(eq_module.GAIN_MIN),
+                                     int(eq_module.GAIN_MAX))
+        self._preamp_slider.setFixedWidth(160)
+        self._preamp_slider.valueChanged.connect(self._on_preamp)
+        card_head.addWidget(self._preamp_slider)
+
+        self._preamp_value = label("0.0")
+        self._preamp_value.setStyleSheet(
+            f'color: {brand.WHITE}; background: transparent;'
+            f' font-family: "{brand.FONT_DISPLAY}"; font-size: 15px;'
+            f' font-weight: 600;')
+        card_head.addWidget(self._preamp_value)
+        card.addLayout(card_head)
+
+        self._eq_field = EQField()
+        self._eq_field.band_changed.connect(self._on_band)
+        card.addWidget(self._eq_field, stretch=1)
+        root.addWidget(eq_card)
+        root.addSpacing(12)
 
         eq_actions = QHBoxLayout()
         eq_actions.setSpacing(8)
         save_eq = RoundedButton("Save preset…", variant="secondary",
                                 accent=config.active_team.primary_color)
         save_eq.clicked.connect(self._on_save_eq)
-        reset_eq = RoundedButton("Flat", variant="ghost")
-        reset_eq.clicked.connect(lambda: music.apply_eq_preset("Flat"))
         eq_actions.addWidget(save_eq)
-        eq_actions.addWidget(reset_eq)
+        eq_actions.addStretch(1)
         root.addLayout(eq_actions)
         root.addSpacing(10)
 
@@ -337,7 +363,7 @@ class MusicPanel(QWidget):
         row = QWidget()
         h = QHBoxLayout(row)
         h.setContentsMargins(0, 0, 0, 0)
-        toggle = ToggleSwitch(color_on=config.active_team.primary_color)
+        toggle = ToggleSwitch()
         toggle.setChecked(checked)
         toggle.toggled.connect(handler)
         h.addWidget(toggle)
@@ -450,18 +476,31 @@ class MusicPanel(QWidget):
 
     # ── EQ ────────────────────────────────────────────────────────────────
 
-    def _on_eq_preset(self, index: int):
-        if self._syncing or index < 0:
-            return
-        music.apply_eq_preset(self._eq_combo.itemText(index))
+    def _rebuild_presets(self, names: list[str]):
+        """The preset chips. Active is white — red is reserved on this panel."""
+        clear_layout(self._preset_row)
+        self._preset_buttons.clear()
+        for name in names:
+            btn = SelectableChip(name.upper())
+            btn.setMinimumHeight(44)
+            f = btn.font()
+            f.setPixelSize(13)
+            btn.setFont(f)
+            btn.clicked.connect(lambda _c=False, n=name: self._on_eq_preset(n))
+            self._preset_row.addWidget(btn)
+            self._preset_buttons[name] = btn
+        self._preset_row.addStretch(1)
 
-    def _on_band(self, index: int, value: int):
-        self._band_values[index].setText(str(value))
+    def _on_eq_preset(self, name: str):
+        if not self._syncing:
+            music.apply_eq_preset(name)
+
+    def _on_band(self, index: int, value: float):
         if not self._syncing:
             music.set_band(index, float(value))
 
     def _on_preamp(self, value: int):
-        self._preamp_value.setText(str(value))
+        self._preamp_value.setText(f"{value:+.1f}" if value else "0.0")
         if not self._syncing:
             music.set_preamp(float(value))
 
@@ -479,19 +518,17 @@ class MusicPanel(QWidget):
         try:
             presets = eq_module.all_presets()
             names = [p.name for p in presets]
-            if [self._eq_combo.itemText(i) for i in range(self._eq_combo.count())] != names:
-                self._eq_combo.clear()
-                self._eq_combo.addItems(names)
-            if music.eq_preset in names:
-                self._eq_combo.setCurrentIndex(names.index(music.eq_preset))
+            if list(self._preset_buttons) != names:
+                self._rebuild_presets(names)
+            for name, btn in self._preset_buttons.items():
+                btn.set_active(name == music.eq_preset)
             match = next((p for p in presets if p.name == music.eq_preset), None)
             self._eq_desc.setText(match.description if match else "")
 
-            for i, gain in enumerate(music.eq_gains):
-                self._band_sliders[i].setValue(int(round(gain)))
-                self._band_values[i].setText(str(int(round(gain))))
-            self._preamp_slider.setValue(int(round(music.eq_preamp)))
-            self._preamp_value.setText(str(int(round(music.eq_preamp))))
+            self._eq_field.set_gains(music.eq_gains)
+            preamp = int(round(music.eq_preamp))
+            self._preamp_slider.setValue(preamp)
+            self._preamp_value.setText(f"{preamp:+.1f}" if preamp else "0.0")
             self._follow_toggle.setChecked(music.follow_mode)
         finally:
             self._syncing = False
@@ -508,6 +545,5 @@ class MusicPanel(QWidget):
 
     def _on_team_changed(self, team):
         color = team.primary_color
-        for toggle in (self._follow_toggle,):
-            toggle.set_color_on(color)
+        # The follow toggle stays green — see ToggleSwitch.
         self._duck_btn.set_accent(color)

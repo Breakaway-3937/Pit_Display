@@ -29,10 +29,11 @@ FONT_MONO_STACK = [FONT_MONO, "Menlo", "Consolas", "DejaVu Sans Mono",
                    "Courier New", "monospace"]
 
 # ── Core brand colors ───────────────────────────────────────────────────────
-RED       = "#C82027"   # Breakaway Red — the brand. Focus, CTAs, highlights
-RED_HOVER = "#B01C22"   # primary button hover
+RED       = "#BA141A"   # Breakaway Red — the brand. Focus, CTAs, highlights
+RED_HOVER = "#A21117"   # primary button hover
 EMBER     = "#8E1519"   # deep red — pressed states, tint-chip text (sparingly)
 CARBON    = "#181416"   # ink on light; dark backgrounds. Not pure black
+GRAPHITE  = "#59595B"   # brand grey — secondary series, secondary fields
 WHITE     = "#FFFFFF"
 
 # ── Neutral scale ───────────────────────────────────────────────────────────
@@ -57,14 +58,14 @@ FAINT_DARK   = "#6A6462"   # tertiary text on dark (N500)
 # ── Status dots (§7) ────────────────────────────────────────────────────────
 STATUS_ONLINE  = "#2E8B7F"
 STATUS_PENDING = "#E08A1E"
-STATUS_FAULT   = "#C82027"
+STATUS_FAULT   = "#BA141A"
 STATUS_IDLE    = "#A6A19E"
 
 # ── Data-viz palettes (§1) — red = focus; rest neutral/context ──────────────
-CATEGORICAL = ["#C82027", "#2B3A67", "#E08A1E", "#2E8B7F", "#6B4E71", "#59595B"]
-SEQUENTIAL  = ["#FBE4E5", "#F3AEB1", "#E77B7F", "#D8474C", "#C82027", "#8E1519"]
+CATEGORICAL = ["#BA141A", "#2B3A67", "#E08A1E", "#2E8B7F", "#6B4E71", "#59595B"]
+SEQUENTIAL  = ["#FBE4E5", "#F3AEB1", "#E77B7F", "#D8474C", "#BA141A", "#8E1519"]
 DIVERGING   = ["#2B3A67", "#6E7FA8", "#B9C2D8", "#EEEBEA", "#E79B9E", "#D8555A",
-               "#C82027"]
+               "#BA141A"]
 
 
 # ── Rounded — the container radius scale (§5.1), in px ──────────────────────
@@ -96,8 +97,41 @@ TYPE = {
 
 
 def red_tint(alpha: float = 0.12) -> str:
-    """Red-tint chip fill (§7): rgba(200,32,39,alpha). Pair with EMBER text."""
-    return f"rgba(200, 32, 39, {alpha})"
+    """Red-tint chip fill (§7): rgba(186,20,26,alpha). Pair with EMBER text."""
+    return f"rgba(186, 20, 26, {alpha})"
+
+
+# ── The Plate — the chassis every full-screen surface is built on ───────────
+# One architectural inset panel floating on the app ground, so the screen has a
+# physical edge and the type has a room to sit in. Shared by the presentation
+# slides, both diagnostics boards and the project screen, which is what makes
+# them read as one instrument from across the pit.
+#
+# The gradient is the depth. On dark it is a lit face falling away to the
+# bottom-right; on light the same logic survives as a cast shadow rather than
+# being swapped for a flat fill — the light theme is a derivative, not a token
+# swap.
+PLATE_INSET  = 40    # px from the screen edge at 1920×1080, scaled per surface
+PLATE_RADIUS = R_BANNER
+
+PLATE_DARK   = ("#221E22", "#1A171A", "#151215")   # 0% · 46% · 100%
+PLATE_LIGHT  = ("#FFFFFF", "#FDFCFC", "#F3F1F0")   # 0% · 50% · 100%
+PLATE_ANGLE  = 157   # degrees, clockwise from 12 o'clock
+
+# Surfaces sitting *on* the plate. Not the CARBON_SURF scale: those are tuned
+# for controls on the app ground, and a tile on the lit plate needs to sit a
+# little above the plate's own mid-tone or it reads as a hole.
+TILE_DARK    = "#1E1B1E"   # tile / card fill on the plate
+TILE_LIGHT   = "#FFFFFF"
+RAISED_DARK  = "#262227"   # active row, pressed control, selected nav item
+DIVIDER_DARK = "#2A262A"   # the faintest rule — column separators only
+FAULT_EDGE   = "#5A1418"   # the one tile a latched fault came from
+
+# The ambient light-fall: an off-centre radial wash that drifts over 34s. Six
+# percent on dark is deliberately near-invisible — it is there to keep a 55"
+# panel of near-black from looking dead, not to be seen as a gradient.
+LIGHTFALL_ALPHA = 0.06
+LIGHTFALL_SECS  = 34
 
 
 # ── Palette bundles (theme-aware) ───────────────────────────────────────────

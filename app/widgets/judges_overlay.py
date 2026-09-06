@@ -1,17 +1,27 @@
 """
 Judges overlay — displays the current slide from JudgesSlideManager.
 
-The header bar and image area are wired up. When no slides are loaded the
-overlay shows a drop-in hint pointing students to the slides folder.
+**The artwork is full-bleed, deliberately.** Every other surface here sits on
+the shared plate, but a judging slide is the team's own finished graphic and
+boxing it inside a second frame would put two containers around one image. What
+follows the system instead is the *chrome*: the same header band, the same
+wordmark-as-type, the same mono screen label, the same 2px rule.
+
+It carries **no red**. The band used to set the team accent as a 2px underline
+*and* as the label's colour — red letterforms on a dark ground are 2.8:1 and
+forbidden, and the slide below is the thing judges are meant to be looking at.
 """
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QSizePolicy
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QSizePolicy,
+)
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QFont, QPixmap
 
 from app import brand
 from app.config import config
 from app.judges_slides import judges_slides
+from app.widgets.brand_widgets import mono_font
 
 
 # ── Scaled image label ────────────────────────────────────────────────────────
@@ -77,13 +87,25 @@ class JudgesOverlay(QWidget):
         self._header.setFixedHeight(64)
         self._header.setObjectName("judges_header")
 
-        header_layout = QVBoxLayout(self._header)
-        header_layout.setContentsMargins(32, 0, 32, 0)
-        header_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        header_layout = QHBoxLayout(self._header)
+        header_layout.setContentsMargins(40, 0, 40, 0)
+
+        # Identity as type, exactly as the chassis header sets it.
+        self._wordmark = QLabel()
+        self._wordmark.setTextFormat(Qt.TextFormat.RichText)
+        wf = QFont(brand.FONT_DISPLAY)
+        wf.setPixelSize(22)
+        wf.setWeight(QFont.Weight.Bold)
+        wf.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 102)
+        self._wordmark.setFont(wf)
+        header_layout.addWidget(self._wordmark,
+                                alignment=Qt.AlignmentFlag.AlignVCenter)
+        header_layout.addStretch(1)
 
         self._header_label = QLabel()
-        self._header_label.setObjectName("section_header")
-        header_layout.addWidget(self._header_label)
+        self._header_label.setFont(mono_font(15))
+        header_layout.addWidget(self._header_label,
+                                alignment=Qt.AlignmentFlag.AlignVCenter)
 
         root.addWidget(self._header)
 
@@ -109,11 +131,14 @@ class JudgesOverlay(QWidget):
         theme = config.screen_theme(self._screen_id) if self._screen_id else "dark"
         pal = brand.palette(theme)
         team = config.active_team
-        accent = team.primary_color
+        ink = pal["title"]
+        faint = pal["faint"]
+        self._wordmark.setText(
+            f'<span style="color:{ink}">{(team.name or "Team").upper()}</span>'
+            f'<span style="color:{faint}"> {team.number}</span>')
 
-        team_label = (f"{team.name} {team.number}" if team.name
-                      else f"Team {team.number}").upper()
-        self._header_label.setText(f"{team_label}  ·  JUDGING")
+        letter = "B" if self._screen_id.endswith("_b") else "A"
+        self._header_label.setText(f"SCREEN {letter}  /  JUDGING")
 
         bg, header_bg, hint_color = pal["bg"], pal["surface"], pal["muted"]
 
@@ -124,14 +149,7 @@ class JudgesOverlay(QWidget):
             QFrame#judges_header {{
                 background-color: {header_bg};
                 border: none;
-                border-bottom: 2px solid {accent};
-            }}
-            QLabel#section_header {{
-                color: {accent};
-                font-family: "{brand.FONT_DISPLAY}";
-                font-size: 13px;
-                font-weight: 600;
-                letter-spacing: 2px;
+                border-bottom: 2px solid {pal["line"]};
             }}
             _ImageLabel {{
                 background-color: {bg};
@@ -140,3 +158,5 @@ class JudgesOverlay(QWidget):
                 font-size: 15px;
             }}
         """)
+        self._header_label.setStyleSheet(
+            f"color: {faint}; background: transparent;")

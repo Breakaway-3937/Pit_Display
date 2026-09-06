@@ -11,3 +11,8 @@ robot.glb
 
 # OS
 .DS_Store
+
+# PyInstaller output — see DEPLOYMENT.md
+build/
+dist/
+*.spec.bak

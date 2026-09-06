@@ -2,10 +2,12 @@
 
 import json
 
+from PyQt6.QtGui import QColor
 from PyQt6.QtCore import QUrl, pyqtSignal
 from PyQt6.QtWebEngineCore import QWebEnginePage
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
+from app import brand
 from app.cad_assets import cad_assets
 
 
@@ -43,6 +45,11 @@ class CADViewerWidget(QWebEngineView):
         page = _Page(self)
         page.subsystem_selected.connect(self.subsystem_selected)
         page.view_reset.connect(self.view_reset)
+        # A QWebEngineView paints **white** until its page has painted. On a
+        # near-black panel that is a full-screen flash on every boot, and it
+        # reads as a fault rather than as loading. Give the page the ground it
+        # is going to end up with.
+        page.setBackgroundColor(QColor(brand.CARBON_BG))
         self.setPage(page)
         # Theme / accent requested before the page finished loading; re-applied
         # on loadFinished so the viewer boots in the right look.
@@ -83,6 +90,10 @@ class CADViewerWidget(QWebEngineView):
     def set_theme(self, theme: str) -> None:
         """theme: 'dark' | 'light'"""
         self._pending_theme = theme
+        # Keep the pre-paint ground matching the theme the page will adopt, so
+        # a reload never shows the wrong colour for a frame.
+        self.page().setBackgroundColor(
+            QColor(brand.N50 if theme == "light" else brand.CARBON_BG))
         self._js(f"window.cadViewer && window.cadViewer.setTheme({json.dumps(theme)})")
 
     def set_accent(self, hex_color: str) -> None:

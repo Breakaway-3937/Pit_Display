@@ -22,10 +22,15 @@ from typing import Any
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from app import paths
 from app.lazy_proxy import LazyProxy
 
-_ASSETS_DIR    = Path(__file__).parent.parent / "assets"
-_CAD_DIR       = _ASSETS_DIR / "cad"
+# The viewer page ships with the app and never changes at runtime; the model
+# and its subsystem map are uploaded by the crew, so they live in the writable
+# tree. `_LayeredHandler` below serves both as one directory.
+_RES_ASSETS    = paths.resource("assets")
+_DATA_ASSETS   = paths.data_dir("assets")
+_CAD_DIR       = paths.data_dir("assets", "cad")
 _SUBSYSTEMS    = _CAD_DIR / "subsystems.json"
 _MODEL         = _CAD_DIR / "robot.glb"
 _PORT          = 8765
@@ -41,6 +46,27 @@ _DEFAULT_CONFIG: dict[str, Any] = {
 
 
 class _SilentHandler(http.server.SimpleHTTPRequestHandler):
+    """
+    Serves the assets tree, **data first and resources second**.
+
+    The viewer needs one URL space over two directories: `/cad_viewer/…` ships
+    inside the bundle and `/cad/robot.glb` is whatever the crew last uploaded.
+    Copying the shipped model into the data directory would work and would also
+    duplicate a third of a gigabyte on every install, so the handler resolves
+    each request against the writable tree and falls back to the read-only one.
+    """
+
+    def translate_path(self, path: str) -> str:
+        # Resolve against the data tree using the base class' own sanitising —
+        # it is what strips `..` and query strings, and reimplementing that is
+        # how directory traversal bugs get written.
+        self.directory = str(_DATA_ASSETS)
+        resolved = super().translate_path(path)
+        if Path(resolved).exists():
+            return resolved
+        self.directory = str(_RES_ASSETS)
+        return super().translate_path(path)
+
     def log_message(self, *_):
         pass
 
@@ -74,7 +100,7 @@ class _CADAssets(QObject):
     def start_server(self) -> None:
         if self._server is not None:
             return
-        handler = functools.partial(_SilentHandler, directory=str(_ASSETS_DIR))
+        handler = functools.partial(_SilentHandler, directory=str(_DATA_ASSETS))
         self._server = _HTTPServer(("127.0.0.1", _PORT), handler)
         t = threading.Thread(target=self._server.serve_forever, daemon=True)
         t.start()
@@ -93,11 +119,12 @@ class _CADAssets(QObject):
 
     @property
     def model_exists(self) -> bool:
-        return _MODEL.exists()
+        return self.model_path.exists()
 
     @property
     def model_path(self) -> Path:
-        return _MODEL
+        """The uploaded model if there is one, else the one that shipped."""
+        return paths.find("assets", "cad", "robot.glb")
 
     def import_model(self, source: Path) -> None:
         """Copy a .glb file from source into assets/cad/robot.glb."""
@@ -109,6 +136,12 @@ class _CADAssets(QObject):
 
     def load_config(self) -> dict[str, Any]:
         if not _SUBSYSTEMS.exists():
+            shipped = paths.resource("assets", "cad", "subsystems.json")
+            if shipped.exists():
+                try:
+                    return json.loads(shipped.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    pass
             return dict(_DEFAULT_CONFIG)
         try:
             return json.loads(_SUBSYSTEMS.read_text(encoding="utf-8"))

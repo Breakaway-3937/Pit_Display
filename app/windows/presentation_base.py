@@ -44,6 +44,7 @@ from app.cad_assets import cad_assets
 from app.checklist import checklist
 from app.config import config, SCREEN_LABELS
 from app.rotation import rotation
+from app.slides import Slide, BOARD, coerce
 from app.theme import apply_theme
 from app.widgets.cad_viewer import CADViewerWidget
 from app.widgets.checklist_overlay import ChecklistOverlay
@@ -58,7 +59,7 @@ class PresentationScreen(QMainWindow):
     """Base window; subclasses set SCREEN_ID / SLIDES / window title."""
 
     SCREEN_ID: str = ""
-    SLIDES: list[tuple[str, str]] = []
+    SLIDES: list[Slide] = []
     # Which board is this screen's own: the one that joins its rotation and the
     # one the picker lists. Either can still be pinned on either screen.
     BOARD_CONTENT: str = "diagnostics"
@@ -78,12 +79,13 @@ class PresentationScreen(QMainWindow):
     }
 
     BOARD_LABELS = {
-        "diagnostics": ("Robot Diagnostics",
-                        "Battery, current, temperature and latched faults from "
-                        "the last imported log."),
-        "robot_info":  ("Robot Info",
-                        "What tripped, on which motor, and which log it came "
-                        "from."),
+        "diagnostics": Slide(
+            kind=BOARD, eyebrow="Live board", title="Robot Diagnostics",
+            body="Battery, current, temperature and latched faults from the "
+                 "last imported log."),
+        "robot_info": Slide(
+            kind=BOARD, eyebrow="Live board", title="Robot Info",
+            body="What tripped, on which motor, and which log it came from."),
     }
 
     def __init__(self):
@@ -121,7 +123,7 @@ class PresentationScreen(QMainWindow):
         apply_theme(self, config.screen_theme(self.SCREEN_ID))
 
     @classmethod
-    def rotation_slides(cls) -> list[tuple[str, str]]:
+    def rotation_slides(cls) -> list[Slide]:
         """
         The standard rotation: this screen's own slides, then any fun facts
         generated from imported robot logs.
@@ -131,10 +133,10 @@ class PresentationScreen(QMainWindow):
         screen is power-cycled from the control sidebar — the same way judges
         slides need a Reload. `reload_slides()` does it without a restart.
         """
-        slides = list(cls.SLIDES)
+        slides = coerce(cls.SLIDES)
         try:
             from app.robot.fun_facts import slides as fact_slides
-            slides += fact_slides()
+            slides += coerce(fact_slides())
         except Exception:
             # A malformed or partially-imported log must never stop the
             # audience screens from coming up.
@@ -142,7 +144,7 @@ class PresentationScreen(QMainWindow):
         return slides
 
     @classmethod
-    def board_entry(cls) -> tuple[str, str] | None:
+    def board_entry(cls) -> Slide | None:
         """
         This screen's board as the picker should list it, or None when there is
         nothing imported for it to show.
@@ -156,7 +158,7 @@ class PresentationScreen(QMainWindow):
         return cls.BOARD_LABELS.get(cls.BOARD_CONTENT)
 
     @classmethod
-    def rotation_entries(cls) -> list[tuple[str, str]]:
+    def rotation_entries(cls) -> list[Slide]:
         """
         Every stop in the cycle, slides *and* the board, in order.
 
@@ -183,7 +185,7 @@ class PresentationScreen(QMainWindow):
         """
         self._board_idx = (len(self.rotation_slides())
                            if self.board_entry() is not None else None)
-        new = SlidePanel(self.rotation_slides())
+        new = SlidePanel(self.rotation_slides(), self.SCREEN_ID)
         old = self._slides
         self._stack.insertWidget(self._PAGE_NORMAL, new)
         self._stack.removeWidget(old)
@@ -198,7 +200,7 @@ class PresentationScreen(QMainWindow):
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
 
-        self._slides = SlidePanel(self.rotation_slides())
+        self._slides = SlidePanel(self.rotation_slides(), self.SCREEN_ID)
         # Report every move so the control screen's picker can follow along.
         self._slides.slide_changed.connect(self._on_slide_changed)
         self._stack.addWidget(self._slides)                 # 0

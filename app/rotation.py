@@ -34,6 +34,22 @@ class RotationManager(QObject):
         if self._timer.isActive():
             self._timer.start()
 
+    def progress(self) -> float:
+        """
+        How far through the current dwell we are, 0 → 1.
+
+        The presentation footer draws this as a rail, so a visitor can see that
+        something is coming rather than only that something changed. Read from
+        the live timer rather than tracked separately: two clocks for one dwell
+        is exactly the kind of thing that drifts apart and nobody notices.
+        """
+        if not self._timer.isActive():
+            return 0.0
+        remaining = self._timer.remainingTime()
+        if remaining < 0:
+            return 1.0
+        return max(0.0, min(1.0, 1.0 - remaining / IDLE_MS))
+
     def _on_mode_changed(self, mode: str):
         if mode == "standard":
             self._timer.start()

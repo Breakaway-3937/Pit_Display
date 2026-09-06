@@ -79,6 +79,11 @@ class Reading:
     unit: str = ""
     status: str = IDLE
     detail: str = ""
+    # The figure's shape across the match, for the tile's trace. A sag that
+    # dipped once reads differently from one that sat low all match — that is
+    # the difference between "carry on" and "change the battery", and a single
+    # number cannot say it. Empty when the signal has no per-second rollup.
+    shape: tuple[float, ...] = field(default_factory=tuple)
 
 
 @dataclass
@@ -213,6 +218,41 @@ def _mean(session_id: int, name: str) -> float | None:
     return row["x"] if row and row["x"] is not None else None
 
 
+# How many points a tile trace carries. Enough to show a dip, few enough that
+# a 55" panel draws it as a line rather than a smear.
+SHAPE_POINTS = 52
+
+
+def shape(session_id: int, name: str, col: str = "v_max",
+          points: int = SHAPE_POINTS) -> tuple[float, ...]:
+    """
+    The signal's shape across the session, as `points` evenly spaced values.
+
+    Read from `sample_1s`, never from `sample`: the per-second rollup is what it
+    is for, and a full-resolution read of a nine-minute log to draw a 52-point
+    line would be several hundred thousand rows for something two centimetres
+    wide. The aggregate matches the tile's own figure — a tile showing the
+    lowest value traces the lows — so the number and the line agree.
+    """
+    agg = {"v_min": "MIN(r.v_min)", "v_max": "MAX(r.v_max)"}.get(
+        col, "AVG(r.v_avg)")
+    rows = db.fetchall(
+        f"""SELECT r.t_s ts, {agg} v FROM samples.sample_1s r
+            JOIN series se ON se.id = r.series_id
+            JOIN signal s ON s.id = se.signal_id
+            WHERE se.session_id = ? AND s.name = ?
+            GROUP BY r.t_s ORDER BY r.t_s""", (session_id, name))
+    values = [r["v"] for r in rows if r["v"] is not None]
+    if len(values) < 2:
+        return ()
+    if len(values) <= points:
+        return tuple(values)
+    # Even decimation rather than averaging: the board is showing the shape of
+    # the worst case, and averaging buckets would flatten the dip that matters.
+    step = (len(values) - 1) / (points - 1)
+    return tuple(values[int(round(i * step))] for i in range(points))
+
+
 def _fmt(v: float | None, places: int = 1) -> str:
     if v is None:
         return "—"
@@ -240,7 +280,10 @@ def vitals(session_id: int) -> list[Reading]:
         status = (FAULT if sag <= BROWNOUT_V
                   else WARN if sag <= BROWNOUT_V + 1.0 else OK)
         out.append(Reading("Battery sag", _fmt(sag, 2), "V", status,
-                           f"rest {_fmt(rest, 2)} V · brownout at {BROWNOUT_V} V"))
+                           f"rest {_fmt(rest, 2)} V · brownout at {BROWNOUT_V} V",
+                           shape(session_id, "SupplyVoltage", "v_min")
+                           or shape(session_id, "SystemStats/BatteryVoltage",
+                                    "v_min")))
 
     brown = _num(session_id, "SystemStats/BrownedOut")
     if brown is not None:
@@ -251,14 +294,19 @@ def vitals(session_id: int) -> list[Reading]:
     peak_a = _num(session_id, "StatorCurrent")
     if peak_a is not None:
         out.append(Reading("Peak motor current", _fmt(peak_a, 0), "A", IDLE,
-                           "highest stator current on any one motor"))
+                           "highest stator current on any one motor",
+                           shape(session_id, "StatorCurrent")))
 
     total_a = _num(session_id, "RealOutputs/Robot Total Current Amps")
     if total_a is None:
         total_a = _num(session_id, "PowerDistribution/TotalCurrent")
     if total_a is not None:
         out.append(Reading("Peak total draw", _fmt(total_a, 0), "A", IDLE,
-                           "every channel on the PDH at once"))
+                           "every channel on the PDH at once",
+                           shape(session_id,
+                                 "RealOutputs/Robot Total Current Amps")
+                           or shape(session_id,
+                                    "PowerDistribution/TotalCurrent")))
 
     watts = _num(session_id, "RealOutputs/Robot Total Power Watts")
     if watts is not None:
@@ -267,7 +315,8 @@ def vitals(session_id: int) -> list[Reading]:
     hot_c = _num(session_id, "DeviceTemp")
     if hot_c is not None:
         out.append(Reading("Hottest motor", _fmt(hot_c, 0), "°C", IDLE,
-                           f"{_fmt(hot_c * 9 / 5 + 32, 0)} °F"))
+                           f"{_fmt(hot_c * 9 / 5 + 32, 0)} °F",
+                           shape(session_id, "DeviceTemp")))
 
     can = _mean(session_id, "SystemStats/CANBus/Utilization")
     can_hi = _num(session_id, "SystemStats/CANBus/Utilization")
@@ -276,7 +325,9 @@ def vitals(session_id: int) -> list[Reading]:
         pct, hi = can * scale, (can_hi or can) * scale
         out.append(Reading("CAN bus", _fmt(pct, 0), "%",
                            WARN if pct >= 70 else OK,
-                           f"average · peaked at {_fmt(hi, 0)}%"))
+                           f"average · peaked at {_fmt(hi, 0)}%",
+                           shape(session_id,
+                                 "SystemStats/CANBus/Utilization", "v_avg")))
 
     errs = 0.0
     for n in ("SystemStats/CANBus/ReceiveErrorCount",
@@ -293,7 +344,10 @@ def vitals(session_id: int) -> list[Reading]:
         out.append(Reading("Loop time", _fmt(loop, 1), "ms",
                            WARN if loop > LOOP_PERIOD_MS else OK,
                            f"average of a {LOOP_PERIOD_MS:.0f} ms budget · "
-                           f"worst {_fmt(loop_hi, 0)} ms"))
+                           f"worst {_fmt(loop_hi, 0)} ms",
+                           shape(session_id,
+                                 "RealOutputs/LoggedRobot/FullCycleMS",
+                                 "v_avg")))
 
     cpu = _num(session_id, "SystemStats/CPUTempCelsius")
     if cpu is not None:

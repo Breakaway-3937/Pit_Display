@@ -33,8 +33,10 @@ import tempfile
 from pathlib import Path
 from typing import Callable
 
-_ROOT = Path(__file__).resolve().parents[2]
-BUNDLED_DIR = _ROOT / "tools" / "owlet"
+from app import paths
+
+# Shipped executables — read-only, inside the bundle when frozen.
+BUNDLED_DIR = paths.resource("tools", "owlet")
 
 # CTRE names its builds `owlet-<version>-<os><arch>`. Globs, not fixed names:
 # upgrading owlet is dropping the new binaries in tools/owlet/ and deleting the

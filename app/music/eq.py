@@ -90,10 +90,18 @@ def _row_to_preset(row) -> EQPreset:
 
 
 def all_presets() -> list[EQPreset]:
-    return [
-        _row_to_preset(r)
-        for r in db.fetchall("SELECT * FROM eq_presets ORDER BY built_in DESC, name")
-    ]
+    """
+    Built-ins in **authored order**, then anything the team saved, by name.
+
+    The authored order is the order an operator reaches for them — Flat to
+    judge the room, Pit Default for the day, then the three exceptions — and
+    sorting the built-ins alphabetically put "Crowded" first, which is nobody's
+    starting point.
+    """
+    rows = [_row_to_preset(r) for r in db.fetchall("SELECT * FROM eq_presets")]
+    order = {p.name: i for i, p in enumerate(BUILT_INS)}
+    return sorted(rows, key=lambda p: (0, order[p.name], "") if p.name in order
+                  else (1, 0, p.name))
 
 
 def get_preset(name: str) -> EQPreset | None:

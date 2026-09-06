@@ -1,33 +1,66 @@
 """
-Interactive Impact Board — the touch kiosk board for the project screen.
+The pit-front panel — one interpretive surface, 1080×1920 portrait.
 
-Designed for a 32" monitor mounted in PORTRAIT (tall) orientation, e.g.
-1080×1920. Layout is a single scrolling column under a horizontal tab bar,
-with a persistent sponsors strip at the bottom. Type scales with the screen
-width (see `resizeEvent` / `_apply_scale`) so it stays legible from across a
-pit at any resolution.
+A 32" monitor at standing height, touched by strangers. **The tabs are gone.**
+Everything the board has to say is on one surface at one glance — the robot,
+the law, the numbers, the programs, the sponsors — stacked as an interpretive
+panel rather than paged as an app. Tapping only ever *deepens* what is already
+visible; it never navigates away from it.
 
-Interactivity:
-  • Horizontal tab bar switches sections.
-  • Every program / award card is tappable and opens a full detail view with
-    a "‹ Back" control — built for touch.
+## One surface, five bands
 
-Content is real (synthesized from the team's FIRST Impact documents). Edit the
-`TABS` list to reshape it. Theme + team aware: apply_theme("dark"|"light")
-recolors the Rounded cards; apply_team(hex) re-accents tabs, headers, figures.
+    identity  →  CAD  →  Act 472  →  reach  →  programs  →  sponsors
+
+top to bottom, each on a 2px rule. **The order is the argument:** this is the
+robot, this is what the team changed, this is how far it reached.
+
+## The CAD is not a page
+
+It is the top 648px of the same panel — always live, always orbitable, with the
+subsystem chips on its own floor. Focusing a subsystem changes the caption under
+it and the pit LEDs; nothing else on the board moves. The viewer is *lent* to
+the board by `ProjectScreen` (`attach_cad`) rather than built here, so the pit
+never runs two Chromium scenes for one robot.
+
+## The red, spent once
+
+The **Act 472 plate** is this surface's one red — a filled field with white
+type, never red letterforms (red on carbon is 2.8:1). Chips, stats and cards
+stay carbon and white.
+
+## About, collapsed to a line
+
+The About tab was a paragraph nobody standing up will read. The five E's become
+a single mono rail under the wordmark — the mission stated in five words,
+legible from across the pit.
+
+## Detail rises, never replaces
+
+A tapped card raises a sheet over the lower two thirds and **the CAD stays
+visible above it** — 340ms OutCubic, with the scrim painted to 62%. Press and
+release only; there is no hover state anywhere on this screen, because there is
+no pointer.
+
+Content below is the team's real material; editing `TABS` reshapes the board.
 """
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
-    QStackedWidget, QScrollArea, QSizePolicy, QFrame,
+    QScrollArea, QSizePolicy, QFrame,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QFontMetrics
+from PyQt6.QtCore import (
+    Qt, QEasingCurve, QPropertyAnimation, QRect, QRectF, pyqtSignal,
+)
+from PyQt6.QtGui import QColor, QFont, QPainter
 
 from app import brand
+from app.cad_assets import cad_assets
 from app.config import config
 from app.touch import is_touch
-from app.widgets.brand_widgets import RoundedFrame, RoundedButton, Trace
+from app.widgets.brand_widgets import (
+    RoundedFrame, RoundedButton, SelectableChip, pocket_path,
+)
+from app.widgets.chassis import PlatePanel
 
 
 # ── Content model ─────────────────────────────────────────────────────────────
@@ -194,14 +227,10 @@ TABS: list[dict] = [
     },
 ]
 
-# ── About tab specifics ───────────────────────────────────────────────────────
-_ABOUT_MISSION = (
-    "Since 2011, FRC Team 3937 Breakaway has grown a single goal — build a "
-    "competitive robot — into a statewide mission that “Every Kid Can” "
-    "succeed in STEM. We organize all of our outreach around five E’s of "
-    "Opportunity:"
-)
-# The "E's" from the team outline = Breakaway's 5 E's of Opportunity.
+# ── The mission and the reach ────────────────────────────────────────────────
+# Breakaway's 5 E's of Opportunity. The panel sets these as one mono rail — the
+# mission in five words — rather than the paragraph the About tab used to hold,
+# which nobody standing at a kiosk was ever going to read.
 _ABOUT_ES_DETAIL = [
     ("Excite",  "Raise STEM awareness through events, robot demos, and partnerships."),
     ("Engage",  "Build relationships that make STEM accessible to more students."),
@@ -215,77 +244,12 @@ _ABOUT_STATS = [
     ("100%",  "AR FRC Teams Served"),
     ("29+",   "Arkansas Counties"),
 ]
-_ABOUT_STRATEGIC = (
-    "Every initiative lives in our annual budget and a strategic plan we review "
-    "every 3 years to ensure sustainability. Department chairs and returning "
-    "members mentor new members, and we’re building a resource library of "
-    "handbooks and training videos."
-)
-_DEPARTMENTS = [
-    "Machining & Assembly", "Programming", "CAD", "Electromatics",
-    "Business", "Impact", "Multi-Media Production",
-]
 # TODO(team): swap in real sponsor logos / names.
 _SPONSORS = ["Sponsor", "Sponsor", "Sponsor", "Sponsor"]
 
 
-# ── Base type sizes (px @ 1080-wide baseline; scaled by screen width) ─────────
-FS_WORDMARK   = 38
-FS_EYEBROW    = 19
-FS_PAGE_TITLE = 48
-FS_SECTION    = 30
-FS_CARD_TITLE = 32
-FS_BODY       = 21
-FS_STAT_LABEL = 22
-# Stat tiles are the board's key points, so they're hero-scaled: the tile owns a
-# fixed height (scaled with the screen) and the number auto-fits to fill it —
-# see `_StatNumber` / `_stat_tile`. This keeps the figures dominant and uniform
-# across the four tiles at any resolution.
-STAT_TILE_H   = 200   # base tile height @1080 baseline
-STAT_NUM_RATIO = 0.52  # figure pixel size as a fraction of tile height
-FS_DEPT       = 25
-FS_TAB        = 22
-FS_BACK       = 24
-FS_CHIP       = 16
-FS_ETAG       = 18
-FS_HINT       = 18
-
 _Bold = QFont.Weight.Bold
 _Demi = QFont.Weight.DemiBold
-
-
-def _rgb(hex_color: str) -> tuple[int, int, int]:
-    h = hex_color.lstrip("#")
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-
-
-class _Chip(QLabel):
-    """A full-pill tag (§7) — used for the E's and FIRST-in-AR sub-sections."""
-
-    def __init__(self, text: str, accent: str, px: int = FS_CHIP):
-        super().__init__(text.upper())
-        self._accent = accent
-        self._px = px
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setContentsMargins(14, 7, 14, 7)
-        self.set_px(px)
-        self.set_accent(accent)
-
-    def set_px(self, px: int):
-        self._px = px
-        f = QFont(brand.FONT_DISPLAY)
-        f.setPixelSize(px)
-        f.setWeight(_Demi)
-        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 110)
-        self.setFont(f)
-
-    def set_accent(self, accent: str):
-        self._accent = accent
-        r, g, b = _rgb(accent)
-        self.setStyleSheet(
-            f"color:{accent}; background:rgba({r},{g},{b},0.12); "
-            f"border-radius:{brand.R_PILL}px;"
-        )
 
 
 class _CardButton(RoundedFrame):
@@ -325,522 +289,699 @@ class _CardButton(RoundedFrame):
             self.set_border(self._border_rest)
 
 
-class _StatNumber(QLabel):
-    """A hero stat figure whose size is driven explicitly by `set_px`.
+# ── What the panel actually shows ────────────────────────────────────────────
+# The five E's, as one rail rather than a paragraph nobody standing up reads.
+_MISSION_LINE = " · ".join(name.upper() for name, _ in _ABOUT_ES_DETAIL)
 
-    The board sets the pixel size deterministically from the tile height (see
-    `_apply_scale`) so the figure always scales with the screen — it never
-    depends on the label's own allocated height, which the layout can squeeze.
-    Width is only used as a gentle guard: a long figure (e.g. ``1.5K+``) may be
-    nudged down to fit a settled width, but never below half the hero size, so
-    it can't collapse to a tiny label the way an unbounded fit-to-width would.
+# The law gets the surface's one red, so it is pulled out of the card list by
+# name rather than by position — reordering TABS must not move the red.
+_ACT_NAME = "The Bill — Act 472"
+
+
+def _act_item() -> dict:
+    for tab in TABS:
+        for item in tab.get("items", []):
+            if item["name"] == _ACT_NAME:
+                return item
+    return {"name": _ACT_NAME, "blurb": "", "detail": ""}
+
+
+def _program_items() -> list[tuple[str, dict]]:
+    """(category, item) for every card in the grid, Act 472 excluded."""
+    out = []
+    for tab in TABS:
+        for item in tab.get("items", []):
+            if item["name"] != _ACT_NAME:
+                out.append((tab["eyebrow"], item))
+    return out
+
+
+# ── Base type sizes, in design px against the 1080 width ─────────────────────
+FS_WORDMARK  = 40
+FS_LOCATION  = 18
+FS_MISSION   = 19
+FS_RAIL      = 17
+FS_ACT_EYE   = 19
+FS_ACT       = 88
+FS_ACT_BODY  = 25
+FS_STAT_NUM  = 58
+FS_STAT_CAP  = 17
+FS_SECTION   = 19
+FS_CARD      = 30
+FS_CARD_BODY = 21
+FS_CHIP_TXT  = 20
+FS_HINT      = 22
+FS_SHEET_EYE = 22
+FS_SHEET_TTL = 54
+FS_SHEET_BODY = 26
+
+CAD_STAGE_H  = 648
+# 648 of 1920 — the stage's share of the panel. Held as a ratio as well as a
+# design px so a panel shorter than the design gives the stage up in the same
+# proportion as everything else, instead of pushing the Act plate through the
+# subsystem chips.
+CAD_STAGE_RATIO = CAD_STAGE_H / 1920.0
+SPONSOR_H    = 76
+
+
+class _Band(QFrame):
+    """
+    A content band closed by a 2px rule — the panel's only separator.
+
+    Five bands, one rule weight, no cards around the whole thing: the order of
+    the bands *is* the argument the panel is making, and a stack of framed
+    boxes would read as five unrelated widgets instead of one page.
     """
 
-    def __init__(self, text: str, family: str):
-        super().__init__(text)
-        self._family = family
-        self._px = 40
-        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+    def __init__(self, rule: str = "top", parent=None):
+        super().__init__(parent)
+        self.setObjectName("band")
+        # The app-wide `QWidget { background-color: … }` rule paints a QFrame,
+        # which on the plate's gradient shows up as a flat dark rectangle. Every
+        # container that sits *on* the plate has to opt out of it explicitly.
+        self.setStyleSheet("QFrame#band { background: transparent; }")
+        self._line = brand.CARBON_LINE
+        self._rule = rule
 
-    def _font_at(self, px: int) -> QFont:
-        f = QFont(self._family)
-        f.setWeight(_Bold)
-        f.setPixelSize(max(10, px))
-        return f
+    def set_line(self, hex_color: str):
+        self._line = hex_color
+        self.update()
 
-    def set_px(self, px: int):
-        self._px = px
-        self._apply()
-
-    def setText(self, text: str):
-        super().setText(text)
-        self._apply()
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        self._apply()
-
-    def _apply(self):
-        px = self._px
-        w = self.width()
-        # Only shrink on a real, settled width, and never past half the hero
-        # size — a transient/degenerate layout pass must not collapse the figure.
-        if w > 60:
-            floor = max(24, px // 2)
-            while px > floor and \
-                    QFontMetrics(self._font_at(px)).horizontalAdvance(self.text()) > w:
-                px -= 2
-        self.setFont(self._font_at(px))
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(self._line))
+        y = 0 if self._rule == "top" else self.height() - 2
+        p.drawRect(QRectF(0, y, self.width(), 2))
+        p.end()
 
 
-# ── The board ─────────────────────────────────────────────────────────────────
+class _CADStage(QFrame):
+    """
+    The robot, always live. A radial-lit well that the web view sits inside.
 
-class InteractiveBoard(QWidget):
-    """Portrait tabbed impact board for the project screen. Theme + team aware."""
-
-    _BASE_W = 1080
+    Painted rather than styled because the well is a radial gradient and QSS
+    has no radial: `qlineargradient` is all Qt's stylesheet syntax offers.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._accent = config.active_team.primary_color
-        self._pal = brand.palette(config.screen_theme("project"))
-        self._scale = 1.0
+        self.setObjectName("cad_stage")
+        self._radius = 14
+        self._target = 400
+        # Same reason as _Band: the QSS ground would square off the corners of
+        # the rounded well this paints for itself.
+        self.setStyleSheet("QFrame#cad_stage { background: transparent; }")
 
-        # Tracked for live re-theming / re-branding / re-scaling.
+    def set_radius(self, r: int):
+        self._radius = r
+        self.update()
+
+    def set_target_height(self, h: int):
+        """
+        The height the stage *wants*, not the height it insists on.
+
+        The stage is the band that gives. A fixed height meant that on a window
+        shorter than the design the layout had nowhere to take the deficit from
+        and simply overlapped the Act plate through the subsystem chips. The
+        robot is also the most compressible thing here — it is a 3D view that
+        reframes itself — while the plate, the figures and the cards each carry
+        a sentence that cannot shrink past its own type.
+        """
+        self._target = max(1, int(h))
+        self.setMaximumHeight(self._target)
+        self.setMinimumHeight(min(self._target, 120))
+        self.updateGeometry()
+
+    def sizeHint(self):
+        from PyQt6.QtCore import QSize
+        return QSize(0, self._target)
+
+    def minimumSizeHint(self):
+        from PyQt6.QtCore import QSize
+        return QSize(0, min(self._target, 120))
+
+    def paintEvent(self, _e):
+        from PyQt6.QtGui import QRadialGradient
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(0, 0, self.width(), self.height())
+        grad = QRadialGradient(rect.width() * 0.5, rect.height() * 0.34,
+                               max(rect.width() * 1.2, rect.height() * 0.9))
+        grad.setColorAt(0.0, QColor("#2A262A"))
+        grad.setColorAt(0.68, QColor("#151215"))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(grad)
+        p.drawRoundedRect(rect, self._radius, self._radius)
+
+        # The Pocket: engineering scope, at 13% white so it marks the stage
+        # without becoming a second focal element.
+        d = self.width() * 0.048
+        p.setBrush(QColor(250, 249, 248, 33))
+        p.drawPath(pocket_path(rect.right() - d * 0.9, d * 0.9, d / 2, rot=132))
+        p.end()
+
+
+class _SubsystemChip(SelectableChip):
+    """A CAD focus chip. Filled white when it is the focused subsystem."""
+
+    def __init__(self, sub_id: str, text: str):
+        super().__init__(text.upper(), radius=brand.R_PILL)
+        self.sub_id = sub_id
+        self.setMinimumHeight(56)
+
+
+class InteractiveBoard(PlatePanel):
+    """The pit-front panel. Theme + team aware; scales from its own width."""
+
+    SCREEN_ID = "project"
+
+    def __init__(self, parent=None):
+        super().__init__(screen_id="project", parent=parent)
+        self._scale = 1.0
+        self._fonts: list[tuple] = []          # (label, base_px, weight, family, tracking, role)
         self._cards: list[RoundedFrame] = []
-        self._blocks: list[tuple[RoundedFrame, int]] = []   # (frame, base_height)
-        self._stat_tiles: list[tuple[RoundedFrame, "_StatNumber", int]] = []
-        self._bracket_cards: list[RoundedFrame] = []   # the one focal card, bracketed
-        self._tab_buttons: list[RoundedButton] = []
-        self._accent_labels: list[QLabel] = []
-        self._chips: list[_Chip] = []
-        self._fonts: list[tuple] = []   # (label, base_px, weight, family, tracking)
-        self._detail_widget: QWidget | None = None
-        # List lengths captured when a detail view opens, so its registrations
-        # can be dropped again when it closes (see _discard_detail).
-        self._detail_marks = (0, 0, 0, 0)
+        self._chips: list[_SubsystemChip] = []
+        self._sponsor_plates: list[RoundedFrame] = []
+        self._cad_host: QWidget | None = None
+        self._cad_view = None
+        self._sheet: "_DetailSheet | None" = None
 
         self._build()
-        self._select_tab(0)
+        config.team_changed.connect(lambda _t: self.update())
+        cad_assets.subsystem_focused.connect(self._on_subsystem_focused)
+        cad_assets.config_changed.connect(self._rebuild_chips)
 
-        config.team_changed.connect(lambda t: self.apply_team(t.primary_color))
-
-    # ── Text factories (registered so they scale with the screen) ─────────
-    # Labels get NO Qt object names: the app QSS role rules (#screen_title …)
-    # carry font sizes, which override setFont() and freeze the responsive
-    # type. Colors are painted here instead, from a role resolved against the
-    # current palette ("title" | "ink" | "muted"; None = accent-managed).
-
-    def _role_color(self, role: str) -> str:
-        return self._pal[role]
+    # ── Type helpers (registered so everything scales together) ───────────
+    # Labels get NO Qt object names: the app QSS role rules carry font sizes,
+    # which override setFont() and would freeze the responsive type.
 
     def _reg(self, lbl: QLabel, base: int, weight, family: str,
-             tracking: int = 0, role: str | None = None):
-        self._fonts.append((lbl, base, weight, family, tracking, role))
+             tracking: int = 0, colour: str | None = None) -> QLabel:
+        self._fonts.append((lbl, base, weight, family, tracking))
         f = QFont(family)
-        f.setPixelSize(int(base * self._scale))
+        f.setPixelSize(max(8, int(base * self._scale)))
         f.setWeight(weight)
         if tracking:
             f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, tracking)
         lbl.setFont(f)
-        if role:
-            lbl.setStyleSheet(
-                f"color:{self._role_color(role)}; background:transparent;"
-            )
+        if colour:
+            lbl.setStyleSheet(f"color:{colour}; background:transparent;")
         return lbl
 
-    def _disp(self, text: str, base: int, weight=_Bold,
-              role: str | None = None) -> QLabel:
-        return self._reg(QLabel(text), base, weight, brand.FONT_DISPLAY, role=role)
+    def _disp(self, text, base, weight=_Bold, colour=brand.WHITE, track=0):
+        return self._reg(QLabel(text), base, weight, brand.FONT_DISPLAY,
+                         track, colour)
 
-    def _body(self, text: str, base: int = FS_BODY,
-              role: str | None = "muted") -> QLabel:
+    def _body_lbl(self, text, base=FS_CARD_BODY, colour=brand.N400):
         lbl = QLabel(text)
         lbl.setWordWrap(True)
-        return self._reg(lbl, base, QFont.Weight.Normal, brand.FONT_BODY, role=role)
+        return self._reg(lbl, base, QFont.Weight.Normal, brand.FONT_BODY,
+                         0, colour)
 
-    def _eyebrow(self, text: str, base: int = FS_EYEBROW) -> QLabel:
-        lbl = QLabel(text.upper())
-        lbl.setStyleSheet(f"color:{self._accent}; background:transparent;")
-        self._accent_labels.append(lbl)
-        return self._reg(lbl, base, _Demi, brand.FONT_DISPLAY, tracking=118)
+    def _mono(self, text, base=FS_RAIL, colour=brand.N500, track=112):
+        lbl = QLabel(text)
+        f = QFont()
+        f.setFamilies(brand.FONT_MONO_STACK)
+        f.setStyleHint(QFont.StyleHint.Monospace)
+        f.setWeight(_Demi)
+        f.setPixelSize(max(8, int(base * self._scale)))
+        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, track)
+        lbl.setFont(f)
+        lbl.setStyleSheet(f"color:{colour}; background:transparent;")
+        self._fonts.append((lbl, base, _Demi, None, track))
+        return lbl
 
     # ── Construction ──────────────────────────────────────────────────────
 
     def _build(self):
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        col = self.content_layout()
 
-        root.addWidget(self._header())
+        col.addLayout(self._identity_row())
+        col.addWidget(self._mission_rail())
+        col.addWidget(self._cad_band())
+        col.addWidget(self._act_plate())
+        col.addLayout(self._stat_row())
+        col.addWidget(self._programs_band(), stretch=1)
+        col.addWidget(self._sponsor_strip())
 
-        # Nav row toggles between the tab bar and the detail "back" bar.
-        self._nav = QStackedWidget()
-        self._nav.addWidget(self._tab_bar())     # 0
-        self._nav.addWidget(self._back_bar())    # 1
-        self._nav.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        root.addWidget(self._nav)
+    def _identity_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(20)
+        # The identity is the type, not artwork: a white wordmark plate would
+        # punch a hole in the plate's surface and spend budget the Act needs.
+        name = QLabel()
+        name.setTextFormat(Qt.TextFormat.RichText)
+        self._wordmark = self._reg(name, FS_WORDMARK, _Bold,
+                                   brand.FONT_DISPLAY, 102)
+        self._refresh_wordmark()
+        row.addWidget(name)
+        row.addStretch(1)
+        team = config.active_team
+        where = (team.location or "").upper()
+        self._location = self._mono(
+            f"{where}  /  SINCE 2011" if where else "SINCE 2011",
+            FS_LOCATION)
+        row.addWidget(self._location, alignment=Qt.AlignmentFlag.AlignBottom)
+        return row
 
-        # Center toggles between the tab pages and a detail view.
-        self._center = QStackedWidget()
-        self._pages = QStackedWidget()
-        for tab in TABS:
-            self._pages.addWidget(self._page(tab))
-        self._center.addWidget(self._pages)      # 0
-        root.addWidget(self._center, stretch=1)
+    def _refresh_wordmark(self):
+        team = config.active_team
+        self._wordmark.setText(
+            f'<span style="color:{brand.WHITE}">{(team.name or "Team").upper()}</span>'
+            f'<span style="color:{brand.N500}"> {team.number}</span>')
 
-        root.addWidget(self._sponsors_footer())
+    def _mission_rail(self) -> _Band:
+        host = _Band(rule="bottom")
+        self._mission_band = host
+        row = QHBoxLayout(host)
+        row.setContentsMargins(0, 0, 0, 18)
+        row.setSpacing(22)
+        self._mission_lbl = self._disp("Every kid can", FS_MISSION, _Demi,
+                                       brand.N50, track=120)
+        row.addWidget(self._mission_lbl)
+        row.addStretch(1)
+        row.addWidget(self._mono(_MISSION_LINE, FS_RAIL))
+        return host
 
-    def _header(self) -> QWidget:
-        bar = QWidget()
-        bar.setFixedHeight(88)
-        lay = QHBoxLayout(bar)
-        lay.setContentsMargins(30, 0, 30, 0)
-        lay.setSpacing(12)
+    def _cad_band(self) -> QWidget:
+        self._stage = _CADStage()
+        self._stage.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                  QSizePolicy.Policy.Preferred)
+        lay = QVBoxLayout(self._stage)
+        lay.setContentsMargins(30, 28, 30, 26)
+        lay.setSpacing(0)
 
-        bw = self._disp("BREAKAWAY", FS_WORDMARK)
-        self._accent_labels.append(bw)
-        bw.setStyleSheet(f"color:{self._accent}; background:transparent;")
-        num = self._disp("3937", FS_WORDMARK, role="title")
-        lay.addWidget(bw)
-        lay.addWidget(num)
-        lay.addStretch()
+        top = QHBoxLayout()
+        self._stage_label = self._mono("LIVE CAD  /  robot.glb", FS_RAIL)
+        top.addWidget(self._stage_label)
+        top.addStretch(1)
+        lay.addLayout(top)
 
-        self._header_line = Trace(color=self._accent, stroke=5)
-        self._header_line.setFixedWidth(170)
-        lay.addWidget(self._header_line, alignment=Qt.AlignmentFlag.AlignVCenter)
-        return bar
+        # The web view lives here once ProjectScreen lends it to us.
+        self._cad_host = QWidget()
+        self._cad_host.setObjectName("cad_host")
+        self._cad_host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # A QWebEngineView paints white until its page has loaded, which on a
+        # near-black panel reads as a fault. Give the well its own dark ground
+        # so the load is invisible.
+        self._cad_host.setStyleSheet(
+            "QWidget#cad_host { background: transparent; }")
+        host_lay = QVBoxLayout(self._cad_host)
+        host_lay.setContentsMargins(0, 0, 0, 0)
+        self._cad_placeholder = self._mono(
+            "THREE.JS STAGE  ·  NO MODEL UPLOADED", FS_RAIL, brand.GRAPHITE)
+        self._cad_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        host_lay.addWidget(self._cad_placeholder)
+        lay.addWidget(self._cad_host, stretch=1)
 
-    def _tab_bar(self) -> QWidget:
-        bar = QWidget()
-        lay = QHBoxLayout(bar)
-        lay.setContentsMargins(20, 6, 20, 10)
-        lay.setSpacing(8)
-        for i, tab in enumerate(TABS):
-            btn = RoundedButton(tab["tab"], variant="ghost",
-                                accent=self._accent, radius=brand.R_BTN)
-            btn.setMinimumHeight(64)
-            f = QFont(brand.FONT_DISPLAY); f.setPixelSize(FS_TAB); f.setWeight(_Demi)
-            btn.setFont(f)
-            btn.clicked.connect(lambda _=False, idx=i: self._select_tab(idx))
-            self._tab_buttons.append(btn)
-            lay.addWidget(btn, stretch=1)
-        return bar
+        # The caption is the one thing focusing a subsystem changes.
+        self._cad_hint = self._body_lbl(
+            "Drag to orbit · pinch to zoom · tap a subsystem to isolate it.",
+            FS_HINT, brand.N400)
+        lay.addWidget(self._cad_hint)
+        lay.addSpacing(12)
 
-    def _back_bar(self) -> QWidget:
-        bar = QWidget()
-        lay = QHBoxLayout(bar)
-        lay.setContentsMargins(20, 6, 20, 10)
-        lay.setSpacing(12)
-        self._back_btn = RoundedButton("‹  Back", variant="secondary",
-                                       accent=self._accent, radius=brand.R_BTN)
-        self._back_btn.setMinimumHeight(64)
-        self._back_btn.setFixedWidth(200)
-        f = QFont(brand.FONT_DISPLAY); f.setPixelSize(FS_BACK); f.setWeight(_Demi)
-        self._back_btn.setFont(f)
-        self._back_btn.clicked.connect(self._close_detail)
-        lay.addWidget(self._back_btn)
-        self._back_title = self._disp("", FS_SECTION, role="title")
-        lay.addWidget(self._back_title, alignment=Qt.AlignmentFlag.AlignVCenter)
-        lay.addStretch()
-        return bar
+        self._chip_row = QHBoxLayout()
+        self._chip_row.setSpacing(10)
+        lay.addLayout(self._chip_row)
+        self._rebuild_chips()
+        return self._stage
 
-    # ── Pages ─────────────────────────────────────────────────────────────
+    def _rebuild_chips(self):
+        while self._chip_row.count():
+            item = self._chip_row.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._chips.clear()
 
-    def _scroll_page(self):
+        entries = [("", "Whole robot")]
+        try:
+            entries += [(s["id"], s.get("name", s["id"]))
+                        for s in cad_assets.load_config().get("subsystems", [])
+                        if s.get("id")]
+        except Exception:
+            # A malformed subsystems.json must leave the visitor a working
+            # robot, not an empty floor.
+            pass
+        for sub_id, name in entries:
+            chip = _SubsystemChip(sub_id, name)
+            chip.clicked.connect(lambda _c=False, s=sub_id: self._focus(s))
+            self._chips.append(chip)
+            self._chip_row.addWidget(chip)
+        self._chip_row.addStretch(1)
+        self._sync_chip_state()
+        self._apply_scale()
+
+    def _focus(self, sub_id: str):
+        cad_assets.focus_subsystem(sub_id or "")
+
+    def _on_subsystem_focused(self, sub_id: str):
+        self._sync_chip_state()
+        name = next((c.text().title() for c in self._chips
+                     if c.sub_id == sub_id), "")
+        self._cad_hint.setText(
+            f"{name} isolated — tap Whole robot to bring the rest back."
+            if sub_id else
+            "Drag to orbit · pinch to zoom · tap a subsystem to isolate it.")
+
+    def _sync_chip_state(self):
+        focused = getattr(cad_assets, "focused_id", "") or ""
+        for chip in self._chips:
+            chip.set_active(chip.sub_id == focused)
+
+    def _act_plate(self) -> QWidget:
+        item = _act_item()
+        # The surface's one red: a filled field with white type. Never red
+        # letterforms — red on carbon is 2.8:1 and forbidden for text.
+        plate = _CardButton(fill=brand.RED, border=None, accent=brand.RED,
+                            radius=brand.R_CARD)
+        plate.clicked.connect(
+            lambda: self._open_sheet("Advocacy · Arkansas", "Act 472",
+                                     item.get("detail") or item.get("blurb", "")))
+        lay = QVBoxLayout(plate)
+        lay.setContentsMargins(34, 30, 34, 30)
+        lay.setSpacing(14)
+
+        top = QHBoxLayout()
+        top.addWidget(self._disp("Advocacy · Arkansas", FS_ACT_EYE, _Demi,
+                                 "rgba(255,255,255,0.82)", track=120))
+        top.addStretch(1)
+        top.addWidget(self._mono("SIGNED  ·  APRIL 2025", FS_RAIL,
+                                 "rgba(255,255,255,0.82)"))
+        lay.addLayout(top)
+
+        lay.addWidget(self._disp("Act 472", FS_ACT, _Bold, brand.WHITE, track=98))
+        lay.addWidget(self._body_lbl(
+            "Arkansas's first state funding for competitive robotics teams — "
+            "written, argued and passed by this team over 24+ months.",
+            FS_ACT_BODY, brand.WHITE))
+        lay.addWidget(self._mono(
+            "CAPITOL DAY: 6 FRC + 4 VEX TEAMS · SENATE & HOUSE TESTIMONY · "
+            "TAP FOR MORE", FS_RAIL, "rgba(255,255,255,0.82)", track=106))
+        return plate
+
+    def _stat_row(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(14)
+        for number, caption in _ABOUT_STATS:
+            tile = RoundedFrame(fill=brand.TILE_DARK, border=brand.CARBON_LINE,
+                                radius=brand.R_CARD)
+            self._cards.append(tile)
+            v = QVBoxLayout(tile)
+            v.setContentsMargins(22, 20, 22, 20)
+            v.setSpacing(10)
+            v.addWidget(self._disp(number, FS_STAT_NUM, _Bold, brand.WHITE,
+                                   track=99))
+            cap = self._disp(caption, FS_STAT_CAP, _Demi, brand.N400,
+                             track=114)
+            # "Volunteer Hrs / Year" does not fit a quarter of a 768px panel on
+            # one line, and an unwrapped caption is simply cut in half.
+            cap.setWordWrap(True)
+            cap.setSizePolicy(QSizePolicy.Policy.Ignored,
+                              QSizePolicy.Policy.Preferred)
+            cap.setMinimumWidth(0)
+            v.addWidget(cap)
+            row.addWidget(tile)
+        return row
+
+    def _programs_band(self) -> QWidget:
+        band = _Band()
+        self._band = band
+        lay = QVBoxLayout(band)
+        lay.setContentsMargins(0, 20, 0, 0)
+        lay.setSpacing(14)
+
+        head = QHBoxLayout()
+        head.addWidget(self._disp("What we run", FS_SECTION, _Demi, brand.N50,
+                                  track=120))
+        head.addStretch(1)
+        head.addWidget(self._mono("TAP ANY CARD", FS_RAIL))
+        lay.addLayout(head)
+
+        # Every card is here, two across. The comp shows four at rest; the rest
+        # are a drag away rather than deleted, because they are real programs
+        # the team runs and a kiosk that hides them is lying by omission.
+        inner = QWidget()
+        grid = QGridLayout(inner)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(14)
+        for i, (category, item) in enumerate(_program_items()):
+            grid.addWidget(self._program_card(category, item), i // 2, i % 2)
+        grid.setRowStretch(grid.rowCount(), 1)
+
         scroll = QScrollArea()
+        scroll.setWidget(inner)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        inner = QWidget()
-        col = QVBoxLayout(inner)
-        col.setContentsMargins(30, 22, 30, 26)
-        col.setSpacing(16)
-        scroll.setWidget(inner)
-        return scroll, col
+        scroll.viewport().setStyleSheet("background: transparent;")
+        # The grid is the band that gives: on a short panel everything above it
+        # is the argument and this is the part a finger can scroll to.
+        scroll.setMinimumHeight(44)
+        lay.addWidget(scroll, stretch=1)
+        return band
 
-    def _page(self, tab: dict) -> QWidget:
-        scroll, col = self._scroll_page()
-        col.addWidget(self._eyebrow(tab["eyebrow"]))
-        col.addWidget(self._disp(tab["title"], FS_PAGE_TITLE, role="title"))
-
-        if tab["kind"] == "about":
-            self._build_about(col)
-        else:
-            hint = self._body("Tap any card to learn more  ›", FS_HINT, role=None)
-            hint.setStyleSheet(f"color:{self._accent}; background:transparent;")
-            self._accent_labels.append(hint)
-            col.addWidget(hint)
-            col.addSpacing(2)
-            self._build_cards(col, tab["items"], tab["title"])
-
-        col.addStretch()
-        return scroll
-
-    def _build_about(self, col: QVBoxLayout):
-        # Hero image — a team/pit photo anchors the page (drop a real image here).
-        col.addWidget(self._image_block(300))
-
-        # "Every Kid Can" mission card — the one focal card, framed by a Bracket
-        mission = self._card(bracket=True)
-        m = QVBoxLayout(mission)
-        m.setContentsMargins(26, 24, 26, 24)
-        m.setSpacing(12)
-        m.addWidget(self._disp("Every Kid Can", FS_CARD_TITLE, role="title"))
-        m.addWidget(self._body(_ABOUT_MISSION))
-
-        for name, detail in _ABOUT_ES_DETAIL:
-            row = QHBoxLayout()
-            row.setSpacing(12)
-            tag = self._disp(name.upper(), FS_ETAG, weight=_Demi)
-            tag.setMinimumWidth(120)
-            tag.setStyleSheet(f"color:{self._accent}; background:transparent;")
-            self._accent_labels.append(tag)
-            row.addWidget(tag, alignment=Qt.AlignmentFlag.AlignTop)
-            row.addWidget(self._body(detail), stretch=1)
-            m.addLayout(row)
-        col.addWidget(mission)
-
-        # Quick stats — 2×2 grid (portrait-friendly)
-        stat_grid = QGridLayout()
-        stat_grid.setSpacing(12)
-        for i, (number, label) in enumerate(_ABOUT_STATS):
-            stat_grid.addWidget(self._stat_tile(number, label), i // 2, i % 2)
-        col.addLayout(stat_grid)
-
-        # Departments — 2-column grid
-        col.addWidget(self._disp("Departments", FS_SECTION, role="title"))
-        dept_grid = QGridLayout()
-        dept_grid.setSpacing(10)
-        for i, name in enumerate(_DEPARTMENTS):
-            card = self._card()
-            c = QVBoxLayout(card)
-            c.setContentsMargins(18, 16, 18, 16)
-            c.addWidget(self._disp(name, FS_DEPT, weight=_Demi, role="ink"))
-            dept_grid.addWidget(card, i // 2, i % 2)
-        col.addLayout(dept_grid)
-
-        # Strategic plan
-        col.addWidget(self._disp("Strategic Plan", FS_SECTION, role="title"))
-        plan = self._card()
-        p = QVBoxLayout(plan)
-        p.setContentsMargins(26, 20, 26, 20)
-        p.addWidget(self._body(_ABOUT_STRATEGIC))
-        col.addWidget(plan)
-
-    def _build_cards(self, col: QVBoxLayout, items: list[dict], category: str):
-        for item in items:
-            col.addWidget(self._item_card(item, category))
-
-    def _item_card(self, item: dict, category: str) -> _CardButton:
-        card = _CardButton(self._pal["surface"], self._pal["line"], self._accent)
-        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    def _program_card(self, category: str, item: dict) -> QWidget:
+        card = _CardButton(fill=brand.TILE_DARK, border=brand.CARBON_LINE,
+                           accent=brand.N400, radius=brand.R_CARD)
         self._cards.append(card)
-
-        c = QVBoxLayout(card)
-        c.setContentsMargins(24, 22, 24, 20)
-        c.setSpacing(12)
-
-        top = QHBoxLayout()
-        top.addWidget(self._disp(item["name"], FS_CARD_TITLE, role="title"),
-                      stretch=1)
-        view = self._disp("View  ›", FS_ETAG, weight=_Demi)
-        view.setStyleSheet(f"color:{self._accent}; background:transparent;")
-        self._accent_labels.append(view)
-        top.addWidget(view, alignment=Qt.AlignmentFlag.AlignVCenter)
-        c.addLayout(top)
-
-        c.addWidget(self._image_block(150))
-        c.addWidget(self._body(item.get("blurb", "")))
-
-        subs = item.get("subs")
-        if subs:
-            row = QHBoxLayout()
-            row.setSpacing(8)
-            for s in subs:
-                chip = _Chip(s, self._accent, int(FS_CHIP * self._scale))
-                self._chips.append(chip)
-                row.addWidget(chip)
-            row.addStretch()
-            c.addLayout(row)
-
-        card.clicked.connect(lambda it=item, cat=category: self._open_detail(it, cat))
+        card.clicked.connect(
+            lambda: self._open_sheet(category, item["name"],
+                                     item.get("detail") or item.get("blurb", "")))
+        v = QVBoxLayout(card)
+        v.setContentsMargins(24, 22, 24, 22)
+        v.setSpacing(10)
+        v.addWidget(self._disp(item["name"], FS_CARD, _Bold, brand.WHITE))
+        v.addWidget(self._body_lbl(item.get("blurb", ""), FS_CARD_BODY))
+        v.addStretch(1)
         return card
 
-    # ── Detail view (tap-through) ─────────────────────────────────────────
+    def _sponsor_strip(self) -> QWidget:
+        band = _Band()
+        self._sponsor_band = band
+        row = QHBoxLayout(band)
+        row.setContentsMargins(0, 18, 0, 0)
+        row.setSpacing(18)
+        row.addWidget(self._disp("Sponsors", FS_STAT_CAP, _Demi, brand.N500,
+                                 track=120))
+        for _ in _SPONSORS:
+            plate = RoundedFrame(fill=brand.N50, border=None,
+                                 radius=brand.R_MEDIA)
+            plate.setFixedHeight(SPONSOR_H)
+            self._sponsor_plates.append(plate)
+            self._cards.append(plate)
+            lbl = QLabel("LOGO", plate)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet(f"color:{brand.N400}; background:transparent;")
+            inner = QVBoxLayout(plate)
+            inner.setContentsMargins(0, 0, 0, 0)
+            inner.addWidget(lbl)
+            self._fonts.append((lbl, FS_RAIL, _Demi, None, 110))
+            row.addWidget(plate, stretch=1)
+        return band
 
-    def _open_detail(self, item: dict, category: str):
-        self._discard_detail()
-        self._detail_marks = (
-            len(self._fonts), len(self._chips),
-            len(self._accent_labels), len(self._blocks),
-        )
-        scroll, col = self._scroll_page()
-        col.addWidget(self._eyebrow(category))
-        col.addWidget(self._disp(item["name"], FS_PAGE_TITLE, role="title"))
-        col.addWidget(self._image_block(300))
-        col.addWidget(self._body(item.get("detail", item.get("blurb", "")),
-                                 FS_BODY + 2))
-        subs = item.get("subs")
-        if subs:
-            row = QHBoxLayout()
-            row.setSpacing(8)
-            for s in subs:
-                chip = _Chip(s, self._accent, int(FS_CHIP * self._scale))
-                self._chips.append(chip)
-                row.addWidget(chip)
-            row.addStretch()
-            col.addLayout(row)
-        col.addStretch()
+    # ── The detail sheet ──────────────────────────────────────────────────
 
-        self._detail_widget = scroll
-        self._center.addWidget(scroll)
-        self._center.setCurrentWidget(scroll)
+    def _open_sheet(self, category: str, title: str, body: str):
+        if self._sheet is not None:
+            self._sheet.close_sheet()
+        self._sheet = _DetailSheet(self, category, title, body, self._scale)
+        self._sheet.closed.connect(self._on_sheet_closed)
+        self._sheet.open_sheet()
 
-        self._back_title.setText(item["name"])
-        self._nav.setCurrentIndex(1)
+    def _on_sheet_closed(self):
+        self._sheet = None
+
+    # ── CAD hand-off ──────────────────────────────────────────────────────
+
+    def attach_cad(self, view) -> None:
+        """
+        Take the project screen's CAD viewer into the stage.
+
+        Lent, not owned: the same widget is handed back for the full-screen CAD
+        content mode, so the pit never runs two Chromium scenes for one robot.
+        """
+        if view is self._cad_view:
+            return
+        self._cad_view = view
+        self._cad_placeholder.setVisible(False)
+        self._cad_host.layout().addWidget(view)
+        view.setVisible(True)
+
+    def detach_cad(self):
+        if self._cad_view is None:
+            return
+        self._cad_host.layout().removeWidget(self._cad_view)
+        self._cad_view = None
+        self._cad_placeholder.setVisible(True)
+
+    # ── Theme / scale ─────────────────────────────────────────────────────
+
+    def apply_theme(self, theme: str):
+        self.set_theme(theme)
+        line = brand.CARBON_LINE if self.dark else brand.N200
+        for band in (getattr(self, "_band", None),
+                     getattr(self, "_mission_band", None),
+                     getattr(self, "_sponsor_band", None)):
+            if band is not None:
+                band.set_line(line)
+        self.update()
+
+    def apply_team(self, hex_color: str):
+        self._refresh_wordmark()
+        self.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
         self._apply_scale()
 
-    def _close_detail(self):
-        self._nav.setCurrentIndex(0)
-        self._center.setCurrentWidget(self._pages)
-        self._discard_detail()
-
-    def _discard_detail(self):
-        """Delete the detail view and unregister everything it added to the
-        scale/theme tracking lists, so later passes never touch dead widgets."""
-        if self._detail_widget is None:
-            return
-        self._center.removeWidget(self._detail_widget)
-        self._detail_widget.deleteLater()
-        self._detail_widget = None
-        n_fonts, n_chips, n_accents, n_blocks = self._detail_marks
-        del self._fonts[n_fonts:]
-        del self._chips[n_chips:]
-        del self._accent_labels[n_accents:]
-        del self._blocks[n_blocks:]
-
-    # ── Sponsors footer (always visible) ──────────────────────────────────
-
-    def _sponsors_footer(self) -> QWidget:
-        foot = RoundedFrame(fill=self._pal["surface2"], border=self._pal["line"],
-                            radius=brand.R_CARD)
-        self._footer = foot
-        foot.setFixedHeight(96)
-        lay = QHBoxLayout(foot)
-        lay.setContentsMargins(28, 14, 28, 14)
-        lay.setSpacing(16)
-        lay.addWidget(self._eyebrow("Sponsors"))
-        for _ in _SPONSORS:
-            logo = self._image_block(56)
-            logo.setMinimumWidth(120)
-            lay.addWidget(logo, stretch=1)
-        return foot
-
-    # ── Card / block / tile factories (tracked for theming + scaling) ─────
-
-    def _card(self, bracket: bool = False) -> RoundedFrame:
-        f = RoundedFrame(
-            fill=self._pal["surface"], border=self._pal["line"],
-            radius=brand.R_CARD,
-            bracket=self._accent if bracket else None,
-        )
-        f.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self._cards.append(f)
-        if bracket:
-            self._bracket_cards.append(f)
-        return f
-
-    def _stat_tile(self, number: str, label: str) -> RoundedFrame:
-        tile = self._card()
-        tile.setFixedHeight(int(STAT_TILE_H * self._scale))
-        v = QVBoxLayout(tile)
-        v.setContentsMargins(22, 16, 22, 16)
-        v.setSpacing(2)
-        num = _StatNumber(number, brand.FONT_DISPLAY)
-        num.setStyleSheet(f"color:{self._accent}; background:transparent;")
-        num.set_px(int(STAT_TILE_H * STAT_NUM_RATIO * self._scale))
-        self._accent_labels.append(num)
-        v.addWidget(num, stretch=1)
-        v.addWidget(self._body(label, FS_STAT_LABEL), stretch=0)
-        self._stat_tiles.append((tile, num, STAT_TILE_H))
-        return tile
-
-    def _image_block(self, height: int) -> RoundedFrame:
-        block = RoundedFrame(fill=self._pal["surface2"], border=None,
-                            radius=brand.R_MEDIA)
-        block.setFixedHeight(int(height * self._scale))
-        block.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        lbl = QLabel("IMAGE", block)
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl.setStyleSheet(f"color:{self._pal['faint']}; background:transparent;")
-        f = QFont(brand.FONT_DISPLAY)
-        f.setPixelSize(int(13 * self._scale))
-        f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 120)
-        lbl.setFont(f)
-        v = QVBoxLayout(block)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.addWidget(lbl)
-        self._blocks.append((block, height))
-        return block
-
-    # ── Tab selection ─────────────────────────────────────────────────────
-
-    def _select_tab(self, index: int):
-        self._close_detail()
-        self._pages.setCurrentIndex(index)
-        for i, btn in enumerate(self._tab_buttons):
-            btn.set_active(i == index)
-
-    # ── Responsive scaling ────────────────────────────────────────────────
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        s = max(0.7, min(2.4, e.size().width() / self._BASE_W))
-        if abs(s - self._scale) > 0.01:
-            self._scale = s
-            self._apply_scale()
-
     def _apply_scale(self):
-        s = self._scale
-        for lbl, base, weight, family, tracking, _role in self._fonts:
-            f = QFont(family)
-            f.setPixelSize(max(8, int(base * s)))
+        """
+        Everything is sized from the panel, never from a fixed px.
+
+        The scale is the chassis' contain fit, not `width / 1080`: this panel
+        is portrait, and a window that opens wide and short would otherwise set
+        every figure at nearly twice the size it has room for.
+        """
+        scale = self.scale()
+        self._scale = scale
+        for lbl, base, weight, family, tracking in self._fonts:
+            f = QFont(family) if family else QFont()
+            if not family:
+                f.setFamilies(brand.FONT_MONO_STACK)
+                f.setStyleHint(QFont.StyleHint.Monospace)
+            f.setPixelSize(max(8, int(base * scale)))
             f.setWeight(weight)
             if tracking:
                 f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, tracking)
             lbl.setFont(f)
+        if hasattr(self, "_stage"):
+            stage_h = int(min(CAD_STAGE_H * scale,
+                              self.height() * CAD_STAGE_RATIO))
+            self._stage.set_target_height(max(140, stage_h))
+            self._stage.set_radius(int(14 * scale))
+        for plate in self._sponsor_plates:
+            plate.setFixedHeight(max(28, int(SPONSOR_H * scale)))
         for chip in self._chips:
-            chip.set_px(max(8, int(FS_CHIP * s)))
-        for btn in self._tab_buttons:
-            f = QFont(brand.FONT_DISPLAY); f.setPixelSize(int(FS_TAB * s)); f.setWeight(_Demi)
-            btn.setFont(f); btn.update()
-        if hasattr(self, "_back_btn"):
-            f = QFont(brand.FONT_DISPLAY); f.setPixelSize(int(FS_BACK * s)); f.setWeight(_Demi)
-            self._back_btn.setFont(f); self._back_btn.update()
-        for frame, base_h in self._blocks:
-            frame.setFixedHeight(int(base_h * s))
-        for tile, num, base_h in self._stat_tiles:
-            tile.setFixedHeight(int(base_h * s))
-            num.set_px(int(base_h * STAT_NUM_RATIO * s))
+            chip.setMinimumHeight(int(56 * scale))
+            cf = chip.font()
+            cf.setPixelSize(max(8, int(FS_CHIP_TXT * scale)))
+            chip.setFont(cf)
+        if self._sheet is not None:
+            self._sheet.rescale(scale)
 
-    # ── Theme / team ──────────────────────────────────────────────────────
 
-    def apply_theme(self, theme: str):
-        self._pal = brand.palette(theme)
-        for lbl, _b, _w, _f, _t, role in self._fonts:
-            if role:
-                lbl.setStyleSheet(
-                    f"color:{self._role_color(role)}; background:transparent;"
-                )
-        for card in self._cards:
-            card.set_fill(self._pal["surface"])
-            card.set_border(self._pal["line"])
-            if isinstance(card, _CardButton):
-                card._border_rest = self._pal["line"]
-        for frame, _h in self._blocks:
-            frame.set_fill(self._pal["surface2"])
-            for child in frame.findChildren(QLabel):
-                child.setStyleSheet(
-                    f"color:{self._pal['faint']}; background:transparent;"
-                )
-        self._footer.set_fill(self._pal["surface2"])
-        self._footer.set_border(self._pal["line"])
+class _DetailSheet(QFrame):
+    """
+    A tapped card, deepened — raised over the lower two thirds of the panel.
 
-    def apply_team(self, accent: str):
-        self._accent = accent
-        for lbl in self._accent_labels:
-            lbl.setStyleSheet(f"color:{accent}; background:transparent;")
-        for btn in self._tab_buttons:
-            btn.set_accent(accent)
-        if hasattr(self, "_back_btn"):
-            self._back_btn.set_accent(accent)
-        for card in self._bracket_cards:
-            card.set_bracket(accent)
-        for card in self._cards:
-            if isinstance(card, _CardButton):
-                card._accent_hex = accent
-        for chip in self._chips:
-            chip.set_accent(accent)
-        self._header_line.set_color(accent)
+    **It never replaces the stage.** The robot stays visible above it, which is
+    the whole reason this is a sheet and not a page: a visitor who taps a card
+    has not asked to stop looking at the robot.
+    """
+
+    closed = pyqtSignal()
+
+    _RISE_MS = 340
+    _COVER = 2 / 3
+
+    def __init__(self, parent: "InteractiveBoard", category: str, title: str,
+                 body: str, scale: float):
+        super().__init__(parent)
+        self._board = parent
+        self._scale = scale
+        self.setObjectName("sheet")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(
+            f"QFrame#sheet {{ background-color: {brand.CARBON_SURF};"
+            f" border-top-left-radius: {brand.R_BANNER}px;"
+            f" border-top-right-radius: {brand.R_BANNER}px;"
+            f" border: 1.5px solid {brand.CARBON_LINE}; }}")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(40, 34, 40, 34)
+        lay.setSpacing(16)
+
+        head = QHBoxLayout()
+        self._eye = QLabel(category.upper())
+        self._eye.setStyleSheet(f"color:{brand.N400}; background:transparent;")
+        head.addWidget(self._eye)
+        head.addStretch(1)
+        self._close = RoundedButton("Close", variant="secondary",
+                                    radius=brand.R_PILL)
+        self._close.clicked.connect(self.close_sheet)
+        head.addWidget(self._close)
+        lay.addLayout(head)
+
+        self._title = QLabel(title)
+        self._title.setWordWrap(True)
+        self._title.setStyleSheet(f"color:{brand.WHITE}; background:transparent;")
+        lay.addWidget(self._title)
+
+        self._body = QLabel(body)
+        self._body.setWordWrap(True)
+        self._body.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._body.setStyleSheet(f"color:{brand.N300}; background:transparent;")
+        scroll = QScrollArea()
+        scroll.setWidget(self._body)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.viewport().setStyleSheet("background: transparent;")
+        lay.addWidget(scroll, stretch=1)
+
+        self.rescale(scale)
+        self._anim = QPropertyAnimation(self, b"geometry", self)
+        self._anim.setDuration(self._RISE_MS)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def rescale(self, scale: float):
+        self._scale = scale
+        for lbl, px, weight, family in (
+                (self._eye, FS_SHEET_EYE, _Demi, brand.FONT_DISPLAY),
+                (self._title, FS_SHEET_TTL, _Bold, brand.FONT_DISPLAY),
+                (self._body, FS_SHEET_BODY, QFont.Weight.Normal,
+                 brand.FONT_BODY)):
+            f = QFont(family)
+            f.setPixelSize(max(8, int(px * scale)))
+            f.setWeight(weight)
+            if lbl is self._eye:
+                f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 118)
+            lbl.setFont(f)
+        cf = self._close.font()
+        cf.setPixelSize(max(8, int(20 * scale)))
+        self._close.setFont(cf)
+        self._close.setMinimumHeight(int(52 * scale))
+
+    def _target(self) -> QRect:
+        h = int(self._board.height() * self._COVER)
+        return QRect(0, self._board.height() - h, self._board.width(), h)
+
+    def open_sheet(self):
+        target = self._target()
+        self.setGeometry(QRect(target.x(), self._board.height(),
+                               target.width(), target.height()))
+        self.show()
+        self.raise_()
+        self._anim.stop()
+        self._anim.setStartValue(self.geometry())
+        self._anim.setEndValue(target)
+        self._anim.start()
+
+    def close_sheet(self):
+        self._anim.stop()
+        self._anim.setStartValue(self.geometry())
+        self._anim.setEndValue(QRect(0, self._board.height(),
+                                     self.width(), self.height()))
+        try:
+            self._anim.finished.disconnect()
+        except TypeError:
+            pass
+        self._anim.finished.connect(self._finish_close)
+        self._anim.start()
+
+    def _finish_close(self):
+        self.closed.emit()
+        self.hide()
+        self.deleteLater()
