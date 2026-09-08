@@ -27,6 +27,8 @@ the power toggles in its sidebar.
 - **Admin lock** — click the Breakaway mark (top-left) to unlock LED tuning and
   the equaliser. Closing it re-locks. See [`ADMIN_GUIDE.md`](ADMIN_GUIDE.md).
 - **Adding media** — music, judges slides, CAD, robot logs: [`MEDIA_GUIDE.md`](MEDIA_GUIDE.md).
+- **Shipping a new version, or setting up a pit machine** — the checklist is
+  [`RELEASING.md`](RELEASING.md); the reference is [`DEPLOYMENT.md`](DEPLOYMENT.md).
 - **Database** — every table and query: [`DATABASE.md`](DATABASE.md).
 
 ## LED strips

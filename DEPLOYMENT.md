@@ -3,6 +3,9 @@
 How the app gets from this repo onto a machine at an event, and how it stays
 current afterwards.
 
+**This is the reference — the why.** If you just want the steps, in order, use
+[`RELEASING.md`](RELEASING.md).
+
 The short version, in the order you will actually want them:
 
 | | |
