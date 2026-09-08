@@ -46,6 +46,13 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 60
+    env:
+      # Windows Python opens a redirected stdout as **cp1252**, so the first
+      # em-dash or arrow in any progress message raises UnicodeEncodeError and
+      # kills the build. The scripts each force UTF-8 themselves (app/console.py);
+      # this covers everything they shell out to as well — PyInstaller, uv, pip.
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
 
     steps:
       - uses: actions/checkout@v4
@@ -135,6 +142,9 @@ jobs:
     permissions:
       contents: write          # creating a release is a write to the repo
     timeout-minutes: 20
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
 
     steps:
       - uses: actions/checkout@v4

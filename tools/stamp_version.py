@@ -21,6 +21,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from app.console import use_utf8  # noqa: E402
+
+use_utf8()   # Windows redirects stdout as cp1252; see app/console.py
+
 VERSION_PY = ROOT / "app" / "version.py"
 PYPROJECT = ROOT / "pyproject.toml"
 

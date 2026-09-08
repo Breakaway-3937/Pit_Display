@@ -40,6 +40,11 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from app.console import use_utf8  # noqa: E402
+
+use_utf8()   # Windows redirects stdout as cp1252; see app/console.py
+
 APP_NAME = "Breakaway Pit Display"
 SPEC = ROOT / "packaging" / "pit_display.spec"
 ISS = ROOT / "packaging" / "installer.iss"

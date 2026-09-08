@@ -11,6 +11,7 @@ QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
 import app.db.migrations  # noqa: F401 — registers migrations before init_db()
 from app import paths
+from app.console import use_utf8
 from app.admin import init_admin
 from app.cad_assets import init_cad_assets
 from app.checklist import init_checklist
@@ -73,6 +74,10 @@ def _cli(argv: list[str]) -> int | None:
 
 
 def main():
+    # Before anything prints: Windows opens a redirected stdout as cp1252, and
+    # a single em-dash in a status line is then a crash. See app/console.py.
+    use_utf8()
+
     status = _cli(sys.argv[1:])
     if status is not None:
         sys.exit(status)

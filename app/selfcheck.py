@@ -39,6 +39,8 @@ import sys
 import traceback
 from dataclasses import dataclass, field
 
+from app.console import use_utf8
+
 
 class _Tee:
     """Write to the console and to the log file, so neither can be the only copy."""
@@ -350,13 +352,12 @@ def _check_updates() -> Result:
 
 def run() -> int:
     """Run every check. Returns a process exit status."""
-    # Unbuffered: this is diagnostic output that has to survive whatever
-    # happens next, and Qt teardown can and does abort the process.
-    try:
-        sys.stdout.reconfigure(line_buffering=True)
-    except (AttributeError, OSError):
-        pass
+    # Attach first (a windowed build has no stdout until it does), then make
+    # whatever we ended up with UTF-8 and unbuffered: this is diagnostic output
+    # that has to survive whatever happens next, and Qt teardown can and does
+    # abort the process.
     _attach_console()
+    use_utf8()
     log = _open_log()
     if log is not None:
         sys.stdout = _Tee(sys.stdout, log)

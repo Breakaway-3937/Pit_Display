@@ -1086,6 +1086,29 @@ red primary button would be two red things. The action button drops to
 `secondary` when the machine cannot update at all — a *disabled* `primary`
 still paints a full red block.
 
+### Windows console encoding (`app/console.py`)
+
+**Windows Python opens a redirected stdout as cp1252, not UTF-8.** Every arrow,
+em-dash, ellipsis and `✗` this codebase prints is unencodable there, and one of
+them raises `UnicodeEncodeError` and kills the process. It killed the first
+Windows CI build outright — in `build_app.py`'s "here is the command I am
+running" line, so a *progress message* took down the build.
+
+`console.use_utf8()` is called first thing by every entry point that prints:
+`main.py` (so `--self-check`, `--version` and `--rollback` are covered),
+`tools/build_app.py` and `tools/stamp_version.py`. `tools/make_manifest.py`
+carries the same two lines inline, because CI runs it with a bare `python3`
+outside the venv and it cannot import `app`. The workflow also sets
+`PYTHONUTF8=1` on both jobs, which covers everything they shell out to.
+
+`errors="replace"` is deliberate: a console that cannot *render* a character
+gets a `?`. This is diagnostic output, and diagnostics must never be the thing
+that fails.
+
+Do not "fix" a future occurrence by replacing the character. There are nine
+distinct ones in the printed strings already and the next contributor will add
+a tenth; the encoding assumption is the bug.
+
 ### Empty stubs
 
 `app/db/repositories/` and `app/db/sync/` are empty stubs for the future

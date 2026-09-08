@@ -22,9 +22,18 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 _CHUNK = 1 << 20
+
+# Standalone by design — CI runs this with a bare `python3`, outside the venv,
+# so it cannot import app.console. Same trap, same two lines. See that module.
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError, ValueError):
+        pass
 
 
 def sha256(path: Path) -> str:
