@@ -1,14 +1,25 @@
 name: Build app
 
-# **This is how the Windows build happens.** PyInstaller does not
-# cross-compile: a Windows executable has to be produced on Windows, and the
-# pit machine is Windows while nothing this is developed on is. Push a tag or
-# run this workflow by hand and collect the artifact.
+# **This is how the Windows build happens, and how the pit machines get it.**
 #
-# The CAD model is not in git (it is ~340 MB), so CI builds `--no-model`. The
-# app ships without a robot and the crew uploads one from
-# Control → Project → CAD Viewer Config on first run. To ship *with* the model,
-# build locally on a machine that has it: `uv run tools/build_app.py --zip`.
+# PyInstaller does not cross-compile: a Windows executable has to be produced
+# on Windows, and the pit machine is Windows while nothing this is developed on
+# is. Push a tag and this builds both platforms, proves each packaged app
+# actually boots on its own runner, and publishes a GitHub Release that the
+# installed apps find by themselves within six hours. See DEPLOYMENT.md.
+#
+#   git tag v1.4.2 && git push --tags          → the stable channel
+#   git tag v1.4.2-beta.1 && git push --tags   → the beta channel (prerelease)
+#
+# Running it by hand builds and self-checks without releasing anything, which
+# is how you find out a change broke packaging without spending a version
+# number on it.
+#
+# The CAD model is not in git (~340 MB), so CI builds `--no-model`. The app
+# ships without a robot and the crew uploads one from Control → Project → CAD
+# Viewer Config; because the model lives in the *data* directory, it survives
+# every update from then on. To ship *with* it, build on a machine that has it:
+# `uv run tools/build_app.py --zip`.
 
 on:
   push:
@@ -47,6 +58,21 @@ jobs:
       - name: Install dependencies
         run: uv sync --group build
 
+      # The version an installed app reports is the tag that produced it, and
+      # it is written in here rather than maintained by hand — a file somebody
+      # has to remember to bump is a file that eventually lies about which
+      # build is on the pit laptop. A manual run gets 0.0.0+dev, which
+      # `version.is_release()` refuses, so a dispatch build can never be
+      # mistaken for a release.
+      - name: Stamp the version
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            uv run tools/stamp_version.py "${GITHUB_REF_NAME}" --commit "${GITHUB_SHA}"
+          else
+            echo "not a tag — leaving the dev version stamp in place"
+          fi
+
       # The seed database is created by the app on first run and is not in git.
       # `--self-check` builds it, which also proves the migrations apply to an
       # empty file — the state every fresh install starts from.
@@ -61,7 +87,8 @@ jobs:
 
       # Runs the *packaged* app, not the source. This is what catches the
       # failures that only exist in a bundle — a missing QtWebEngineProcess, an
-      # unwritable data directory, an asset that never got collected.
+      # unwritable data directory, an asset that never got collected. A release
+      # is only published if this passed on both platforms.
       - name: Self-check the packaged app (Windows)
         if: runner.os == 'Windows' && inputs.run_self_check != false
         run: |
@@ -73,10 +100,70 @@ jobs:
         run: |
           "dist/Breakaway Pit Display/Breakaway Pit Display" --self-check
 
+      # Named with the version and the platform, because both end up as assets
+      # on one release and `manifest.json` points the updater at them by name.
+      - name: Name the zip
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          [ "${GITHUB_REF_TYPE}" = "tag" ] || VERSION="0.0.0-dev"
+          mv "dist/Breakaway Pit Display.zip" \
+             "dist/Breakaway-Pit-Display-${VERSION}-${{ matrix.label }}.zip"
+
       - uses: actions/upload-artifact@v4
         with:
           name: pit-display-${{ matrix.label }}
-          path: dist/Breakaway Pit Display.zip
+          path: dist/Breakaway-Pit-Display-*.zip
           if-no-files-found: error
           retention-days: 30
           compression-level: 0   # the zip is already compressed
+
+  # ── Publish ────────────────────────────────────────────────────────────────
+  # Tags only. A manual run stops above with artifacts and no release, so
+  # nothing an installed app can see changes until a version number is spent.
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write          # creating a release is a write to the repo
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      # Every release carries a manifest naming each platform's zip and its
+      # SHA-256. The updater refuses a release without one — the hash is the
+      # only check between a download and the pit machine's install folder.
+      - name: Build the manifest
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARGS=()
+          for PLATFORM in windows macos; do
+            FILE=$(ls assets/Breakaway-Pit-Display-*-${PLATFORM}.zip 2>/dev/null | head -1)
+            [ -n "$FILE" ] && ARGS+=(--asset "${PLATFORM}=${FILE}")
+          done
+          python3 tools/make_manifest.py \
+            --version "$VERSION" --tag "${GITHUB_REF_NAME}" \
+            --out assets/manifest.json "${ARGS[@]}"
+
+      # A tag with a prerelease part (v1.4.2-beta.1) is published as a
+      # prerelease, which is exactly what puts it on the beta channel and keeps
+      # it away from every machine following stable.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          PRERELEASE=""
+          case "${GITHUB_REF_NAME}" in *-*) PRERELEASE="--prerelease";; esac
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes $PRERELEASE \
+            assets/manifest.json assets/Breakaway-Pit-Display-*.zip

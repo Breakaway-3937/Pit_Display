@@ -15,6 +15,7 @@ Call init_cad_assets() once in main() after init_config().
 import functools
 import http.server
 import json
+import os
 import shutil
 import threading
 from pathlib import Path
@@ -33,7 +34,12 @@ _DATA_ASSETS   = paths.data_dir("assets")
 _CAD_DIR       = paths.data_dir("assets", "cad")
 _SUBSYSTEMS    = _CAD_DIR / "subsystems.json"
 _MODEL         = _CAD_DIR / "robot.glb"
-_PORT          = 8765
+# 8765 unless something says otherwise. `PIT_CAD_PORT` exists for exactly one
+# caller: the updater runs the *staged* build's `--self-check` while this app is
+# on screen, and a second server on 8765 would take the port out from under the
+# CAD viewer a visitor is looking at. `0` means "any free port", which is what
+# the verification run asks for.
+_PORT          = int(os.environ.get("PIT_CAD_PORT") or 8765)
 
 _DEFAULT_CONFIG: dict[str, Any] = {
     "_doc": (
@@ -92,6 +98,7 @@ class _CADAssets(QObject):
     def __init__(self):
         super().__init__()
         self._server: http.server.HTTPServer | None = None
+        self._port = _PORT
         self._cad_active = False
         self._focused_id = ""
 
@@ -102,6 +109,9 @@ class _CADAssets(QObject):
             return
         handler = functools.partial(_SilentHandler, directory=str(_DATA_ASSETS))
         self._server = _HTTPServer(("127.0.0.1", _PORT), handler)
+        # Port 0 means the OS chose one; read back what it actually bound so
+        # `viewer_url` points somewhere real.
+        self._port = self._server.server_address[1]
         t = threading.Thread(target=self._server.serve_forever, daemon=True)
         t.start()
 
@@ -109,11 +119,11 @@ class _CADAssets(QObject):
 
     @property
     def viewer_url(self) -> str:
-        return f"http://127.0.0.1:{_PORT}/cad_viewer/index.html"
+        return f"http://127.0.0.1:{self._port}/cad_viewer/index.html"
 
     @property
     def port(self) -> int:
-        return _PORT
+        return self._port
 
     # ── Model file ────────────────────────────────────────────────────────
 

@@ -9,6 +9,11 @@ data/
 # CAD assets
 robot.glb
 
+# Updater state — per machine, and the token is a credential (see app/update/)
+update.json
+update_token
+updates/
+
 # OS
 .DS_Store
 

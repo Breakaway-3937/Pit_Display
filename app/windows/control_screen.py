@@ -39,13 +39,15 @@ from app.widgets.helpers import clear_layout, divider, label
 from app.widgets.led_panel import LEDPanel
 from app.widgets.music_panel import MusicPanel
 from app.widgets.robot_panel import RobotLogPanel
+from app.widgets.update_panel import UpdatePanel
 from app.widgets.toggle_switch import ToggleSwitch
 from app.leds import leds
 
 # Pit-wide subsystems. Unlike SCREENS these are not windows — they are hardware
 # the pit owns, so they get their own sidebar group and their own panels.
-SYSTEMS = ["leds", "music", "robot"]
-SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music", "robot": "Robot Logs"}
+SYSTEMS = ["leds", "music", "robot", "updates"]
+SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music", "robot": "Robot Logs",
+                 "updates": "Software Updates"}
 
 # One muted line under each panel's title — where the thing physically is and
 # what it is doing, which is what an operator standing at the panel needs
@@ -1192,6 +1194,8 @@ class SystemSettingsPanel(QWidget):
         "robot": "Import telemetry exported off the robot, and name the CAN "
                  "ids so every screen can say “Front-Left Drive” instead of "
                  "“TalonFX 11”.",
+        "updates": "What this machine is running, and how it gets the next "
+                   "build off GitHub. Never during an event.",
     }
 
     def __init__(self, system_id: str):
@@ -1208,7 +1212,7 @@ class SystemSettingsPanel(QWidget):
         outer.addSpacing(16)
 
         self.body = {"leds": LEDPanel, "music": MusicPanel,
-                     "robot": RobotLogPanel}[system_id]()
+                     "robot": RobotLogPanel, "updates": UpdatePanel}[system_id]()
         outer.addWidget(self.body)
         outer.addStretch()
 

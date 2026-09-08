@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import sys
 
@@ -20,6 +22,7 @@ from app.music import init_music
 from app.rotation import init_rotation
 from app.theme import dark_qss
 from app.touch import install as install_touch
+from app.update import init_update
 from app.windows.control_screen import ControlScreen
 from app.windows.presentation_a import PresentationScreenA
 from app.windows.presentation_b import PresentationScreenB
@@ -39,7 +42,41 @@ def _load_fonts(app: QApplication) -> None:
     app.setFont(default)
 
 
+def _cli(argv: list[str]) -> int | None:
+    """
+    The flags that answer without opening a window. None = start normally.
+
+    All three exist for a machine nobody is standing at: an install script that
+    wants an exit status, a pit laptop being asked what it is running over the
+    phone, and — the one that matters — a display that has come up wrong and
+    has to be put back the way it was without a working GUI to do it from.
+    """
+    if "--version" in argv:
+        from app import version
+        from app.update import install
+        print(version.describe())
+        root = install.install_root()
+        if root is not None:
+            print(f"installed at {root}, running {install.running_version()}")
+        return 0
+
+    if "--rollback" in argv:
+        from app.update.install import rollback
+        from app.update.release import UpdateError
+        try:
+            print(f"Rolled back to {rollback()} — it starts on the next launch.")
+            return 0
+        except UpdateError as exc:
+            print(f"Could not roll back: {exc}", file=sys.stderr)
+            return 1
+    return None
+
+
 def main():
+    status = _cli(sys.argv[1:])
+    if status is not None:
+        sys.exit(status)
+
     # `--self-check` boots everything offscreen and reports, so an install can
     # be verified on the pit machine without anyone watching a screen. See
     # app/selfcheck.py.
@@ -69,6 +106,10 @@ def main():
 
     init_config()
     init_db()
+    # Updates need neither config nor the database — deliberately, since the
+    # states worth updating out of are the ones where those are broken. It goes
+    # here only because the control screen's panel reads it while building.
+    init_update()
     # Admin gates the LED/EQ controls; needs the DB for its credential row.
     init_admin()
     # Checklists are read while the presentation screens are being built.

@@ -235,6 +235,51 @@ def _check_windows(app) -> Result:
     return Result("windows", True, f"built and rendered {', '.join(built)}")
 
 
+def _check_updates() -> Result:
+    """
+    Can this machine take the next build off GitHub by itself?
+
+    Never critical — an install that cannot update is an install somebody
+    updates by hand, which is exactly what every install did before. But it is
+    the check to read after setting a pit machine up, because all four ways it
+    can be wrong (a checkout, an unstamped build, a hand-unzipped copy, a
+    missing token) look identical from the outside: nothing ever appears.
+    """
+    from app import paths, version
+    from app.update import install, settings
+    from app.update.release import OWNER, REPO, configured
+
+    prefs = settings.load()
+    lines = [f"version     {version.describe()}",
+             f"channel     {prefs['channel']}, "
+             f"auto-check {'on' if prefs['auto_check'] else 'off'}"]
+
+    root = install.install_root()
+    if root is None:
+        lines.append("layout      not a managed install")
+    else:
+        lines.append(f"layout      {root}")
+        lines.append(f"installed   {', '.join(install.installed_versions()) or '—'}"
+                     f"  (running {install.running_version() or '?'})")
+
+    lines.append(f"feed        {OWNER}/{REPO}, "
+                 f"token {'present' if configured() else 'MISSING'}")
+
+    blocked = []
+    if not version.is_release():
+        blocked.append("this build carries no stamped version")
+    if root is None and paths.is_frozen():
+        blocked.append("it was unzipped by hand rather than installed")
+    if not configured():
+        blocked.append("there is no update token on this machine")
+
+    if blocked:
+        return Result("updates", True, "\n".join(lines),
+                      critical=False,
+                      warnings=[f"self-update is off: {'; '.join(blocked)}"])
+    return Result("updates", True, "\n".join(lines))
+
+
 def run() -> int:
     """Run every check. Returns a process exit status."""
     # Unbuffered: this is diagnostic output that has to survive whatever
@@ -273,10 +318,12 @@ def run() -> int:
     from app.music import init_music
     from app.rotation import init_rotation
     from app.theme import dark_qss
+    from app.update import init_update
 
     results.append(_check_database())
     if results[-1].ok:
         init_config()
+        init_update()
         init_admin()
         init_checklist()
         init_rotation()
@@ -289,6 +336,7 @@ def run() -> int:
         results.append(_check_fonts())
         results.append(_check_owlet())
         results.append(_check_audio())
+        results.append(_check_updates())
         results.append(_check_windows(app))
 
     return _report(results)

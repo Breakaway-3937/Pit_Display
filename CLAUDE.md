@@ -29,8 +29,9 @@ by design and its schema is deliberately unversioned.
 ## Packaging and deployment
 
 **[`DEPLOYMENT.md`](DEPLOYMENT.md) is the reference** — what ships, what does
-not, how to build for Windows, and what the data directory is. Two things
-belong here because they constrain how code is written:
+not, how to build for Windows, how a tag reaches the pit machines, and what the
+data directory is. Three things belong here because they constrain how code is
+written:
 
 - **Nothing outside `app/paths.py` may build a path from `__file__`.** A frozen
   app has a read-only resource tree (inside the bundle; `Program Files` on
@@ -42,7 +43,14 @@ belong here because they constrain how code is written:
   It exists because packaging failures are invisible: the app starts, and only
   the one screen that needed the missing file ever finds out. It has already
   caught PyInstaller dropping Chromium's helper process *and* its resource
-  `.pak`s — both of which leave the CAD viewer dead and nothing else complaining.
+  `.pak`s — both of which leave the CAD viewer dead and nothing else
+  complaining. It is now also the **gate an update has to pass**: the staged
+  build runs it on the pit machine before the launcher is pointed at it, so
+  anything that breaks a bundle stops there rather than at an event.
+- **The version is stamped at build time, never edited.** `app/version.py`
+  carries a sentinel that `version.is_release()` refuses; CI rewrites it from
+  the git tag. A file somebody has to remember to bump is a file that
+  eventually lies about which build is on the pit laptop.
 
 ## Architecture
 
@@ -71,7 +79,7 @@ consequences worth knowing:
 
 ### Global singletons (lazy-proxy pattern)
 
-Nine module-level singletons share the `LazyProxy` helper in `app/lazy_proxy.py` — safe to import at module level, but raise if accessed before their `init_*()` function is called in `main()`:
+Ten module-level singletons share the `LazyProxy` helper in `app/lazy_proxy.py` — safe to import at module level, but raise if accessed before their `init_*()` function is called in `main()`:
 
 | Import | Init call | Purpose |
 |---|---|---|
@@ -84,8 +92,12 @@ Nine module-level singletons share the `LazyProxy` helper in `app/lazy_proxy.py`
 | `from app.leds import leds` | `init_leds()` | USB-serial link to the LED controller + strip state |
 | `from app.music import music` | `init_music()` | Playback, queue, local library, 10-band EQ |
 | `from app.admin import admin` | `init_admin()` | Admin lock gating the LED/EQ controls |
+| `from app.update import update` | `init_update()` | Release feed, staged installs, channel and rollback |
 
 `init_config()` must be called first; the others depend on `config` being ready.
+`init_update()` depends on **neither** `config` nor the database — deliberately,
+since the states worth updating out of are the ones where those are broken; it
+is called early only because the control screen's panel reads it while building.
 `init_leds()` must come after `init_cad_assets()` (it subscribes to
 `subsystem_focused`); `init_music()` and `init_admin()` after `init_db()` (they
 seed EQ presets and the admin credential). `init_checklist()` also needs the DB,
@@ -971,6 +983,81 @@ on import with `label` NULL; names are typed in **Control Screen → Pit Systems
 Robot Logs** and persist across imports. Naming is intentionally **not**
 admin-gated (it is data entry); deleting a session is, because it destroys
 samples.
+
+### Self-updating (`app/update/`)
+
+**A tag on the Mac becomes the app on the Windows pit machine, with nobody
+copying a folder.** Operator side and the token setup: [`DEPLOYMENT.md`](DEPLOYMENT.md).
+
+```
+git tag v1.4.2 ─▶ Actions: stamp, build ×2, --self-check ×2 ─▶ Release + manifest.json
+                                                                       │
+                              pit machine, six-hour timer  ◀────────────┘
+                                                                       │
+                    download ─▶ sha256 ─▶ unpack ─▶ --self-check ─▶ repoint `current`
+```
+
+| File | Role |
+|---|---|
+| `app/version.py` | What this build is. Stamped by CI; a sentinel from a checkout |
+| `app/update/release.py` | The GitHub feed. Token, manifest, verified download. No Qt |
+| `app/update/install.py` | Versioned folders behind a link: stage, verify, activate, roll back, prune |
+| `app/update/settings.py` | Channel and auto-check, in a JSON file rather than the DB |
+| `app/update/service.py` | `_UpdateService` singleton — the state machine the panel draws |
+| `app/widgets/update_panel.py` | Control → Pit Systems → Software Updates |
+| `tools/stamp_version.py`, `tools/make_manifest.py` | What CI runs |
+| `tools/install_windows.ps1` | First install, and converting a hand-unzipped copy |
+
+**Windows will not overwrite a running `.exe`, so nothing ever tries to.** The
+install is versioned folders behind a **directory junction** — every shortcut
+points at `current\`, Windows resolves it at launch, so the running process
+holds handles on `versions\1.4.2\` while the junction itself is locked by
+nothing. Repointing it mid-session is safe and the new version is what the next
+launch gets. Five things about that are load bearing:
+
+- **A junction, not a symlink.** Junctions need no privilege on Windows;
+  symlinks need Developer Mode. POSIX gets a symlink swapped with `os.replace`.
+- **Never `shutil.rmtree` the link** — on a junction that descends into the
+  target and deletes the version you are running. `os.rmdir` removes the
+  reparse point and fails loudly on a real directory, which is also how an
+  unmanaged install is refused rather than damaged.
+- **The staged build is `--self-check`ed before the pointer moves**, with
+  `PIT_DISPLAY_DATA` (a scratch tree, so the new build's migrations do not
+  touch the live database before it is in charge), `PIT_CAD_PORT` (so it does
+  not take :8765 from the CAD viewer a visitor is looking at) and
+  `PIT_LEDS_FAKE` (so it does not open the controller's serial port). A build
+  that fails there is deleted and never becomes the running app.
+- **Old versions are pruned at startup, not at swap time.** The folder being
+  replaced is still open by the running process; Windows will not delete it
+  until that process is gone.
+- **An install that is not this shape is left completely alone.**
+  `install_root()` recognises the layout by structure, and `is_managed()` False
+  means every write path here refuses.
+
+**Checking is automatic; downloading never is.** A release is ~400 MB and a
+download that starts itself is one that starts during a match cycle on event
+wifi. The timer only ever asks, and says so on the control screen.
+
+**Private repo, and it shapes `release.py`.** Assets are fetched by **id**
+through `/releases/assets/{id}` — `browser_download_url` is a web-session URL
+and 404s to a token — and **the `Authorization` header must be dropped on the
+redirect** to object storage, which signs its own URL and rejects a request
+carrying a bearer token as well. `_Redirect` strips it whenever the host
+changes; without that, downloads 400 for no visible reason.
+
+**A release with no `manifest.json` is skipped, not trusted.** The SHA-256 in
+it is the only thing between a 400 MB download and the install folder, and "the
+asset had the right name" is not a check.
+
+**Update preferences are a JSON file, not the database** — the states worth
+updating out of are the ones where the database will not open, and a preference
+stored inside the broken thing is not reachable then.
+
+**`_STATE_COLOR` puts the status colour in a dot, never in the type.** Red on
+carbon is 2.8:1 and forbidden for letterforms, and a failed update next to a
+red primary button would be two red things. The action button drops to
+`secondary` when the machine cannot update at all — a *disabled* `primary`
+still paints a full red block.
 
 ### Empty stubs
 

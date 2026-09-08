@@ -1,10 +1,17 @@
 # Deploying the Pit Display
 
-How the app gets from this repo onto a machine at an event.
+How the app gets from this repo onto a machine at an event, and how it stays
+current afterwards.
 
-The short version: **`uv run tools/build_app.py --zip`** produces
-`dist/Breakaway Pit Display/` — one folder, copy it to the target machine, run
-the executable inside it. Everything the app needs is in there except the music.
+The short version, in the order you will actually want them:
+
+| | |
+|---|---|
+| **Ship an update** | `git tag v1.4.2 && git push --tags`. CI builds both platforms, self-checks each packaged app, and publishes a release. Pit machines take it themselves within six hours. |
+| **Set up a new machine** | `install_windows.ps1 -Token <pat> -Startup` — downloads the newest release, installs it in the layout that can update itself, makes the shortcuts, and runs the self-check. |
+| **Build by hand** | `uv run tools/build_app.py --zip` → `dist/Breakaway Pit Display/`. One folder, copy it anywhere, run the executable inside. |
+
+Everything the app needs is in the package except the music.
 
 ---
 
@@ -58,8 +65,20 @@ Windows. Two ways:
    The result is `dist\Breakaway Pit Display\Breakaway Pit Display.exe`.
 2. **In CI, with no Windows machine** — push a tag (`git tag v1.0 && git push
    --tags`) or run the *Build app* workflow by hand. It builds Windows and
-   macOS, self-checks each packaged app, and attaches the zips as artifacts.
-   CI builds `--no-model` because the model is not in git.
+   macOS, self-checks each packaged app, and — for a tag — publishes a GitHub
+   Release the installed apps find by themselves. A manual run stops at
+   artifacts and releases nothing, which is how you find out a change broke
+   packaging without spending a version number on it.
+   CI builds `--no-model` because the model is not in git. The model lives in
+   the *data* directory, so a machine that has one keeps it through every
+   update.
+
+**The version is stamped from the tag, never edited by hand.**
+`tools/stamp_version.py` writes it into `app/version.py` between checkout and
+build, so what a pit machine reports is the tag that produced it. A build
+nobody stamped reports `0.0.0+dev`, which `version.is_release()` refuses — so a
+hand-built or dispatch-built app can never be mistaken for a release, and will
+never try to update itself.
 
 [uv]: https://docs.astral.sh/uv/
 
@@ -67,16 +86,49 @@ Windows. Two ways:
 
 ## Installing on the pit machine
 
-1. Copy the folder anywhere the operator can write to, or `C:\Program Files\`.
-   Either works — the app never writes inside its own folder.
-2. Run the executable once with `--self-check` (below) and read the output.
-3. Start it normally. Make a shortcut; on Windows put it in
-   `shell:startup` if the pit machine should come up into the display.
-4. Point it at the music folder: **Control → Music → Add folder**.
-5. Assign each screen a monitor: **Control → (screen) → Display / Fill the
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\install_windows.ps1 -Token github_pat_xxx -Startup
+```
+
+That is the whole install. It downloads the newest release, unpacks it into the
+versioned layout below, makes the Start Menu and startup shortcuts, saves the
+update token, and finishes by running `--self-check` — so the last thing you
+see is whether the machine is actually working. `-Zip <file>` installs a local
+zip instead of downloading; `-Channel beta` follows prereleases.
+
+**No administrator, at install or at update time.** Everything is per-user.
+
+Then, once, by hand:
+
+1. Point it at the music folder: **Control → Music → Add folder**.
+2. Assign each screen a monitor: **Control → (screen) → Display / Fill the
    display**. With more than one monitor the audience screens default to
    filling their own; with one monitor they stay windowed so the control panel
    can never end up buried.
+3. Upload the season's CAD model: **Control → Project → CAD Viewer Config**.
+   CI builds without it, and it lives in the data directory from then on.
+
+### The layout, and why
+
+```
+%LOCALAPPDATA%\Programs\Breakaway Pit Display\
+    pointer.json              which version is current, and what preceded it
+    current  ─────────────▶   versions\1.4.2        (a directory junction)
+    versions\
+        1.4.1\                the previous one, kept for rollback
+        1.4.2\Breakaway Pit Display.exe
+```
+
+Every shortcut points at `current\Breakaway Pit Display.exe`. Windows resolves
+the junction at launch, so the running process holds handles on
+`versions\1.4.2\` and the junction itself is locked by nothing — **repointing
+it while the app is running is safe**, and the new version is simply what the
+next launch gets. That is the whole trick: Windows will not let you overwrite a
+running `.exe`, so nothing ever tries to.
+
+A copy somebody unzipped onto the desktop instead is not this shape, is
+detected as such, and is left completely alone — it just cannot update itself.
+Re-running the installer converts it, and touches no data.
 
 ### Where its data lives
 
@@ -94,10 +146,79 @@ On first run the app copies its seed database there. **It never overwrites an
 existing one**, so upgrading keeps the CAN-id names, the checklists, the EQ
 presets and the imported-log history.
 
+Two of the updater's own files live here rather than in the database, so they
+survive an install *and* remain reachable when the database is the thing that
+is broken: `update.json` (channel, auto-check, last result) and `update_token`
+(the GitHub credential).
+
 ### Upgrading
 
-Replace the folder. The data directory is untouched, so the machine keeps
-everything it has accumulated. To start clean, delete the data directory.
+**It updates itself.** Tag a release and the machine has it within six hours.
+The rest of this section is what that actually does, and how to stop it.
+
+The full sequence, from the Mac to the pit:
+
+1. `git tag v1.4.2 && git push --tags`.
+2. CI stamps the version, builds Windows and macOS, and runs `--self-check` on
+   each *packaged* app. A build that does not boot on the runner never becomes
+   a release.
+3. It publishes a release carrying both zips and a `manifest.json` naming each
+   one and its SHA-256.
+4. Every pit machine checks the release feed on a six-hour timer and says, on
+   **Control → Pit Systems → Software Updates**, that something newer exists.
+   **It does not download it.** A 400 MB download that starts itself is a
+   download that starts during a match cycle on an event's wifi.
+5. Somebody presses *Download and install*. That runs in the background: the
+   zip is fetched and checked against its SHA-256, unpacked into
+   `versions\<new>`, and then — the part that matters — **the new build is put
+   through its own `--self-check` on this machine** before it is allowed
+   anywhere near the pointer. It runs against a scratch data directory, a spare
+   CAD port and a fake LED link, so the app that is on screen in the pit
+   notices nothing.
+6. Only if that passes does `current` swing across. Nothing on any audience
+   screen flickers; the new version is what the next launch runs.
+
+So a broken build can be released, downloaded and unpacked and still never
+become the app that opens tomorrow morning.
+
+**Rolling back.** The previous version stays on disk until it is two updates
+behind. *Roll back to the previous version* on the same panel repoints the
+link, and if the app will not open at all:
+
+```
+"%LOCALAPPDATA%\Programs\Breakaway Pit Display\current\Breakaway Pit Display.exe" --rollback
+```
+
+**Do not update during an event.** Turn *Look for updates automatically* off
+before you leave for a competition and back on when you get home. The whole
+feature is for the week between events.
+
+The data directory is untouched by any of this, so the machine keeps its
+database, checklists, CAN-id names, imported logs, EQ presets and uploaded CAD
+model across every update. To start clean, delete the data directory.
+
+### Setting up updates
+
+The repository is private, so a pit machine needs a token to see releases at
+all — there is nothing to configure on a machine that will never update.
+
+1. On GitHub: **Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token**.
+2. Resource owner **Breakaway-3937**, repository access **Only select
+   repositories → Pit_Display**, permissions **Contents: Read-only**. Nothing
+   else. Give it an expiry you will remember — a year is reasonable, and the
+   panel says plainly when GitHub starts refusing it.
+3. Pass it to `install_windows.ps1 -Token …`, or paste it into **Control → Pit
+   Systems → Software Updates** after unlocking the admin bar.
+
+It is stored as `update_token` in the data directory — beside the database, not
+inside the app folder, so upgrading never loses it. It can read this one
+repository and do nothing else whatsoever if it leaks off the machine.
+
+**Channels.** `stable` takes tagged releases only and is where every pit
+machine belongs. `beta` also takes prereleases — a tag with a `-` in it, like
+`v1.4.2-beta.1` — which is how one machine can try a build before the rest of
+the pit gets it.
 
 ---
 
@@ -119,6 +240,7 @@ line of an install script.
 [PASS] fonts        all three families actually loaded
 [PASS] owlet        which extractor this platform will use
 [PASS] audio        libVLC present
+[PASS] updates      version, channel, install layout, whether the token works
 [PASS] windows      all four built and rendered
 ```
 
@@ -146,6 +268,13 @@ its resources on both platforms unless the spec places them by hand; see
 A locked-down account or a redirected `%LOCALAPPDATA%`. Set `PIT_DISPLAY_DATA`
 to somewhere the operator owns.
 
+**`[WARN] updates — self-update is off: …`**
+This machine will never take a release by itself. Four different causes, and
+the line names which: it is a checkout, the build carries no stamped version,
+it was unzipped by hand rather than installed, or there is no token. All four
+look identical from the outside — nothing ever appears — which is why the check
+exists. Re-run `install_windows.ps1` for the third; add a token for the fourth.
+
 [VLC]: https://www.videolan.org/vlc/
 
 ---
@@ -161,3 +290,11 @@ to somewhere the operator owns.
 - **The LED controller is USB serial**, discovered by VID/PID at runtime — it
   needs no driver on Windows 10/11, and nothing about it is baked into the
   package.
+- **An update is a whole package, ~400 MB.** Almost all of it is Chromium and
+  Qt, byte-identical between builds, but there is no delta mechanism — the
+  download is the entire app every time. Fine at the shop; do not do it on
+  event wifi. If it ever becomes painful the fix is a per-file SHA-256 manifest
+  so only the changed files come down, which would typically be a few MB.
+- **Two versions on disk is about 2 GB.** `install.prune()` keeps the current
+  one and its predecessor and deletes the rest at startup, when the folder
+  being replaced is no longer open.
