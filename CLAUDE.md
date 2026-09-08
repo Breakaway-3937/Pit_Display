@@ -1012,6 +1012,7 @@ git tag v1.4.2 ─▶ Actions: stamp, build ×2, --self-check ×2 ─▶ Release
 | `app/widgets/update_panel.py` | Control → Pit Systems → Software Updates |
 | `tools/stamp_version.py`, `tools/make_manifest.py` | What CI runs |
 | `packaging/installer.iss` | The Inno Setup script — the one file a person is given |
+| `tools/check_installer.py` | Lints that script, because nothing else can before CI |
 
 **Windows only.** The Mac this is developed on runs from a checkout and never
 installs a build, and a macOS CI job bills at *ten times* the Linux rate against
@@ -1060,6 +1061,20 @@ launch gets. Five things about that are load bearing:
 - **The installer removes the junction with `rmdir` too**, in
   `CurUninstallStepChanged`, *before* Inno's own file deletion runs — the same
   trap, in Pascal.
+
+**`installer.iss` cannot be compiled anywhere but Windows**, so a typo in it
+costs a full CI run to discover — and discovers it at the *last* step, after
+ten minutes of packaging. `tools/check_installer.py` runs in `build_app.py`'s
+preflight and enforces the two rules that have actually bitten:
+
+- **`[Code]` comments are `//`, never `{ }`.** Inno's Pascal uses braces for
+  comments, so a brace comment that mentions `{app}` **ends at that constant's
+  own brace** and the rest of the sentence is compiled as code. That is how the
+  first build of this file failed: "Syntax error", fifty columns into a comment
+  explaining why the code below it was careful.
+- **The file is pure ASCII.** Inno 6 reads a script with no UTF-8 BOM as ANSI,
+  which turns an em-dash in a wizard message into mojibake on a screen a
+  visitor is looking at.
 
 **Checking is automatic; downloading never is.** A release is ~400 MB and a
 download that starts itself is one that starts during a match cycle on event

@@ -69,7 +69,7 @@ def tree_size(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
-def preflight(include_model: bool) -> None:
+def preflight(include_model: bool, want_installer: bool = False) -> None:
     """Fail before a ten-minute build rather than after it."""
     problems: list[str] = []
 
@@ -89,6 +89,18 @@ def preflight(include_model: bool) -> None:
         if not have_windows:
             print("  ! no windows owlet binary present — a Windows build will "
                   "not be able to import .hoot files", file=sys.stderr)
+
+    if want_installer:
+        # Checked in preflight, not at the point of use: ISCC runs *after* a
+        # ten-minute package, and a typo in the .iss should not cost that.
+        from tools.check_installer import main as check_installer
+        if check_installer() != 0:
+            problems.append("packaging/installer.iss has problems (above)")
+        elif sys.platform == "win32" and find_iscc() is None:
+            problems.append(
+                "Inno Setup is not installed, so --installer cannot run. "
+                "`choco install innosetup -y`, or get it from "
+                "https://jrsoftware.org/isdl.php")
 
     if include_model and not (ROOT / "assets" / "cad" / "robot.glb").exists():
         print("  ! assets/cad/robot.glb is missing — building without a CAD "
@@ -231,7 +243,7 @@ def main() -> int:
     print(f"Building {APP_NAME} for {sys.platform} "
           f"({'with' if include_model else 'without'} the CAD model)")
 
-    preflight(include_model)
+    preflight(include_model, args.installer)
 
     if args.clean:
         for d in (ROOT / "build", ROOT / "dist"):
