@@ -8,8 +8,8 @@ The short version, in the order you will actually want them:
 | | |
 |---|---|
 | **Ship an update** | `git tag v1.4.2 && git push --tags`. CI builds both platforms, self-checks each packaged app, and publishes a release. Pit machines take it themselves within six hours. |
-| **Set up a new machine** | `install_windows.ps1 -Token <pat> -Startup` — downloads the newest release, installs it in the layout that can update itself, makes the shortcuts, and runs the self-check. |
-| **Build by hand** | `uv run tools/build_app.py --zip` → `dist/Breakaway Pit Display/`. One folder, copy it anywhere, run the executable inside. |
+| **Set up a new machine** | Download `…-Setup.exe` from the release page onto the pit machine and double-click it. One file, no administrator, done. |
+| **Build by hand** | `uv run tools/build_app.py --zip` → `dist/Breakaway Pit Display/`. Add `--installer` on Windows for the Setup.exe. |
 
 Everything the app needs is in the package except the music.
 
@@ -37,7 +37,7 @@ Also not included: `data/pit_display_samples.db`. That is the bulk telemetry —
 
 ### Size
 
-About **1.4 GB installed**, ~750 MB zipped. Roughly a quarter of that is the
+About **1.4 GB installed**, ~750 MB as the installer or the zip. Roughly a quarter of that is the
 CAD model and most of the rest is Chromium. `--no-model` drops ~340 MB; the app
 then runs with no robot on screen until somebody uploads one from
 Control → Project → CAD Viewer Config.
@@ -64,14 +64,24 @@ Windows. Two ways:
 1. **On a Windows machine** — install [uv], clone, then the commands above.
    The result is `dist\Breakaway Pit Display\Breakaway Pit Display.exe`.
 2. **In CI, with no Windows machine** — push a tag (`git tag v1.0 && git push
-   --tags`) or run the *Build app* workflow by hand. It builds Windows and
-   macOS, self-checks each packaged app, and — for a tag — publishes a GitHub
+   --tags`) or run the *Build app* workflow by hand. It builds, self-checks the
+   packaged app, compiles the installer, and — for a tag — publishes a GitHub
    Release the installed apps find by themselves. A manual run stops at
    artifacts and releases nothing, which is how you find out a change broke
    packaging without spending a version number on it.
    CI builds `--no-model` because the model is not in git. The model lives in
    the *data* directory, so a machine that has one keeps it through every
    update.
+
+**CI is Windows-only, deliberately.** Every pit machine is Windows, the Mac runs
+from a checkout and never installs a build, and a macOS runner bills at *ten
+times* the Linux rate against a private repo's monthly minutes. Building both
+put one release at ~180 billed minutes out of 2,000/month; this is ~30. `uv run
+tools/build_app.py` still works fine on the Mac if you want a local copy.
+
+**Nobody is ever charged by surprise.** The default spending limit on a free
+account is $0, so exceeding the monthly minutes means jobs stop starting until
+the month rolls over — not a bill.
 
 **The version is stamped from the tag, never edited by hand.**
 `tools/stamp_version.py` writes it into `app/version.py` between checkout and
@@ -86,17 +96,27 @@ never try to update itself.
 
 ## Installing on the pit machine
 
-```powershell
-powershell -ExecutionPolicy Bypass -File tools\install_windows.ps1 -Token github_pat_xxx -Startup
-```
+On the pit machine, open the repo's **Releases** page in a browser, sign in to
+GitHub, and download **`Breakaway-Pit-Display-<version>-Setup.exe`**. Double-click
+it.
 
-That is the whole install. It downloads the newest release, unpacks it into the
-versioned layout below, makes the Start Menu and startup shortcuts, saves the
-update token, and finishes by running `--self-check` — so the last thing you
-see is whether the machine is actually working. `-Zip <file>` installs a local
-zip instead of downloading; `-Channel beta` follows prereleases.
+That is the whole install — one file, the same as any application off the
+internet. It asks two things (start with Windows? a token for updates?), and
+puts the app in the versioned layout below with a Start Menu entry and an
+Add/Remove Programs entry.
 
-**No administrator, at install or at update time.** Everything is per-user.
+**No administrator, at install or at update time.** Everything is per-user,
+under `%LOCALAPPDATA%`.
+
+Windows SmartScreen will warn on first run, because the installer is not
+code-signed: **More info → Run anyway**. It says that once, per machine.
+
+Two files on the release page, and only one is for you:
+
+| | |
+|---|---|
+| `…-Setup.exe` | **This one.** What a person downloads and runs |
+| `…-windows.zip` | Not for people — what an installed app downloads when it updates itself |
 
 Then, once, by hand:
 
@@ -128,7 +148,12 @@ running `.exe`, so nothing ever tries to.
 
 A copy somebody unzipped onto the desktop instead is not this shape, is
 detected as such, and is left completely alone — it just cannot update itself.
-Re-running the installer converts it, and touches no data.
+Running the Setup.exe converts it, and touches no data.
+
+**Uninstalling** is the normal Add/Remove Programs entry. It removes every
+version and the shortcuts, and *asks* whether to delete this machine's data —
+the database, checklists, CAN-id names, imported logs and uploaded CAD model —
+defaulting to no, because the usual reason to uninstall is to reinstall.
 
 ### Where its data lives
 
@@ -159,11 +184,11 @@ The rest of this section is what that actually does, and how to stop it.
 The full sequence, from the Mac to the pit:
 
 1. `git tag v1.4.2 && git push --tags`.
-2. CI stamps the version, builds Windows and macOS, and runs `--self-check` on
-   each *packaged* app. A build that does not boot on the runner never becomes
-   a release.
-3. It publishes a release carrying both zips and a `manifest.json` naming each
-   one and its SHA-256.
+2. CI stamps the version, builds Windows, and runs `--self-check` on the
+   *packaged* app. A build that does not boot on the runner never becomes a
+   release.
+3. It publishes a release carrying the installer, the update payload and a
+   `manifest.json` naming the payload and its SHA-256.
 4. Every pit machine checks the release feed on a six-hour timer and says, on
    **Control → Pit Systems → Software Updates**, that something newer exists.
    **It does not download it.** A 400 MB download that starts itself is a
@@ -208,8 +233,9 @@ all — there is nothing to configure on a machine that will never update.
    repositories → Pit_Display**, permissions **Contents: Read-only**. Nothing
    else. Give it an expiry you will remember — a year is reasonable, and the
    panel says plainly when GitHub starts refusing it.
-3. Pass it to `install_windows.ps1 -Token …`, or paste it into **Control → Pit
-   Systems → Software Updates** after unlocking the admin bar.
+3. Paste it into the installer when it asks, or into **Control → Pit Systems →
+   Software Updates** after unlocking the admin bar (click the Breakaway mark,
+   top left).
 
 It is stored as `update_token` in the data directory — beside the database, not
 inside the app folder, so upgrading never loses it. It can read this one
@@ -273,7 +299,7 @@ This machine will never take a release by itself. Four different causes, and
 the line names which: it is a checkout, the build carries no stamped version,
 it was unzipped by hand rather than installed, or there is no token. All four
 look identical from the outside — nothing ever appears — which is why the check
-exists. Re-run `install_windows.ps1` for the third; add a token for the fourth.
+exists. Run the Setup.exe for the third; add a token for the fourth.
 
 [VLC]: https://www.videolan.org/vlc/
 
@@ -281,10 +307,11 @@ exists. Re-run `install_windows.ps1` for the third; add a token for the fourth.
 
 ## Known limits
 
-- **Not code-signed.** Windows SmartScreen will warn on first run ("More info →
-  Run anyway"); macOS Gatekeeper will need Right-click → Open, or
-  `xattr -dr com.apple.quarantine "Breakaway Pit Display.app"`. Signing needs
-  certificates the team would have to buy.
+- **Not code-signed.** Windows SmartScreen warns the first time the installer
+  runs ("More info → Run anyway"). Once installed, updates are downloaded by
+  the app itself rather than by a browser, so no mark-of-the-web is attached
+  and SmartScreen never asks again. A signing certificate is the fix and the
+  team would have to buy one.
 - **One architecture per build.** A build made on Apple Silicon runs on Apple
   Silicon. Build on the architecture you are shipping to.
 - **The LED controller is USB serial**, discovered by VID/PID at runtime — it

@@ -47,6 +47,11 @@ written:
   complaining. It is now also the **gate an update has to pass**: the staged
   build runs it on the pit machine before the launcher is pointed at it, so
   anything that breaks a bundle stops there rather than at an event.
+  **Its output needs help to be readable on Windows**: the shipped app is
+  `console=False`, and a GUI-subsystem executable is not attached to the
+  console that launched it, so every `print()` here went nowhere at all.
+  `_attach_console()` borrows the parent's console when there is one, and the
+  report is written to `selfcheck.log` in the data directory either way.
 - **The version is stamped at build time, never edited.** `app/version.py`
   carries a sentinel that `version.is_release()` refuses; CI rewrites it from
   the git tag. A file somebody has to remember to bump is a file that
@@ -1006,7 +1011,26 @@ git tag v1.4.2 ─▶ Actions: stamp, build ×2, --self-check ×2 ─▶ Release
 | `app/update/service.py` | `_UpdateService` singleton — the state machine the panel draws |
 | `app/widgets/update_panel.py` | Control → Pit Systems → Software Updates |
 | `tools/stamp_version.py`, `tools/make_manifest.py` | What CI runs |
-| `tools/install_windows.ps1` | First install, and converting a hand-unzipped copy |
+| `packaging/installer.iss` | The Inno Setup script — the one file a person is given |
+
+**Windows only.** The Mac this is developed on runs from a checkout and never
+installs a build, and a macOS CI job bills at *ten times* the Linux rate against
+a private repo's monthly minutes — ~150 of the ~180 a two-platform release cost,
+for an artefact nobody installed. The app's own code is still cross-platform
+(`platform_key()`, symlinks instead of junctions on POSIX) because that costs
+nothing and keeps the dev loop honest; only CI is single-platform.
+
+**One build, two assets, two readers.** `…-Setup.exe` is the single file a
+person downloads and double-clicks — Inno Setup wrapping exactly the `dist/`
+tree PyInstaller just produced and CI just self-checked. `…-windows.zip` is what
+the *app* fetches when it updates itself. Same bytes either way, so what a human
+installs and what a machine updates to can never drift apart.
+
+**Still one-folder, never one-file.** A PyInstaller `--onefile` build re-extracts
+the whole 850 MB bundle to a temp directory on *every* launch — 30–60s of blank
+screen before a pit display appears — and QtWebEngine is fragile in that mode.
+"One file" is satisfied by the *installer* being one file, which is what an
+application off the internet actually is.
 
 **Windows will not overwrite a running `.exe`, so nothing ever tries to.** The
 install is versioned folders behind a **directory junction** — every shortcut
@@ -1033,6 +1057,9 @@ launch gets. Five things about that are load bearing:
 - **An install that is not this shape is left completely alone.**
   `install_root()` recognises the layout by structure, and `is_managed()` False
   means every write path here refuses.
+- **The installer removes the junction with `rmdir` too**, in
+  `CurUninstallStepChanged`, *before* Inno's own file deletion runs — the same
+  trap, in Pascal.
 
 **Checking is automatic; downloading never is.** A release is ~400 MB and a
 download that starts itself is one that starts during a match cycle on event

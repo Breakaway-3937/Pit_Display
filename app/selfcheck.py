@@ -17,6 +17,14 @@ It builds all four windows offscreen, renders each one, tears them down, and
 reports. Exit status is 0 when everything critical passed, 1 otherwise, so it
 can be the last line of an install script.
 
+**Where the report goes is not obvious on Windows.** The shipped app is built
+`console=False` — a pit display must never open a terminal behind the screens —
+and a GUI-subsystem executable is not attached to the console that launched it,
+so everything printed here would go nowhere at all. Two things fix that:
+`_attach_console()` borrows the parent's console when there is one, and the
+whole report is written to `selfcheck.log` in the data directory regardless. An
+operator on the phone can be asked for that file.
+
 **Warnings are not failures.** No VLC means no music and a working pit display;
 no owlet means no `.hoot` import and a working pit display. Only the things
 that would leave an operator with nothing — an unwritable data directory, a
@@ -30,6 +38,66 @@ import platform
 import sys
 import traceback
 from dataclasses import dataclass, field
+
+
+class _Tee:
+    """Write to the console and to the log file, so neither can be the only copy."""
+
+    def __init__(self, stream, log):
+        self._stream = stream
+        self._log = log
+
+    def write(self, text):
+        if self._stream is not None:
+            try:
+                self._stream.write(text)
+            except (OSError, ValueError):
+                pass
+        if self._log is not None:
+            try:
+                self._log.write(text)
+            except (OSError, ValueError):
+                pass
+
+    def flush(self):
+        for target in (self._stream, self._log):
+            try:
+                target.flush()
+            except (OSError, ValueError, AttributeError):
+                pass
+
+
+def _attach_console() -> None:
+    """
+    Borrow the console this was launched from, on Windows.
+
+    A `console=False` build has no console of its own and is not attached to
+    the caller's, so `print()` lands nowhere — which made the documented
+    `--self-check` a command that appeared to do nothing at all. `AttachConsole
+    (ATTACH_PARENT_PROCESS)` fixes that when there *is* a parent console, and
+    fails harmlessly when there is not (double-clicked, or run by the updater).
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        if not ctypes.windll.kernel32.AttachConsole(-1):
+            return
+        for name, stream in (("stdout", sys.stdout), ("stderr", sys.stderr)):
+            if stream is None or stream.fileno() < 0:
+                setattr(sys, name, open("CONOUT$", "w", encoding="utf-8",
+                                        errors="replace", buffering=1))
+    except (OSError, ValueError, AttributeError, ImportError):
+        pass
+
+
+def _open_log():
+    """The log file, or None if the data directory will not take one."""
+    try:
+        from app import paths
+        return open(paths.data("selfcheck.log"), "w", encoding="utf-8")
+    except OSError:
+        return None
 
 
 # The QApplication is held here rather than in a local. A local goes out of
@@ -288,6 +356,11 @@ def run() -> int:
         sys.stdout.reconfigure(line_buffering=True)
     except (AttributeError, OSError):
         pass
+    _attach_console()
+    log = _open_log()
+    if log is not None:
+        sys.stdout = _Tee(sys.stdout, log)
+        sys.stderr = _Tee(sys.stderr, log)
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     os.environ.setdefault("PIT_LEDS_FAKE", "1")
 
@@ -354,6 +427,12 @@ def _report(results: list[Result]) -> int:
         for w in r.warnings:
             print(f"       ! {w}")
     print()
+
+    try:
+        from app import paths
+        print(f"This report: {paths.data_root() / 'selfcheck.log'}\n")
+    except OSError:
+        pass
 
     if failed:
         print(f"FAILED — {', '.join(r.name for r in failed)}")

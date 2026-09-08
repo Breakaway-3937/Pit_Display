@@ -4,7 +4,8 @@ Build the Pit Display into a shippable app folder.
 
     uv run tools/build_app.py                 # everything, including the CAD model
     uv run tools/build_app.py --no-model      # ~340 MB smaller; upload one later
-    uv run tools/build_app.py --zip           # also produce a zip to hand over
+    uv run tools/build_app.py --zip           # also produce a zip (the update payload)
+    uv run tools/build_app.py --installer     # Windows: the one file people are given
     uv run tools/build_app.py --clean         # throw away build/ and dist/ first
 
 The result is `dist/Breakaway Pit Display/` — one folder, copy it anywhere on a
@@ -16,6 +17,11 @@ of paths to the team's own audio, kept in the database; the audio files stay
 wherever they live on the pit machine. Shipping a few gigabytes of music inside
 an app nobody can update without a rebuild is the wrong shape, and the folder is
 re-pointed in one click from Control → Music → Add folder.
+
+**Two outputs, and they are for different readers.** `--installer` produces the
+single `…-Setup.exe` a person downloads and double-clicks; `--zip` produces the
+archive the *app* downloads when it updates itself. A release carries both, and
+CI makes both from one build.
 
 **PyInstaller does not cross-compile.** Run this on the OS you are shipping to.
 For Windows without a Windows machine, push a tag and let
@@ -36,6 +42,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 APP_NAME = "Breakaway Pit Display"
 SPEC = ROOT / "packaging" / "pit_display.spec"
+ISS = ROOT / "packaging" / "installer.iss"
+
+# Where Inno Setup puts its compiler. The GitHub Windows runner has it at the
+# first of these; a developer machine that installed it normally, the second.
+_ISCC_CANDIDATES = (
+    r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    r"C:\Program Files\Inno Setup 6\ISCC.exe",
+)
 
 
 def human(n: int) -> str:
@@ -133,13 +147,77 @@ def make_zip(folder: Path) -> Path:
     return target
 
 
+def find_iscc() -> str | None:
+    """The Inno Setup compiler, from PATH or where it installs itself."""
+    found = shutil.which("ISCC") or shutil.which("iscc")
+    if found:
+        return found
+    for candidate in _ISCC_CANDIDATES:
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+
+def numeric_version(version: str) -> str:
+    """
+    `1.4.2-beta.1` → `1.4.2.0`.
+
+    Windows' version resource is four integers and cannot hold a prerelease
+    suffix. The real string still goes in AppVersion, which is the one a person
+    ever reads; this is only what Explorer's Details tab shows.
+    """
+    core = version.lstrip("vV").split("+", 1)[0].split("-", 1)[0]
+    parts = [p for p in core.split(".") if p.isdigit()][:4]
+    while len(parts) < 4:
+        parts.append("0")
+    return ".".join(parts)
+
+
+def make_installer(folder: Path) -> Path:
+    """
+    Compile the one-file Windows installer around an already-built folder.
+
+    Not a second build: Inno wraps exactly the `dist/` tree PyInstaller just
+    produced and self-checked, so what a person installs is byte-for-byte what
+    CI proved boots.
+    """
+    if sys.platform != "win32":
+        raise SystemExit("  x --installer only works on Windows — Inno Setup is "
+                         "a Windows compiler. Push a tag and let CI do it.")
+    iscc = find_iscc()
+    if iscc is None:
+        raise SystemExit(
+            "  x Inno Setup is not installed. `choco install innosetup -y`, or "
+            "get it from https://jrsoftware.org/isdl.php")
+
+    from app import version as appver
+    v = appver.VERSION
+
+    cmd = [iscc,
+           f"/DAppVersion={v}",
+           f"/DNumericVersion={numeric_version(v)}",
+           f"/DSourceDir={folder}",
+           str(ISS)]
+    print(f"→ {Path(iscc).name} {' '.join(cmd[1:-1])}")
+    started = time.time()
+    subprocess.run(cmd, cwd=ROOT, check=True)
+    print(f"  compiled in {time.time() - started:.0f}s")
+
+    out = ROOT / "dist" / f"Breakaway-Pit-Display-{v}-Setup.exe"
+    if not out.exists():
+        raise SystemExit(f"  x expected {out.name} — Inno produced nothing")
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--no-model", action="store_true",
                     help="leave the season CAD model out (~340 MB smaller)")
     ap.add_argument("--zip", action="store_true",
-                    help="also produce a zip beside the folder")
+                    help="also produce a zip beside the folder (the update payload)")
+    ap.add_argument("--installer", action="store_true",
+                    help="Windows: also compile the one-file Setup.exe")
     ap.add_argument("--clean", action="store_true",
                     help="delete build/ and dist/ first")
     args = ap.parse_args()
@@ -172,6 +250,10 @@ def main() -> int:
     if args.zip:
         z = make_zip(folder)
         print(f"{z}\n  {human(z.stat().st_size)}")
+
+    if args.installer:
+        setup = make_installer(folder)
+        print(f"{setup}\n  {human(setup.stat().st_size)}")
 
     print("\nThe music library is NOT bundled — point the app at the audio "
           "folder from Control → Music → Add folder on the target machine.")

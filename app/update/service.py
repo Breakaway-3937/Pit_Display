@@ -139,9 +139,9 @@ class _UpdateService(QObject):
                     "tell what is newer than it. Build it through CI.")
         if not install.is_managed():
             return ("This copy was unzipped by hand rather than installed, so "
-                    "there is no versioned layout to update into. Re-install "
-                    "with tools/install_windows.ps1 to enable updates — your "
-                    "database, checklists and CAN names are untouched by it.")
+                    "there is no versioned layout to update into. Run the "
+                    "Setup.exe from the latest release to enable updates — "
+                    "your database, checklists and CAN names are untouched.")
         if not configured():
             return ("No GitHub token on this machine. The repository is "
                     "private, so updates need one — paste it below.")
