@@ -641,6 +641,7 @@ stays lit if this app crashes.
 | `palette.py` | Brand hex → the saturated primary actually sent to the strips |
 | `firmware/pit_leds/pit_leds.ino` | The controller. Pins, per-unit pixel counts, strip placement and the switch pins are all in the config block at the top |
 | `firmware/pit_probe/pit_probe.ino` | Diagnostic sketch: finds which pin a run is on, how long it is, and its pixel format. Not the controller — flash `pit_leds` back afterwards |
+| `firmware/pit_switch_probe/pit_switch_probe.ino` | Diagnostic sketch: finds which pins the three-way switch is on. Plain-text serial monitor; `u`/`c`/`d`/`r` prints the config block. Flash `pit_leds` back afterwards |
 | `tools/led_probe.py` | Drives the probe. `id` / `ruler` / `solo` / `flood` / `rgbwraw` |
 | `tools/led_color_check.py` | Self-paced colour check against the real controller |
 
@@ -708,23 +709,65 @@ identical either way, so "the breathe looks fine" proves nothing about them.
 reports **two** segments and 169 px; the app reads the count rather than
 assuming, so it needed no change (it still sends `0xFF` everywhere).
 
-**The manual switch is compiled out** (`HAS_MANUAL_SWITCH 0`) because none is
-wired. This matters: both inputs sit HIGH on their pull-ups when nothing is
-attached, which is indistinguishable from the centre detent — so a board with
-no switch reads OFF, boots dark, and ignores every host command. There is no
-way to tell the two apart electrically; it has to be declared. Set it to 1 when
-the SPDT goes in.
+**The three-way switch is WHITE / app / RED, and the middle is the normal
+position.** Up is a full-white work light, down is solid red with no host in the
+loop, and the centre hands the pit to the app. Both overrides are hard — they
+ignore the host, the saved state and the current mode — because the point of a
+physical switch is that it still works when the interesting failure has already
+happened. Serial keeps being read and ACKed in **every** position and commands
+still land in `state`, so flicking back to the middle resumes on what the app has
+been asking for, with no round trip. The truth table lives only in
+`switchPosition()`.
 
-**How the switch behaves once fitted.** An SPDT on-off-on wired to two pull-up
-inputs overrides the host: one throw forces all strips to red, centre blanks
-them, the other throw hands control back to the app. Serial keeps being read and
-ACKed in **every** position, and commands still land in `state` — so flicking back
-to host resumes on what the app has been asking for, with no round trip. The truth
-table lives only in `switchPosition()`.
+**There is deliberately no manual OFF.** Dark is what a pit looks like when
+something is broken, and a switch position indistinguishable from a dead board
+costs an hour at an event. The app's kill switch still turns the strips off on
+purpose.
+
+**White comes from the W die, not from R+G+B.** `packAndShow()` takes a `wByte`
+for exactly this: the override fills `leds[]` black and passes 255. Mixing white
+from the three colour channels is tinted *and* three times the current for the
+same apparent brightness, and full white is the one state where every pixel is
+lit at once — which is why `OVERRIDE_WHITE_BRIGHTNESS` is 160 (~2.1 A at 169 px)
+rather than matching red's 200. Raise it only against a known supply.
+
+**The switch is on an input shield, and the shield's labels lie.** Measured
+2026-09-08 with `firmware/pit_switch_probe`: the blue throw sits in the socket
+marked **3** and reads on **Arduino D2**. Never type a pin number off that
+shield into the firmware — probe it. The offset is why the original wiring
+notes looked plausible and were unusable.
+
+**D7 was written off as unusable and that was wrong — re-probe before you
+believe a dead pin.** Measured 2026-09-08 it sat at 0V in *every* switch
+position, beating the internal pull-up, so the green throw landed there was
+invisible all day and the pin was condemned in these notes. Re-probed after
+rewiring: D7 floats HIGH when open and pulls cleanly LOW on the throw, in all
+three positions. It now carries the green throw (`SW_PIN_UP 7`). The pin was
+never the fault; the connection into it was, and a note saying "that pin is
+dead" outlived the wiring it described. **A throw that does not respond is a
+measurement to take, never a pin to condemn from documentation** — including
+this documentation. D5/D6 are the LED data lines and D0/D1 the serial port;
+those three exclusions are real. Every other probed pin floats clean.
+
+**`SW_ACTIVE_LOW` is the bias, and it is the setting that fails silently.** 1 is
+a GND common read against internal pull-ups (closed = LOW); 0 is a +5V common
+read against the shield's pull-downs (closed = HIGH), with the internal pull-ups
+off so they cannot fight it. Set it wrong and the switch does not error — it
+reads as jammed in whichever position the wrong bias implies, which is
+indistinguishable from a switch nobody wired.
+
+**A throw of `255` is supported, not broken.** `SW_PIN_UP` / `SW_PIN_DOWN` are
+named for what they *do*; if white and red come out swapped, swap the two
+numbers, because which throw is physically up is a mounting fact no probe can
+reveal. 255 means that throw is not on a readable pin yet, and the build simply
+degrades to two positions — that throw, and everything else — so the pit stays
+usable while somebody finds a socket for the other wire. Filling in the number
+is the only change needed to get the third position back.
 
 **SRAM ceiling:** the ATmega328P has 2KB. RGBW costs a pixel buffer (3B/px) *and*
 a wire buffer (4B/px for the longest channel), so the current 169 px build sits
-at ~1560B with 488B free. Roughly 250 px total is the practical limit here;
+at ~1560B with 488B free (~428B once `HAS_MANUAL_SWITCH` is 1 — the switch's
+log strings). Roughly 250 px total is the practical limit here;
 past that, move to an ESP32. If you change the counts, nothing in the app needs
 editing — `HELLO` reports the geometry and the app adapts.
 

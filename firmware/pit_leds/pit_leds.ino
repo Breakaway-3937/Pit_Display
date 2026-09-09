@@ -136,41 +136,112 @@
 // the pit wiring can actually deliver.
 #define MAX_BRIGHTNESS 200
 
-// ── The three-way switch ────────────────────────────────────────────────
-// An SPDT on-off-on: common to GND, each throw to one input pin, both pins
-// held high by the internal pull-ups. The centre position closes neither
-// throw, which is why it reads as "both high".
+// ── The three-way switch ──────────────────────────────────────────────
+// A panel switch on the front of the pit, in reach of anyone standing at it.
+// Three positions, and the middle one is the normal one:
 //
-//      A     B     position        meaning
-//    ─────────────────────────────────────────────────────────────
-//     LOW   HIGH   throw A         RED     — all strips solid red
-//     HIGH  HIGH   centre (open)   OFF     — dark, host ignored
-//     HIGH  LOW    throw B         HOST    — the app drives the pit
-//     LOW   LOW    (impossible)    HOST    — miswired; fail into host control
+//      UP      full WHITE   — work light. Somebody is under the robot.
+//      CENTRE  the app      — what the pit runs on all day.
+//      DOWN    full RED     — team colour with no host, no laptop, no app.
 //
-// To reorder the positions, edit switchPosition() — it is the only place
-// the truth table lives.
+// Both overrides are hard: they ignore the host, the saved state and the
+// current mode, and they need nothing running on the other end of the USB
+// cable. That is the point of a physical switch — it is the control that
+// still works when the interesting failure has already happened.
 //
-// If the SPDT is not wired yet, set HAS_MANUAL_SWITCH to 0. Both inputs sit
-// HIGH on their pull-ups when nothing is attached, which is indistinguishable
-// from the centre detent — so a board with no switch on it reads OFF, boots
-// dark, and ignores every host command. There is no way to tell the two apart
-// electrically; it has to be declared.
-#define HAS_MANUAL_SWITCH 0    // FILLER — set to 1 once the SPDT is wired
+// There is deliberately no manual OFF. Dark is what a pit looks like when
+// something is broken, and a switch position that is indistinguishable from
+// a dead board costs an hour at an event. The app's kill switch is still
+// there for turning the strips off on purpose.
+//
+// ── WHAT THE PIT ACTUALLY HAS (measured 2026-09-08, firmware/pit_switch_probe)
+//
+// An SPDT on-off-on, three wires, landing on an INPUT SHIELD rather than on
+// the Uno's own header. Everything below is measurement, not documentation —
+// the documentation was wrong about all of it.
+//
+//   blue   throw, closes in DOWN.  Reads on ARDUINO D2.
+//   green  throw, closes in UP.    Reads on ARDUINO D7.
+//   red    common.
+//
+// THE SHIELD'S LABELS ARE OFFSET. Blue sits in the socket marked 3 and comes
+// out on Arduino D2. Never read a pin number off that shield and type it in
+// here — probe it. That offset is the whole reason the original wiring notes
+// looked plausible and were unusable.
+//
+// D7 CARRIES THE GREEN THROW, and the history matters. On 2026-09-08 this
+// pin was measured stuck at 0V in every switch position — something on the
+// shield beat the internal pull-up — so green was invisible all day and D7
+// was written off. Re-probed after rewiring: it now floats HIGH when open
+// and pulls cleanly LOW on the throw, in all three positions. The pin was
+// never the fault; the connection into it was.
+//
+// The lesson is the probe, not the pin. A throw that does not respond is a
+// measurement to take (firmware/pit_switch_probe), never a pin to condemn
+// from notes — these notes were wrong about this exact pin for a session.
+//
+// D5 and D6 are the LED data lines and remain unavailable. D0/D1 are the
+// serial port. Every other pin probed floats clean and will work.
+#define HAS_MANUAL_SWITCH 1
 
-#define SW_PIN_A     7         // FILLER
-#define SW_PIN_B     2         // FILLER
+// Which way round a closed throw reads.
+//
+//   1  common on GND. The internal pull-up holds the pin at 5V and a closed
+//      throw drags it to 0V. CLOSED = LOW. Needs no external parts, and it
+//      is what this pit measured good on.
+//   0  common on +5V. The shield's pull-down resistors hold the pin at 0V
+//      and a closed throw drives it to 5V. CLOSED = HIGH. The internal
+//      pull-ups must stay off or they fight the shield and every pin reads
+//      HIGH forever.
+//
+// Get this wrong and the switch does not fail loudly — it reads as stuck in
+// whichever position the wrong bias implies, which looks exactly like a
+// switch nobody wired.
+#define SW_ACTIVE_LOW 1
 
-// The manual RED position is a hard override, so it does not read state
-// from the host or from EEPROM. Breakaway Red at a brightness that survives
-// pit lighting.
-// Pure red, not the brand hex. The manual override exists so somebody can
-// force the pit red without a host, and on these RGBW strips (200,32,39)
-// renders pink — same reason the app snaps to primaries.
+// The two throws, by what they DO rather than by which terminal they are on.
+// If white and red come out the wrong way round, swap these two numbers —
+// which throw is physically up is a mounting fact, not an electrical one,
+// and no probe can tell you.
+//
+// 255 means "this throw is not on a readable pin yet". That is a supported
+// state, not a broken one: with one throw landed the switch still gives two
+// positions (its own, and everything else = the app), and the pit is usable
+// while somebody finds a socket for the other wire. Fill in the number and
+// the third position appears with no other change.
+#define SW_PIN_UP    7         // green — WHITE. Measured: Arduino D7.
+#define SW_PIN_DOWN  2         // blue  — RED. Measured: Arduino D2.
+
+#define SW_NO_PIN    255
+
+// The manual positions are hard overrides, so they read nothing from the
+// host or from EEPROM.
+//
+// Pure red, not the brand hex. On these RGBW strips (200,32,39) renders
+// pink — same reason the app snaps to primaries before sending them.
 #define OVERRIDE_R   255
 #define OVERRIDE_G   0
 #define OVERRIDE_B   0
-#define OVERRIDE_BRIGHTNESS 200 // FILLER
+#define OVERRIDE_BRIGHTNESS 200
+
+// White comes from the strip's dedicated W die, not from firing R+G+B
+// together. On an SK6812-RGBW the mixed white is tinted and costs three
+// times the current for the same apparent brightness; the W LED is what
+// the fourth wire is for. See packAndShow(), which takes the W byte.
+//
+// POWER. This is the brightest thing the pit can be asked to do, and the
+// only one where every pixel is lit at once. 169 px at ~20 mA of W is
+// roughly 3.4 A at full scale, so this figure is the throttle:
+//
+//      255  ≈ 3.4 A     needs a supply nobody has plugged in yet
+//      200  ≈ 2.7 A     matches the red override
+//      160  ≈ 2.1 A     what a 2 A brick will actually deliver
+//
+// PSU_MILLIAMPS above says 2000, so 160 is the honest default. Raise it
+// when the real supply is known — a browning-out strip flickers and
+// resets, which reads as a broken run rather than a power problem.
+#define OVERRIDE_WHITE_W          255
+#define OVERRIDE_WHITE_BRIGHTNESS 160
 
 // ── Strip placement on the shared axis ──────────────────────────────────
 // `origin` is the position of that strip's PIXEL 0 measured in pixel-widths
@@ -251,7 +322,7 @@ const Strip strips[NUM_STRIPS] = {
 };
 
 #define FW_MAJOR 2
-#define FW_MINOR 0
+#define FW_MINOR 1   // 2.1: switch is WHITE / app / RED, no manual OFF
 
 // ─────────────────────────────────────────────────────────────────────────
 //  Protocol (mirrors app/leds/protocol.py — change both sides together)
@@ -478,9 +549,9 @@ void loadState() {
 // ─────────────────────────────────────────────────────────────────────────
 //
 // Commands are accepted and applied to `state` in every switch position,
-// including RED and OFF. The manual override suppresses the *output*, not
-// the conversation: flick back to HOST and the pit is already showing what
-// the app has been asking for, with no round trip and no stale frame.
+// including WHITE and RED. The manual override suppresses the *output*, not
+// the conversation: flick back to the middle and the pit is already showing
+// what the app has been asking for, with no round trip and no stale frame.
 void handleFrame(uint8_t *body, uint8_t len) {
   if (len < 3) return;
   uint8_t expected = crc8(body, len - 1);
@@ -576,7 +647,9 @@ void readSerial() {
 // ─────────────────────────────────────────────────────────────────────────
 //  The three-way switch
 // ─────────────────────────────────────────────────────────────────────────
-enum : uint8_t { SW_RED = 0, SW_OFF = 1, SW_HOST = 2 };
+// Ordered as the switch is: up, middle, down. The value is never sent
+// anywhere, so the order is purely for reading the code against the panel.
+enum : uint8_t { SW_WHITE = 0, SW_HOST = 1, SW_RED = 2 };
 
 static const uint8_t SW_DEBOUNCE_MS = 25;
 
@@ -584,26 +657,41 @@ uint8_t swPos     = SW_HOST;     // the position we are acting on
 uint8_t swPending = SW_HOST;     // the position we are waiting to trust
 unsigned long swSince = 0;
 
-// The whole truth table, in one place. See the wiring comment at the top.
-uint8_t switchPosition() {
-#if !HAS_MANUAL_SWITCH
-  return SW_HOST;                            // no switch fitted — the app
-                                             // drives the pit, always.
+// One throw, read whichever way round this pit is wired. An unfitted throw
+// (255) is never closed, which is what makes a half-landed switch degrade to
+// two positions instead of failing.
+static inline bool throwClosed(uint8_t pin) {
+  if (pin == SW_NO_PIN) return false;
+#if SW_ACTIVE_LOW
+  return digitalRead(pin) == LOW;      // common on GND, internal pull-up
 #else
-  bool a = (digitalRead(SW_PIN_A) == LOW);   // pull-ups: closed reads LOW
-  bool b = (digitalRead(SW_PIN_B) == LOW);
-  if (a && !b) return SW_RED;
-  if (b && !a) return SW_HOST;
-  if (!a && !b) return SW_OFF;               // centre position, both open
-  return SW_HOST;                            // both closed: impossible on an
-                                             // SPDT, so it means a wiring
-                                             // fault — leave the pit usable
-                                             // rather than dark.
+  return digitalRead(pin) == HIGH;     // common on +5V, shield pull-down
 #endif
 }
 
-// Toggles bounce for a few milliseconds. Without this a flick through the
-// centre detent fires OFF, then the destination, then OFF again.
+// The whole truth table, in one place. See the wiring comment at the top.
+uint8_t switchPosition() {
+#if !HAS_MANUAL_SWITCH
+  return SW_HOST;                      // no switch fitted — the app drives
+                                       // the pit, always.
+#else
+  bool up   = throwClosed(SW_PIN_UP);
+  bool down = throwClosed(SW_PIN_DOWN);
+
+  // Both closed is impossible on an SPDT, so it means a wiring fault. Fall
+  // into HOST rather than latching an override nobody asked for: the pit
+  // keeps running the app, which is the state somebody can actually work in.
+  if (up && down) return SW_HOST;
+
+  if (up)   return SW_WHITE;
+  if (down) return SW_RED;
+  return SW_HOST;                      // centre: neither throw closed
+#endif
+}
+
+// Toggles bounce for a few milliseconds. Without this a flick from one throw
+// to the other fires HOST in between, and the pit blinks through whatever
+// the app happens to be showing on its way past the middle.
 void pollSwitch() {
   uint8_t now_pos = switchPosition();
   unsigned long now = millis();
@@ -615,9 +703,9 @@ void pollSwitch() {
   if (swPending != swPos && (now - swSince) >= SW_DEBOUNCE_MS) {
     swPos = swPending;
     dirty = true;
-    sendLog(swPos == SW_RED  ? "switch=RED (manual override)"
-          : swPos == SW_OFF  ? "switch=OFF (manual override)"
-                             : "switch=HOST");
+    sendLog(swPos == SW_WHITE ? "switch=WHITE (manual override)"
+          : swPos == SW_RED   ? "switch=RED (manual override)"
+                              : "switch=HOST");
   }
 }
 
@@ -725,7 +813,13 @@ void render() {
 
 void readSerial();          // defined below; showAll drains between writes
 
-void packAndShow(uint8_t ctrl, const CRGB *src, uint16_t npx, uint8_t bright) {
+// `wByte` is the strip's fourth channel — the dedicated white die, which
+// nothing in leds[] can express because a CRGB has only three components.
+// Effects and host colours pass 0 and it costs them nothing; the manual
+// WHITE override passes 255 and gets a real white rather than R+G+B fired
+// together, which on these strips is tinted and three times the current.
+void packAndShow(uint8_t ctrl, const CRGB *src, uint16_t npx,
+                 uint8_t bright, uint8_t wByte) {
   uint16_t nbytes = (uint16_t)npx * 4;
   uint16_t nslots = (nbytes + 2) / 3;
   if (nslots > WIRE_SLOTS) { nslots = WIRE_SLOTS; nbytes = nslots * 3; }
@@ -745,6 +839,10 @@ void packAndShow(uint8_t ctrl, const CRGB *src, uint16_t npx, uint8_t bright) {
     w = r < g ? (r < b ? r : b) : (g < b ? g : b);
     r -= w; g -= w; b -= w;
 #endif
+    // Brightness applies to W exactly as it does to the other three — it is
+    // a channel on the same die package, not a separate level.
+    const uint8_t wOverride = scale8(wByte, bright);
+    if (wOverride > w) w = wOverride;
     uint16_t o = (uint16_t)i * 4;
     if (o + 3 >= nbytes) break;
     raw[o] = r; raw[o + 1] = g; raw[o + 2] = b; raw[o + 3] = w;   // RGBW
@@ -756,14 +854,14 @@ void packAndShow(uint8_t ctrl, const CRGB *src, uint16_t npx, uint8_t bright) {
   FastLED[ctrl].showLeds(255);
 }
 
-void showAll(uint8_t bright) {
-  packAndShow(0, &leds[strips[SEG_CENTER].start], CENTER_COUNT, bright);
+void showAll(uint8_t bright, uint8_t wByte) {
+  packAndShow(0, &leds[strips[SEG_CENTER].start], CENTER_COUNT, bright, wByte);
   // Drain the port between the two channel writes. Each show holds
   // interrupts off for milliseconds and the AVR's UART keeps only two bytes
   // without its ISR, so the gap between strips is the only chance an inbound
   // frame gets. Halving the blackout roughly halves the loss.
   readSerial();
-  packAndShow(1, &leds[strips[SEG_SIDES].start],  SIDES_COUNT,  bright);
+  packAndShow(1, &leds[strips[SEG_SIDES].start],  SIDES_COUNT,  bright, wByte);
 }
 
 // Whether this mode's output changes from frame to frame. A static mode that
@@ -781,8 +879,11 @@ void setup() {
   Serial.begin(115200);
 
 #if HAS_MANUAL_SWITCH
-  pinMode(SW_PIN_A, INPUT_PULLUP);
-  pinMode(SW_PIN_B, INPUT_PULLUP);
+  // INPUT_PULLUP for a GND common; plain INPUT for a +5V common, where the
+  // shield supplies the pull-downs and our pull-up would fight them.
+  const uint8_t swMode = SW_ACTIVE_LOW ? INPUT_PULLUP : INPUT;
+  if (SW_PIN_UP   != SW_NO_PIN) pinMode(SW_PIN_UP,   swMode);
+  if (SW_PIN_DOWN != SW_NO_PIN) pinMode(SW_PIN_DOWN, swMode);
 #endif
   swPos = swPending = switchPosition();     // start in the real position, no
                                             // flash of the wrong state at boot
@@ -842,10 +943,15 @@ void loop() {
                                         // alone so the host can be heard
 
     uint8_t outBright;
+    uint8_t outWhite = 0;              // the fourth channel; RGB modes send 0
     switch (swPos) {
-      case SW_OFF:
+      case SW_WHITE:
+        // The RGB channels stay dark and the white die does all of it. Mixing
+        // white from R+G+B would be tinted and cost three times the current
+        // for the same apparent brightness.
         fill_solid(leds, TOTAL_LEDS, CRGB::Black);
-        outBright = 0;
+        outWhite  = OVERRIDE_WHITE_W;
+        outBright = OVERRIDE_WHITE_BRIGHTNESS;
         break;
 
       case SW_RED:
@@ -864,7 +970,7 @@ void loop() {
         break;
     }
     if (outBright > MAX_BRIGHTNESS) outBright = MAX_BRIGHTNESS;
-    showAll(outBright);
+    showAll(outBright, outWhite);
     dirty = false;
   }
 }
