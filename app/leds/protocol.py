@@ -45,7 +45,8 @@ class Op(IntEnum):
     NAK        = 0x03   # device → host: bad crc / unknown op / bad payload
 
     SET_MODE   = 0x10   # mode_id, speed
-    SET_COLOR  = 0x11   # segment, r, g, b   (segment 0xFF = all)
+    SET_COLOR  = 0x11   # segment, r, g, b [, w]   (segment 0xFF = all; w = the
+                        # white die, fw 2.2+, ignored by older firmware)
     SET_BRIGHT = 0x12   # brightness
     SET_PIXELS = 0x13   # offset_hi, offset_lo, r,g,b, r,g,b, ...
     SAVE       = 0x14   # persist current state as the boot default
@@ -263,9 +264,25 @@ def payload_mode(mode: int, speed: int = 128) -> bytes:
     return bytes([int(mode) & 0xFF, max(0, min(255, speed))])
 
 
-def payload_color(rgb: tuple[int, int, int], segment: int = ALL_SEGMENTS) -> bytes:
+SEG_CENTER = 0
+SEG_SIDES = 1
+
+
+def payload_color(rgb: tuple[int, int, int], segment: int = ALL_SEGMENTS,
+                  white: int | None = None) -> bytes:
+    """
+    `white` is the strip's fourth channel — the dedicated white die — and is
+    the only way to ask the strips for a real white: (255,255,255) on the
+    RGB channels is tinted and three times the current. Sent as a fifth
+    byte, which firmware before 2.2 ignores (that segment then shows the
+    RGB part alone — black, for a white request — rather than anything
+    unsafe).
+    """
     r, g, b = (max(0, min(255, c)) for c in rgb)
-    return bytes([segment & 0xFF, r, g, b])
+    out = [segment & 0xFF, r, g, b]
+    if white is not None:
+        out.append(max(0, min(255, int(white))))
+    return bytes(out)
 
 
 def payload_brightness(value: int) -> bytes:

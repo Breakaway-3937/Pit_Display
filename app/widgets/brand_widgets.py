@@ -18,6 +18,8 @@ Breakaway brand devices as reusable Qt widgets (Brand System v2.0, §5).
                   eye to a headline / score. Use once per surface. Geometry is
                   locked to the playbook's 300×62 box — `paint_trace()` is the
                   painter helper, and it can draw the line on progressively.
+  StatusDot     — the `bw-dot` status mark: a filled 10px circle, and the one
+                  place on a dark panel a status colour (including red) may go.
   eyebrow()     — Chakra Petch 600, uppercase, tracked — the brand eyebrow.
 
 Qt has no CSS radius/clip on custom paints, so these paint themselves. One
@@ -493,6 +495,38 @@ class Trace(QWidget):
         x = 0.0 if self._dir == "left" else self.width() - w
         paint_trace(p, x, 0.0, w, self._color.name(), self._progress,
                     mirrored=(self._dir == "right"))
+        p.end()
+
+
+# ── Status dot ──────────────────────────────────────────────────────────────
+
+class StatusDot(QWidget):
+    """
+    The brand's status dot — a filled circle, the only thing on a dark panel
+    allowed to be red. The sentence beside it stays white: red on carbon is
+    2.8:1 and never carries a letterform (§03).
+    """
+
+    def __init__(self, color: str = brand.STATUS_IDLE, size: int = 10, parent=None):
+        super().__init__(parent)
+        self._color = QColor(color)
+        self._size = size
+        self.setFixedSize(size, size)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def sizeHint(self) -> QSize:
+        return QSize(self._size, self._size)
+
+    def set_color(self, color: str):
+        self._color = QColor(color)
+        self.update()
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(self._color)
+        p.drawEllipse(self.rect())
         p.end()
 
 

@@ -43,6 +43,9 @@ datas: list[tuple[str, str]] = []
 datas += tree("assets/fonts")
 datas += tree("assets/cad_viewer")
 datas += tree("assets/logos", optional=True)
+# The Nexus API's example payloads: the offline fake feed and what
+# --self-check parses to prove the models still match the spec.
+datas += tree("assets/nexus")
 
 # The owlet extractors. Without these a `.hoot` cannot be imported at all, and
 # "no owlet for your platform" is the one failure an operator can neither

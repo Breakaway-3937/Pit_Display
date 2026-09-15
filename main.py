@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
@@ -20,6 +21,8 @@ from app.db import init_db
 from app.judges_slides import init_judges_slides
 from app.leds import init_leds
 from app.music import init_music
+from app.nexus import init_nexus
+from app.nexus.alerts import init_alerts
 from app.rotation import init_rotation
 from app.theme import dark_qss
 from app.touch import install as install_touch
@@ -70,6 +73,26 @@ def _cli(argv: list[str]) -> int | None:
         except UpdateError as exc:
             print(f"Could not roll back: {exc}", file=sys.stderr)
             return 1
+
+    if "--provision" in argv:
+        # Apply a pit setup file — keys and the event — from a script or a
+        # prompt. The GUI build has no console of its own; borrow the caller's
+        # so the report is seen. See app/provision.py.
+        from app import provision
+        from app.selfcheck import _attach_console
+        _attach_console()
+        i = argv.index("--provision")
+        if i + 1 >= len(argv):
+            print("usage: --provision <pit-setup.json>", file=sys.stderr)
+            return 2
+        try:
+            for line in provision.apply_file(Path(argv[i + 1])):
+                print(f"  {line}")
+            print("Applied. Start the app normally.")
+            return 0
+        except provision.ProvisionError as exc:
+            print(f"Not applied: {exc}", file=sys.stderr)
+            return 1
     return None
 
 
@@ -108,6 +131,11 @@ def main():
     if seeded:
         print(f"Seeded user data into {paths.data_root()}: "
               f"{', '.join(seeded)}", flush=True)
+    # A `pit-setup.json` dropped beside the database carries the keys and the
+    # event; apply it before any singleton goes looking for them.
+    from app import provision
+    for line in provision.auto_import():
+        print(f"pit-setup: {line}", flush=True)
 
     init_config()
     init_db()
@@ -115,6 +143,9 @@ def main():
     # states worth updating out of are the ones where those are broken. It goes
     # here only because the control screen's panel reads it while building.
     init_update()
+    # The Nexus event feed reads the active team from config and nothing else;
+    # it starts polling on its own timer once the control screen is up.
+    nexus_service = init_nexus()
     # Admin gates the LED/EQ controls; needs the DB for its credential row.
     init_admin()
     # Checklists are read while the presentation screens are being built.
@@ -126,6 +157,9 @@ def main():
     # strips can echo whichever subsystem the CAD viewer flies to.
     led_service = init_leds()
     music_service = init_music()
+    # Queue and inspection alerts: reads the feed, drives the strips, and
+    # hands the overhead screens their banner. After both of those.
+    init_alerts()
     app.setStyleSheet(dark_qss())
 
     control = ControlScreen()
@@ -156,6 +190,7 @@ def main():
     app.aboutToQuit.connect(control.shutdown_managed)
     app.aboutToQuit.connect(led_service.shutdown)
     app.aboutToQuit.connect(music_service.shutdown)
+    app.aboutToQuit.connect(nexus_service.shutdown)
     # Closing the control panel is quitting the app: it is the only window an
     # operator can reach, and the audience screens have no chrome to close.
     app.setQuitOnLastWindowClosed(True)

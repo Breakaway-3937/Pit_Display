@@ -84,7 +84,7 @@ consequences worth knowing:
 
 ### Global singletons (lazy-proxy pattern)
 
-Ten module-level singletons share the `LazyProxy` helper in `app/lazy_proxy.py` — safe to import at module level, but raise if accessed before their `init_*()` function is called in `main()`:
+Twelve module-level singletons share the `LazyProxy` helper in `app/lazy_proxy.py` — safe to import at module level, but raise if accessed before their `init_*()` function is called in `main()`:
 
 | Import | Init call | Purpose |
 |---|---|---|
@@ -98,12 +98,15 @@ Ten module-level singletons share the `LazyProxy` helper in `app/lazy_proxy.py` 
 | `from app.music import music` | `init_music()` | Playback, queue, local library, 10-band EQ |
 | `from app.admin import admin` | `init_admin()` | Admin lock gating the LED/EQ controls |
 | `from app.update import update` | `init_update()` | Release feed, staged installs, channel and rollback |
+| `from app.nexus import nexus` | `init_nexus()` | The frc.nexus event feed — live match queuing, pits, inspection, alliances (see [`NEXUS.md`](NEXUS.md)) |
+| `from app.nexus.alerts import alerts` | `init_alerts()` | Queue and inspection alerts: drives the strips, hands the overhead screens their banner |
 
 `init_config()` must be called first; the others depend on `config` being ready.
 `init_update()` depends on **neither** `config` nor the database — deliberately,
 since the states worth updating out of are the ones where those are broken; it
 is called early only because the control screen's panel reads it while building.
-`init_leds()` must come after `init_cad_assets()` (it subscribes to
+`init_nexus()` needs only `config` (it reads the active team) and no
+database; `init_alerts()` comes after both `init_nexus()` and `init_leds()`. `init_leds()` must come after `init_cad_assets()` (it subscribes to
 `subsystem_focused`); `init_music()` and `init_admin()` after `init_db()` (they
 seed EQ presets and the admin credential). `init_checklist()` also needs the DB,
 and must come **before the presentation screens are constructed** — they read
@@ -130,6 +133,9 @@ All cross-component communication uses Qt signals — no direct calls between wi
   screen swaps between the slide rotation and the checklist
 - `checklist.items_changed` / `item_toggled` → `ChecklistOverlay` rebuilds rows or
   repaints the one that changed; the control-screen editor mirrors it
+- `nexus.match_changed` / `now_queuing_changed` / `status_changed` / … → whatever
+  draws the event; the full list is in [`NEXUS.md`](NEXUS.md). Nothing on an
+  audience screen subscribes yet — only the Event Feed panel does
 
 ### Touch input (`app/touch.py`)
 
@@ -263,6 +269,13 @@ Three things about it are load bearing:
 - **The light theme is a derivative, not a token swap.** The same depth logic
   survives: the ambient wash becomes a cast shadow, rules go to N200, and the
   one red thing stays red.
+- **`plate_tint()` fills the whole plate with one colour and turns every ink
+  white.** The Next Match board returns the alliance colour from it — a red
+  card or a blue card, legible from across the pit before a word is. The
+  gradient keeps the plate's own light-fall on the tint, the cache key
+  carries the tint, and the theme is ignored while tinted (a light red card
+  would be a different board). Anything drawn on a tinted plate in the
+  alliance colour must reverse — white fill, coloured type — or it vanishes.
 
 `PlatePanel` is the container variant — same plate, but the inside is a Qt
 layout instead of a `paint_stage()`. The pit-front panel needs it, because it
@@ -451,8 +464,8 @@ control panel. Storage, columns and the query traps are in
 | `app/widgets/checklist_panel.py` | The operator's editor, in the screen's settings |
 
 **It is a per-screen content setting, not a fourth display mode.** Standard mode
-has four faces, chosen by `config.get(screen, "content")` — `"rotation"` (the
-default), `"checklist"`, `"diagnostics"` or `"robot_info"`. Per-screen because the useful arrangement in a pit is
+has five faces, chosen by `config.get(screen, "content")` — `"rotation"` (the
+default), `"next_match"`, `"checklist"`, `"diagnostics"` or `"robot_info"`. Per-screen because the useful arrangement in a pit is
 one overhead screen holding the checklist while the other keeps rotating for
 visitors, which a global mode cannot express. Judges and lunch still take over
 both screens; those are whole-pit states. A screen also carries a
@@ -707,7 +720,13 @@ identical either way, so "the breathe looks fine" proves nothing about them.
 
 `SET_COLOR`'s segment byte: `0` is CENTRE, `1` is SIDES, `0xFF` both. `INFO`
 reports **two** segments and 169 px; the app reads the count rather than
-assuming, so it needed no change (it still sends `0xFF` everywhere).
+assuming. **Since fw 2.2 `SET_COLOR` takes an optional fifth byte, W** — the
+white die, per segment. It is the only real white these strips have (RGB
+white is tinted and three times the current) and the queue alert uses it to
+hold the centre run white while the sides carry the alliance colour. Only
+SOLID mode carries the host's W; an older firmware ignores the byte and that
+segment shows the RGB part alone. `EEPROM_MAGIC` moved `0xBB → 0xBC` for the
+added `w[]` in `State`. `leds.supports_white` reads the version.
 
 **The three-way switch is WHITE / app / RED, and the middle is the normal
 position.** Up is a full-white work light, down is solid red with no host in the
@@ -781,9 +800,9 @@ strips, and `showAll()` drains the port between the two channel writes. **Keep
 that property** — anything that shows unconditionally every frame breaks the
 link, silently and intermittently.
 
-**`State` changed shape** twice — per-strip colour (`0xB9` → `0xBA`) and then
-three strips down to two (`0xBA` → `0xBB`). Move `EEPROM_MAGIC` again on any
-further change: an old saved struct read into a new layout garbles every field
+**`State` changed shape** three times — per-strip colour (`0xB9` → `0xBA`),
+three strips down to two (`0xBA` → `0xBB`), and the per-segment W channel
+(`0xBB` → `0xBC`). Move `EEPROM_MAGIC` again on any further change: an old saved struct read into a new layout garbles every field
 after it rather than failing.
 
 **Known bug, not yet fixed:** `SET_PIXELS` writes into `leds[]` and then
@@ -1031,6 +1050,93 @@ on import with `label` NULL; names are typed in **Control Screen → Pit Systems
 Robot Logs** and persist across imports. Naming is intentionally **not**
 admin-gated (it is data entry); deleting a session is, because it destroys
 samples.
+
+### The Nexus event feed (`app/nexus/`)
+
+**[`NEXUS.md`](NEXUS.md) is the reference** — setup, every endpoint, every
+field and what it means at the pit, the signals, and the freshness rule. Read
+it before drawing a match on any screen.
+
+```
+frc.nexus ──GET /event/{key} every 30s──▶ EventStatus ─┐
+          ──POST webhook (optional)──────▶             ├─▶ `nexus` signals ─▶ boards
+          ──pits · map · inspection · teams · alliances ┘   every 5 min
+```
+
+| File | Role |
+|---|---|
+| `app/credentials.py` | **The secret folder** — `secrets/`, one file per credential, gitignored |
+| `app/provision.py` | **The pit setup file** — keys + event as one JSON, applied by drop-in at launch, the panel, or `--provision` |
+| `app/nexus/api.py` | Every endpoint and schema as typed models; `FakeClient`. No Qt |
+| `app/nexus/settings.py` | `nexus.json` — event key, cadences, webhook switch |
+| `app/nexus/webhook.py` | The receiving server for the two push webhooks |
+| `app/nexus/service.py` | `_NexusService` — polling, freshness, "our match" |
+| `app/nexus/alerts.py` | `_AlertService` — first/second queue and inspection → strips + banner |
+| `app/widgets/queue_banner.py` | The alliance-colour band along the bottom of both overhead screens |
+| `app/widgets/next_match_overlay.py` | The **Next Match** board — `content="next_match"` on either overhead screen: our next match, a live countdown to the next queue call, the four estimates, who with, who against |
+| `app/widgets/nexus_panel.py` | Control → Pit Systems → Event Feed |
+| `tools/nexus_probe.py` | The CLI: `events` / `status` / `team` / `all` / `--raw` / `--fake` |
+| `tools/pit_setup.py` | `make` / `show` / `apply` a setup file for a pit machine |
+
+Five things are load bearing:
+
+- **Keys live in `secrets/`, never anywhere else.** `credentials.read(name)`
+  is the only way to get one; `PIT_SECRET_<NAME>` overrides the file. The
+  database gets copied to sticks and attached to bug reports, `nexus.json` is
+  something an operator opens in Notepad, and `app/` is git. The update token
+  predates the folder and stays where it was — moving a credential that pit
+  machines already carry silently turns updates off on every machine that
+  misses the migration.
+- **Newest `dataAsOfTime` wins, poll or push.** `_offer_status()` is the one
+  door every snapshot goes through, and it drops anything not newer than what
+  is held. The spec says pushes repeat and arrive out of order; a poll can
+  land between two pushes. A match push is folded into the held snapshot the
+  same way — one match replaced, the clock moved.
+- **"Our" match is derived at call time from `config.active_team`**, never
+  stored, so the team selector switches every board without a refetch.
+  `match_changed` compares label, status *and* times — a start that moved
+  four minutes is news to a crew.
+- **Team numbers are strings** (`"3937"`) and **timestamps are Unix
+  milliseconds**, because that is what the API keys on. `api.team_str()` and
+  `api.when()` are the conversions; do not scatter `str(...)` and `/1000`.
+- **A setup file only ever writes, and the drop-in is applied once.**
+  `provision.apply()` never clears a key the file does not mention, so one
+  file serves all season with a new event key each time; `auto_import()`
+  renames `pit-setup.json` to `.imported` so a launch never overwrites an
+  event the operator changed on the panel the day before.
+- **Alerts are about the state, not the transition, and they are brief.**
+  First queue is `Now queuing`, second is `On deck`; a match that skips
+  straight to `On deck` still fires the second. Strips: sides flash the
+  alliance colour 2 s at 1.5 Hz, steady 1 s, then the resting look returns;
+  the centre stays white throughout. Inspection: sides green 5 s, only on a
+  transition — the first read is the baseline. Every banner is 10 s. The
+  banner (`QueueBanner`) is a child of the presentation *window*, not a
+  page, so every face gets it.
+- **The Next Match board counts down to the *next* step, never a past
+  one.** `_NEXT_STEP` picks the estimate from the match's own status —
+  `Queuing soon` counts to the queue call, `Now queuing` to on-deck, and so
+  on — and a passed estimate reads `NOW`, not a negative. Its 1 s repaint
+  timer runs only while the page is showing (`showEvent` / `hideEvent`);
+  a hidden face repainting a whole chassis every second is waste.
+- **An LED alert is an overlay, never a change of intent.**
+  `leds.start_alert()` / `clear_alert()` sit over the resting look; every
+  setter keeps updating intent underneath and nothing is pushed to the wire
+  until the alert clears. A reconnect mid-alert replays the alert. The flash
+  is host-driven at 3 Hz in SOLID mode, because the firmware's ALERT mode
+  flashes every segment and the queue alert wants the centre steady.
+- **The webhook always answers 200 to a body it could parse**, stale or not.
+  Any other status is treated by Nexus as a failure, not retried, and a
+  webhook that keeps failing is disabled with no notice. Freshness is the
+  service's call, not the server's. It is off by default: the pit laptop is
+  behind event wifi and needs a tunnel in front of it, and polling already
+  brings everything — a push is only sooner.
+
+`PIT_NEXUS_FAKE=1` serves the spec's example payloads (`assets/nexus/`) and
+steps through a whole event, one snapshot per poll; the example teams are
+`100`–`3600`. `PIT_NEXUS_QUIET=1` builds the service with no timers and no
+socket — what `--self-check` sets, since it runs beside the live app.
+**Attribution is a condition of use**: any surface showing this data carries
+`api.ATTRIBUTION`.
 
 ### Self-updating (`app/update/`)
 

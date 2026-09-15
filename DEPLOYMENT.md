@@ -179,6 +179,18 @@ survive an install *and* remain reachable when the database is the thing that
 is broken: `update.json` (channel, auto-check, last result) and `update_token`
 (the GitHub credential).
 
+The same goes for the Nexus event feed: `nexus.json` (event key, polling,
+webhook switch) and the **secret folder** `secrets/` — one file per credential
+(`nexus_api_key`, `nexus_webhook_token`), see `secrets/README.md` in the
+checkout and [`NEXUS.md`](NEXUS.md). Nothing in `secrets/` is ever inside the
+install folder, the database, or git.
+
+**To put keys on a pit machine without typing them**, make a setup file on the
+Mac (`tools/pit_setup.py make`) and drop it here as `pit-setup.json` before
+launching — the app applies it once and renames it. It can also carry
+`update_token`, so a fresh install gets its GitHub token the same way.
+Details in [`NEXUS.md`](NEXUS.md), "Getting it onto the pit machine".
+
 ### Upgrading
 
 **It updates itself.** Tag a release and the machine has it within six hours.
@@ -282,6 +294,12 @@ would leave an operator with nothing fail the run.
 **`[WARN] audio — libVLC not available`**
 Windows has no VLC runtime by default. Install [VLC] (64-bit, matching the
 app) and music plus the equaliser come back. Everything else already works.
+
+**`[WARN] nexus — no Nexus API key in the secret folder`**
+The event feed is off; everything else works. Paste the key from
+frc.nexus/api into Control → Event Feed (admin) or drop it into
+`secrets/nexus_api_key` in the data directory — [`NEXUS.md`](NEXUS.md).
+`[WARN] nexus — no event key` is the same panel's event field.
 
 **`[WARN] owlet — No binary for this platform`**
 `.hoot` import is dead on this machine; `.wpilog` and Phoenix `.txt` exports

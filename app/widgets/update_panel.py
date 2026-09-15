@@ -25,8 +25,7 @@ Three things about how it is drawn:
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QHBoxLayout, QLineEdit, QMessageBox, QProgressBar, QSizePolicy, QVBoxLayout,
     QWidget,
@@ -38,7 +37,7 @@ from app.config import config
 from app.update import install, settings, update
 from app.update.release import UpdateError, set_token, token
 from app.widgets.brand_widgets import (
-    RoundedButton, RoundedFrame, SelectableChip, eyebrow, mono_font,
+    RoundedButton, RoundedFrame, SelectableChip, StatusDot, eyebrow, mono_font,
 )
 from app.widgets.helpers import divider, label
 from app.widgets.toggle_switch import ToggleSwitch
@@ -60,32 +59,6 @@ _STATE_COLOR = {
     "ready":      brand.STATUS_ONLINE,
     "error":      brand.STATUS_FAULT,
 }
-
-
-class _Dot(QWidget):
-    """The brand's status dot — a filled circle, and the only thing on this
-    panel allowed to be red."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._color = QColor(brand.STATUS_IDLE)
-        self.setFixedSize(10, 10)
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-
-    def sizeHint(self) -> QSize:
-        return QSize(10, 10)
-
-    def set_color(self, color: str):
-        self._color = QColor(color)
-        self.update()
-
-    def paintEvent(self, _event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(self._color)
-        p.drawEllipse(self.rect())
-        p.end()
 
 
 class UpdatePanel(QWidget):
@@ -130,7 +103,7 @@ class UpdatePanel(QWidget):
 
         status_row = QHBoxLayout()
         status_row.setSpacing(10)
-        self._dot = _Dot()
+        self._dot = StatusDot()
         # Top-aligned: the sentence wraps to three lines on a narrow column and
         # a vertically centred dot would drift away from the line it labels.
         status_row.addWidget(self._dot, alignment=Qt.AlignmentFlag.AlignTop)

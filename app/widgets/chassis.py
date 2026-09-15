@@ -73,6 +73,14 @@ _M = {
 }
 
 
+def _is_warm(hex_color: str | None) -> bool:
+    """Red-ish or blue-ish, for picking a muted ink that sits on the tint."""
+    if not hex_color:
+        return True
+    c = QColor(hex_color)
+    return c.red() >= c.blue()
+
+
 def design_scale(width: int, height: int,
                  design_w: float = 1920.0, design_h: float = 1080.0) -> float:
     """
@@ -152,26 +160,53 @@ class Chassis(QWidget):
     def dark(self) -> bool:
         return self._theme != "light"
 
+    def plate_tint(self) -> str | None:
+        """
+        A colour to fill the whole plate with, or None for the theme's plate.
+
+        The one surface that uses it is the Next Match board, which takes the
+        alliance colour: a red card or a blue card, read from the far side of
+        the pit before a single word is. On a tinted plate every ink goes to
+        white (§03: on a red ground, red is replaced by white), whichever
+        theme the screen is on — the tint *is* the statement, and a light
+        plate would be a different board.
+        """
+        return None
+
+    @property
+    def tinted(self) -> bool:
+        return self.plate_tint() is not None
+
     # Ink roles on the plate. Deliberately *not* the app palette bundle: the
     # plate is a lit surface, so its body ink is brighter than a control's.
     @property
     def ink(self) -> str:
+        if self.tinted:
+            return brand.WHITE
         return brand.WHITE if self.dark else brand.CARBON
 
     @property
     def body_ink(self) -> str:
+        if self.tinted:
+            return "#F3F1F0"
         return brand.N300 if self.dark else brand.N600
 
     @property
     def muted(self) -> str:
+        if self.tinted:
+            return "#F3D9DA" if _is_warm(self.plate_tint()) else "#D6E1F2"
         return brand.N400 if self.dark else brand.N500
 
     @property
     def faint(self) -> str:
+        if self.tinted:
+            return "#E5B3B6" if _is_warm(self.plate_tint()) else "#B9C9E6"
         return brand.N500 if self.dark else brand.N400
 
     @property
     def rule(self) -> str:
+        if self.tinted:
+            return "#40FFFFFF"      # Qt reads 8 digits as #AARRGGBB
         return brand.CARBON_LINE if self.dark else brand.N200
 
     @property
@@ -276,7 +311,7 @@ class Chassis(QWidget):
     # ── Ground + plate (cached) ───────────────────────────────────────────
 
     def _paint_ground(self, p: QPainter):
-        key = (self.width(), self.height(), self._theme)
+        key = (self.width(), self.height(), self._theme, self.plate_tint())
         if self._ground is None or self._ground_key != key:
             self._ground = self._render_ground()
             self._ground_key = key
@@ -312,7 +347,14 @@ class Chassis(QWidget):
                     plate.adjusted(-grow, -grow * 0.35, grow, grow * 1.15),
                     r + grow, r + grow)
 
-        stops = brand.PLATE_DARK if self.dark else brand.PLATE_LIGHT
+        tint = self.plate_tint()
+        if tint:
+            # The same depth logic as the plate's own gradient — lighter where
+            # the light falls, darker where it does not — on the tint colour.
+            base = QColor(tint)
+            stops = (base.lighter(112).name(), base.name(), base.darker(118).name())
+        else:
+            stops = brand.PLATE_DARK if self.dark else brand.PLATE_LIGHT
         # 157° clockwise from 12 o'clock: down and slightly to the left.
         grad = QLinearGradient(plate.topRight(), plate.bottomLeft())
         grad.setColorAt(0.0, QColor(stops[0]))
@@ -516,7 +558,8 @@ class Chassis(QWidget):
         """
         if self._ground is None:
             self._ground = self._render_ground()
-            self._ground_key = (self.width(), self.height(), self._theme)
+            self._ground_key = (self.width(), self.height(), self._theme,
+                                self.plate_tint())
         pos = child.mapTo(self, child.rect().topLeft())
         p.save()
         p.translate(-pos.x(), -pos.y())

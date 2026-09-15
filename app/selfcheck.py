@@ -350,6 +350,69 @@ def _check_updates() -> Result:
     return Result("updates", True, "\n".join(lines))
 
 
+def _check_nexus() -> Result:
+    """
+    Is the event feed set up, and do the models still fit the API?
+
+    Never touches the network. The bundled example payloads — the spec's own,
+    every endpoint and both webhooks — are parsed through the real models, so
+    a field renamed upstream that we have not caught up with shows here rather
+    than as an empty board at an event. Key and event are reported, not
+    required: a pit with no feed is a working pit.
+    """
+    from app import credentials
+    from app.nexus import api, settings
+
+    prefs = settings.load()
+    lines = [f"event       {prefs['event_key'] or '— (feed off)'}",
+             f"poll        {'on' if prefs['auto_poll'] else 'off'}, "
+             f"every {prefs['poll_interval_s']}s / "
+             f"{prefs['slow_poll_interval_s']}s",
+             f"webhook     {'on' if prefs['webhook_enabled'] else 'off'}, "
+             f"port {prefs['webhook_port']}",
+             f"api key     {credentials.source(api.API_KEY_SECRET)}",
+             f"push token  {credentials.source(api.WEBHOOK_TOKEN_SECRET)}",
+             f"secrets     {credentials.folder()}"]
+
+    try:
+        fx = api.load_fixtures()
+        fake = api.FakeClient(fx)
+        n_events = len(fake.events())
+        n_matches = sum(len(fake.event_status("demo").matches)
+                        for _ in fx["event_status"])
+        fake.pit_addresses("demo")
+        maps = (fake.pit_map("demo"), api.PitMap.from_json(fx["map_angles"]))
+        fake.inspection("demo")
+        {k: api.InspectionStatus.from_json(k, v)
+         for k, v in fx["inspection_demo"].items()}
+        fake.teams("demo")
+        fake.alliances("demo")
+        pushes = list(fake.match_pushes())
+        for snap in fx["event_status"]:
+            assert api.classify_push(snap) == "event"
+        for push in fx["match_status"]:
+            assert api.classify_push(push) == "match"
+        lines.append(f"models      parsed {n_events} events, {n_matches} matches, "
+                     f"{sum(len(m.pits) for m in maps)} pits, "
+                     f"{len(pushes)} match pushes from the bundled examples")
+    except Exception:
+        return Result("nexus", False,
+                      "\n".join(lines) + "\nexamples   "
+                      + traceback.format_exc(limit=4), critical=False)
+
+    warnings = []
+    if not prefs["event_key"]:
+        warnings.append("no event key — the feed is off until one is set")
+    if not credentials.present(api.API_KEY_SECRET):
+        warnings.append("no Nexus API key in the secret folder")
+    if prefs["webhook_enabled"] and not credentials.present(api.WEBHOOK_TOKEN_SECRET):
+        warnings.append("webhook is on but there is no token to verify pushes with")
+    if warnings:
+        return Result("nexus", True, "\n".join(lines),
+                      critical=False, warnings=warnings)
+    return Result("nexus", True, "\n".join(lines))
+
+
 def run() -> int:
     """Run every check. Returns a process exit status."""
     # Attach first (a windowed build has no stdout until it does), then make
@@ -364,6 +427,7 @@ def run() -> int:
         sys.stderr = _Tee(sys.stderr, log)
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     os.environ.setdefault("PIT_LEDS_FAKE", "1")
+    os.environ.setdefault("PIT_NEXUS_QUIET", "1")
 
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication
@@ -390,6 +454,8 @@ def run() -> int:
     from app.judges_slides import init_judges_slides
     from app.leds import init_leds
     from app.music import init_music
+    from app.nexus import init_nexus
+    from app.nexus.alerts import init_alerts
     from app.rotation import init_rotation
     from app.theme import dark_qss
     from app.update import init_update
@@ -398,6 +464,7 @@ def run() -> int:
     if results[-1].ok:
         init_config()
         init_update()
+        init_nexus()
         init_admin()
         init_checklist()
         init_rotation()
@@ -406,11 +473,13 @@ def run() -> int:
         results.append(_check_cad(app))
         init_leds()
         init_music()
+        init_alerts()
         app.setStyleSheet(dark_qss())
         results.append(_check_fonts())
         results.append(_check_owlet())
         results.append(_check_audio())
         results.append(_check_updates())
+        results.append(_check_nexus())
         results.append(_check_windows(app))
 
     return _report(results)

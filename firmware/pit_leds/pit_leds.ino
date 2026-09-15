@@ -322,7 +322,8 @@ const Strip strips[NUM_STRIPS] = {
 };
 
 #define FW_MAJOR 2
-#define FW_MINOR 1   // 2.1: switch is WHITE / app / RED, no manual OFF
+#define FW_MINOR 2   // 2.2: SET_COLOR takes an optional 5th byte, W, per segment
+                     // 2.1: switch is WHITE / app / RED, no manual OFF
 
 // ─────────────────────────────────────────────────────────────────────────
 //  Protocol (mirrors app/leds/protocol.py — change both sides together)
@@ -355,10 +356,11 @@ static const uint8_t  ALL_SEGMENTS = 0xFF;
 // read into the new layout would garble every field after `brightness`, so
 // the magic has to move whenever State's shape does.
 static const uint16_t EEPROM_MAGIC_ADDR = 0;
-// 0xBA -> 0xBB when NUM_STRIPS went 3 -> 2 (the Y-split). An old struct read
-// into the new layout garbles every field after `brightness` rather than
-// failing, so this has to move whenever State's shape does.
-static const uint8_t  EEPROM_MAGIC = 0xBB;
+// 0xBA -> 0xBB when NUM_STRIPS went 3 -> 2 (the Y-split); 0xBB -> 0xBC when
+// the per-segment W channel was added. An old struct read into the new layout
+// garbles every field after `brightness` rather than failing, so this has to
+// move whenever State's shape does.
+static const uint8_t  EEPROM_MAGIC = 0xBC;
 
 CRGB leds[TOTAL_LEDS];
 
@@ -378,11 +380,17 @@ struct State {
   uint8_t speed;
   uint8_t brightness;
   uint8_t r[NUM_STRIPS], g[NUM_STRIPS], b[NUM_STRIPS];
+  // The fourth channel, per segment: the white die, driven by the host. The
+  // queue alert wants the centre run steady white while the sides carry the
+  // alliance colour, and white from R+G+B is tinted and three times the
+  // current. 0 for every effect and every colour that is not white.
+  uint8_t w[NUM_STRIPS];
 };
 
 State state = {
   MODE_SOLID, 128, 180,
   { 255, 255 }, { 0, 0 }, { 0, 0 },                    // pure red, see above
+  { 0, 0 },
 };
 State fallback = state;          // what the watchdog reverts to
 bool  blanked = false;
@@ -575,20 +583,25 @@ void handleFrame(uint8_t *body, uint8_t len) {
       if (plen >= 2) { state.mode = p[0]; state.speed = p[1]; blanked = false; }
       break;
 
-    case OP_SET_COLOR:
-      // p[0] selects the pit unit: SEG_LEFT / SEG_CENTER / SEG_RIGHT, or
-      // 0xFF for all three. The app currently only ever sends 0xFF; the
-      // per-unit path exists so it can stop doing that without a reflash.
+    case OP_SET_COLOR: {
+      // p[0] selects the segment: SEG_CENTER / SEG_SIDES, or 0xFF for both.
+      // p[4], when present (fw 2.2+), is the white die for that segment; a
+      // four-byte payload from an older host means W = 0, which is what
+      // every colour but white wants anyway.
       if (plen >= 4) {
+        const uint8_t w = (plen >= 5) ? p[4] : 0;
         if (p[0] == ALL_SEGMENTS) {
           for (uint8_t s = 0; s < NUM_STRIPS; s++) {
             state.r[s] = p[1]; state.g[s] = p[2]; state.b[s] = p[3];
+            state.w[s] = w;
           }
         } else if (p[0] < NUM_STRIPS) {
           state.r[p[0]] = p[1]; state.g[p[0]] = p[2]; state.b[p[0]] = p[3];
+          state.w[p[0]] = w;
         }
       }
       break;
+    }
 
     case OP_SET_BRIGHT:
       if (plen >= 1) {
@@ -854,14 +867,22 @@ void packAndShow(uint8_t ctrl, const CRGB *src, uint16_t npx,
   FastLED[ctrl].showLeds(255);
 }
 
-void showAll(uint8_t bright, uint8_t wByte) {
-  packAndShow(0, &leds[strips[SEG_CENTER].start], CENTER_COUNT, bright, wByte);
+// `wByte` is the override's white (the WHITE switch position); `hostW`
+// adds the host's per-segment white on top of it, so an alert can light the
+// centre run from the W die while the sides carry a colour.
+void showAll(uint8_t bright, uint8_t wByte, bool hostW) {
+  uint8_t wc = wByte, ws = wByte;
+  if (hostW) {
+    if (state.w[SEG_CENTER] > wc) wc = state.w[SEG_CENTER];
+    if (state.w[SEG_SIDES]  > ws) ws = state.w[SEG_SIDES];
+  }
+  packAndShow(0, &leds[strips[SEG_CENTER].start], CENTER_COUNT, bright, wc);
   // Drain the port between the two channel writes. Each show holds
   // interrupts off for milliseconds and the AVR's UART keeps only two bytes
   // without its ISR, so the gap between strips is the only chance an inbound
   // frame gets. Halving the blackout roughly halves the loss.
   readSerial();
-  packAndShow(1, &leds[strips[SEG_SIDES].start],  SIDES_COUNT,  bright, wByte);
+  packAndShow(1, &leds[strips[SEG_SIDES].start],  SIDES_COUNT,  bright, ws);
 }
 
 // Whether this mode's output changes from frame to frame. A static mode that
@@ -944,6 +965,7 @@ void loop() {
 
     uint8_t outBright;
     uint8_t outWhite = 0;              // the fourth channel; RGB modes send 0
+    bool    hostWhite = false;         // add the host's per-segment W?
     switch (swPos) {
       case SW_WHITE:
         // The RGB channels stay dark and the white die does all of it. Mixing
@@ -966,11 +988,15 @@ void loop() {
         } else {
           render();
           outBright = state.brightness;
+          // Only the static mode carries the host's white: an animation
+          // that flashed the sides while the W die held steady would read
+          // as a broken strip, and no effect asks for white anyway.
+          hostWhite = (state.mode == MODE_SOLID);
         }
         break;
     }
     if (outBright > MAX_BRIGHTNESS) outBright = MAX_BRIGHTNESS;
-    showAll(outBright, outWhite);
+    showAll(outBright, outWhite, hostWhite);
     dirty = false;
   }
 }

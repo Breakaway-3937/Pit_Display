@@ -15,6 +15,17 @@ update_token
 updates/
 selfcheck.log
 
+# The secret folder (app/credentials.py) — every key the app is handed. Only
+# its README is tracked. The Nexus event-feed preferences sit beside it.
+secrets/*
+!secrets/README.md
+nexus.json
+nexus_webhook.log
+# Pit setup files carry keys (app/provision.py) — made for a stick, never committed
+pit-setup.json
+pit-setup.json.imported
+*.pitsetup.json
+
 # OS
 .DS_Store
 

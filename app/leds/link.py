@@ -279,9 +279,14 @@ class MockLink(SerialLink):
         self._sleep(0.3)
         if not self._running:
             return
+        # Reports the current firmware's shape — two segments, fw 2.2 — so
+        # the alert path (per-segment colour, the white die) exercises the
+        # same branches it will on the real controller.
+        half = self._fake_count // 2
         info = proto.DeviceInfo(
-            fw_major=1, fw_minor=0, led_count=self._fake_count,
-            segments=(proto.Segment(0, self._fake_count),),
+            fw_major=2, fw_minor=2, led_count=self._fake_count,
+            segments=(proto.Segment(0, half, "centre"),
+                      proto.Segment(half, self._fake_count - half, "sides")),
         )
         self._device = info
         self._port_name = "mock"

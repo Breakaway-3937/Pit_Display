@@ -36,6 +36,13 @@ CARBON    = "#181416"   # ink on light; dark backgrounds. Not pure black
 GRAPHITE  = "#59595B"   # brand grey — secondary series, secondary fields
 WHITE     = "#FFFFFF"
 
+# The playbook's non-red hues, for data only — never a second brand accent.
+# `SKY` is what the blue alliance wears next to the red one.
+HARBOR    = "#2B3A67"   # blue, the "other" series
+SKY       = "#3F6FB5"   # light blue
+SPRUCE    = "#2E8B7F"   # teal — also STATUS_ONLINE
+FIELD_GREEN = "#17753F" # the system's one green: success, passed, growth
+
 # ── Neutral scale ───────────────────────────────────────────────────────────
 N50  = "#FAF9F8"   # app background (light)
 N100 = "#F3F1F0"   # surface / fill

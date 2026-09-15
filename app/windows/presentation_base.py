@@ -7,7 +7,12 @@ the judges CAD viewer based on the global display mode. They differ only in
 their screen id and their default slide copy. This base owns all the wiring so
 "follow screen commands" (theme + team + mode) lives in exactly one place.
 
-**Standard mode has four faces**, chosen per screen by the `content` setting
+**An alert banner lies along the bottom of every face** (`QueueBanner`): the
+first and second queue calls in the alliance colour, and inspection passed in
+green, driven by `app/nexus/alerts.py`. It is a child of the window rather
+than a page, so it needs no cooperation from whatever is showing.
+
+**Standard mode has five faces**, chosen per screen by the `content` setting
 rather than by the global mode:
 
 | `content` | shows |
@@ -16,6 +21,7 @@ rather than by the global mode:
 | `"checklist"` | the pit checklist, pinned |
 | `"diagnostics"` | the diagnostics board, pinned |
 | `"robot_info"` | the robot-info board, pinned |
+| `"next_match"` | the next-match board off the Nexus feed, pinned |
 
 Per-screen and not more global modes, on purpose — the useful arrangement in a
 pit is one overhead screen pinned to diagnostics while the other keeps rotating
@@ -51,7 +57,9 @@ from app.widgets.checklist_overlay import ChecklistOverlay
 from app.widgets.diagnostics_overlay import DiagnosticsOverlay
 from app.widgets.robot_info_overlay import RobotInfoOverlay
 from app.widgets.lunch_overlay import LunchOverlay
+from app.widgets.next_match_overlay import NextMatchOverlay
 from app.widgets.judges_overlay import JudgesOverlay
+from app.widgets.queue_banner import QueueBanner
 from app.widgets.slide_panel import SlidePanel
 
 
@@ -71,11 +79,13 @@ class PresentationScreen(QMainWindow):
     _PAGE_CHECKLIST   = 4
     _PAGE_DIAGNOSTICS = 5
     _PAGE_ROBOT_INFO  = 6
+    _PAGE_NEXT_MATCH  = 7
 
     _CONTENT_PAGES = {
         "checklist":   _PAGE_CHECKLIST,
         "diagnostics": _PAGE_DIAGNOSTICS,
         "robot_info":  _PAGE_ROBOT_INFO,
+        "next_match":  _PAGE_NEXT_MATCH,
     }
 
     BOARD_LABELS = {
@@ -228,10 +238,24 @@ class PresentationScreen(QMainWindow):
         self._robot_info = RobotInfoOverlay(screen_id=self.SCREEN_ID)
         self._stack.addWidget(self._robot_info)             # 6
 
+        # *When do we go?* — the next match off the Nexus feed, with a live
+        # countdown to the next queue call. Pinned only; never in the rotation.
+        self._next_match = NextMatchOverlay(screen_id=self.SCREEN_ID)
+        self._stack.addWidget(self._next_match)             # 7
+
         self._board_idx = (len(self.rotation_slides())
                            if self.board_entry() is not None else None)
 
         self._stack.setCurrentIndex(self._standard_page())
+
+        # The queue / inspection banner lies over every page along the bottom
+        # — a child of the window, not a page, so no face has to know. It is
+        # placed by resizeEvent and shows itself when an alert is up.
+        self._banner = QueueBanner(self)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._banner.place(self.width(), self.height())
 
     # ── Mode / rotation ───────────────────────────────────────────────────
 
