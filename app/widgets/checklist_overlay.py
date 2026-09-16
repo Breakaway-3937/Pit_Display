@@ -60,7 +60,12 @@ class ChecklistOverlay(Chassis):
         checklist.items_changed.connect(self._on_items_changed)
         checklist.item_toggled.connect(self._on_item_toggled)
         checklist.lists_changed.connect(self._on_lists_changed)
-        config.team_changed.connect(lambda *_: self.update())
+        config.team_changed.connect(self._repaint_on_team)
+
+    def _repaint_on_team(self, *_args):
+        # A bound method, not a lambda: this widget is destroyed with its
+        # screen, and only a QObject method slot is auto-disconnected.
+        self.update()
 
     # ── Which list ────────────────────────────────────────────────────────
 

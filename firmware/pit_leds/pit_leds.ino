@@ -322,7 +322,9 @@ const Strip strips[NUM_STRIPS] = {
 };
 
 #define FW_MAJOR 2
-#define FW_MINOR 2   // 2.2: SET_COLOR takes an optional 5th byte, W, per segment
+#define FW_MINOR 4   // 2.4: no-host default is a violet sparkle (EEPROM magic 0xBE)
+                     // 2.3: no-host default was a red chase (EEPROM magic 0xBD)
+                     // 2.2: SET_COLOR takes an optional 5th byte, W, per segment
                      // 2.1: switch is WHITE / app / RED, no manual OFF
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -357,10 +359,13 @@ static const uint8_t  ALL_SEGMENTS = 0xFF;
 // the magic has to move whenever State's shape does.
 static const uint16_t EEPROM_MAGIC_ADDR = 0;
 // 0xBA -> 0xBB when NUM_STRIPS went 3 -> 2 (the Y-split); 0xBB -> 0xBC when
-// the per-segment W channel was added. An old struct read into the new layout
-// garbles every field after `brightness` rather than failing, so this has to
-// move whenever State's shape does.
-static const uint8_t  EEPROM_MAGIC = 0xBC;
+// the per-segment W channel was added; 0xBC -> 0xBD -> 0xBE when the no-host
+// default changed (red chase, then violet sparkle), so a look somebody had
+// saved as the boot default is discarded rather than kept. An old struct
+// read into a new layout garbles every field after `brightness` rather than
+// failing, so this has to move whenever State's shape does — and whenever
+// the default must win.
+static const uint8_t  EEPROM_MAGIC = 0xBE;
 
 CRGB leds[TOTAL_LEDS];
 
@@ -387,9 +392,15 @@ struct State {
   uint8_t w[NUM_STRIPS];
 };
 
+// What the strips show with no host: at boot, and five seconds after the
+// app stops talking. A violet *sparkle*, not a solid — a moving pattern says
+// "the controller is alive and waiting", and violet is a colour nothing else
+// in the pit uses, so it can never be mistaken for an alliance, an alert or
+// the app having crashed mid-sequence. The app's own resting look (white on
+// the W die) is pushed the moment it connects.
 State state = {
-  MODE_SOLID, 128, 180,
-  { 255, 255 }, { 0, 0 }, { 0, 0 },                    // pure red, see above
+  MODE_SPARKLE, 150, 180,
+  { 128, 128 }, { 0, 0 }, { 255, 255 },                // violet, see palette
   { 0, 0 },
 };
 State fallback = state;          // what the watchdog reverts to

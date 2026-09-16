@@ -64,7 +64,7 @@ class _Fetch(QThread):
     """One job — a name and a callable — on its own thread."""
 
     done = pyqtSignal(str, object)
-    failed = pyqtSignal(str, str)
+    failed = pyqtSignal(str, str, object)       # job, message, HTTP code | None
 
     def __init__(self, job: str, fn: Callable[[], Any], parent=None):
         super().__init__(parent)
@@ -75,9 +75,9 @@ class _Fetch(QThread):
         try:
             self.done.emit(self._job, self._fn())
         except NexusError as exc:
-            self.failed.emit(self._job, str(exc))
+            self.failed.emit(self._job, str(exc), exc.code)
         except Exception as exc:                        # pragma: no cover
-            self.failed.emit(self._job, f"{type(exc).__name__}: {exc}")
+            self.failed.emit(self._job, f"{type(exc).__name__}: {exc}", None)
 
 
 class _NexusService(QObject):
@@ -511,19 +511,29 @@ class _NexusService(QObject):
             self._events = result
             self.events_changed.emit(dict(result))
 
-    def _on_failed(self, job: str, message: str) -> None:
+    _EMPTY = {"pits": {}, "map": None, "inspection": {}, "teams": [],
+              "alliances": None}
+
+    def _on_failed(self, job: str, message: str, code) -> None:
+        if job in self._EMPTY and code == 404:
+            # Not an error: the event has nothing of this kind (a demo event
+            # has no pit map; alliances do not exist until Saturday). Hold
+            # the empty value so a board asking gets an honest nothing.
+            self.log.emit(message)
+            self._on_done(job, self._EMPTY[job])
+            return
         if job == "status":
             stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             settings.save(last_poll=stamp, last_result=f"failed: {message[:80]}")
             self._set_state("error", message)
+            # The event itself is missing or the key is refused: every other
+            # fetch against it would say the same thing.
+            if code in (401, 403, 404):
+                self._queue = [(j, f) for j, f in self._queue if j == "events"]
         else:
             self.log.emit(f"{job}: {message}")
             if self._status is None and self._state == "polling":
                 self._set_state("error", message)
-        # A 404 means the key is wrong for every endpoint; there is no point
-        # running the other four against it.
-        if "does not exist" in message:
-            self._queue = [(j, f) for j, f in self._queue if j == "events"]
 
     def _on_finished(self) -> None:
         worker, self._worker = self._worker, None

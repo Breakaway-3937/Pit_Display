@@ -170,7 +170,13 @@ class _AlertService(QObject):
         ours = statuses.get(nexus.our_team)
         if ours is None:
             return
-        passed = bool(ours.inspected) or ours.status == InspectionState.COMPLETE
+        # `status` is the live word when the event sends one — so coming back
+        # to `complete` from a re-inspection fires again. Demo events send
+        # only `inspected`, which never un-sets once the initial pass is in.
+        if ours.status is not None:
+            passed = ours.status == InspectionState.COMPLETE
+        else:
+            passed = bool(ours.inspected)
         was = self._inspected
         self._inspected = passed
         if was is None or not self._enabled:

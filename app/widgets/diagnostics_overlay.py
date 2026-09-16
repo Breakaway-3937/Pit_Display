@@ -88,7 +88,12 @@ class DiagnosticsOverlay(Chassis):
         # board off a signal rather than a timer is what lets it be honest
         # about being a *log* view and not a live feed.
         config.logs_changed.connect(self.reload)
-        config.team_changed.connect(lambda _t: self.update())
+        config.team_changed.connect(self._repaint_on_team)
+
+    def _repaint_on_team(self, *_args):
+        # A bound method, not a lambda: this widget is destroyed with its
+        # screen, and only a QObject method slot is auto-disconnected.
+        self.update()
 
     def reload(self):
         try:

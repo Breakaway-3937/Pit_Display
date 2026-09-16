@@ -1290,12 +1290,26 @@ class ControlScreen(QMainWindow):
         self._admin_bar.setVisible(False)
         main.addWidget(self._admin_bar)
 
-        body = QHBoxLayout()
+        # The whole body scrolls as one — sidebar and settings column
+        # together, under a fixed top bar. The sidebar alone is ten rows and
+        # two headers, which is taller than a short laptop window, and a
+        # column that does not scroll is a column whose last entries do not
+        # exist. The alternative — a second scrollbar just for the sidebar —
+        # is two things to drag on a panel driven by a finger.
+        body_host = QWidget()
+        body = QHBoxLayout(body_host)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
         body.addWidget(self._left_sidebar(), stretch=0)
         body.addWidget(self._right_panel(), stretch=1)
-        main.addLayout(body)
+
+        self._body_scroll = QScrollArea()
+        self._body_scroll.setWidget(body_host)
+        self._body_scroll.setWidgetResizable(True)
+        self._body_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._body_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        main.addWidget(self._body_scroll, stretch=1)
 
     def _top_bar(self) -> QFrame:
         bar = QFrame()
@@ -1478,7 +1492,7 @@ class ControlScreen(QMainWindow):
         layout.addStretch()
         return sidebar
 
-    def _right_panel(self) -> QScrollArea:
+    def _right_panel(self) -> QWidget:
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1498,14 +1512,10 @@ class ControlScreen(QMainWindow):
 
         layout.addStretch()
 
-        scroll = QScrollArea()
-        scroll.setWidget(container)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
+        # No scroll area of its own: the body scrolls as a whole (see
+        # _build_ui), so this is just the column.
         self._select_screen(SCREENS[0])
-        return scroll
+        return container
 
     # ── Interaction ───────────────────────────────────────────────────────
 

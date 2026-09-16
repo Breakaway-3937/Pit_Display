@@ -89,10 +89,14 @@ class _LEDService(QObject):
     def __init__(self):
         super().__init__()
         self._enabled = True
-        self._preset_key = "team_solid"
+        # The resting look is the white work light, not the team colour: a
+        # pit is lit white by default and coloured only when it means
+        # something — a queue call, an inspection pass, lunch.
+        self._preset_key = "white"
         self._mode = Mode.SOLID
         self._speed = 128
-        self._brightness = 180
+        self._brightness = effects.WHITE_BRIGHTNESS
+        self._white = True
         self._color = config.active_team.primary_color
         self._follow_team = True
         self._follow_mode = True
@@ -194,6 +198,16 @@ class _LEDService(QObject):
         return self._follow_mode
 
     @property
+    def white(self) -> bool:
+        """Is the resting look the white die rather than `color`?"""
+        return self._white
+
+    @property
+    def overridden(self) -> bool:
+        """Judges or lunch: the strips are locked and alerts are ignored."""
+        return config.mode in effects.OVERRIDE_MODES
+
+    @property
     def alert(self) -> Alert | None:
         return self._alert
 
@@ -243,21 +257,29 @@ class _LEDService(QObject):
         normalized = rgb_to_hex(rgb)
         if manual:
             # An explicit colour pick means the operator has taken over from
-            # the team selector; stop overwriting their choice.
+            # the team selector; stop overwriting their choice — and a colour
+            # is a colour, so the white die goes off.
             self._follow_team = False
-        if normalized == self._color:
+            self._white = False
+        if normalized == self._color and not self._white:
             return
         # self._color keeps the true brand hex — the control panel and every
         # screen still show the real colour. Only the wire gets the snap.
         self._color = normalized
         if self._alert is None:
-            self._send(Op.SET_COLOR, payload_color(palette.snap(rgb), ALL_SEGMENTS, 0))
+            self._send(Op.SET_COLOR, self._resting_color_payload())
         self.state_changed.emit()
 
     def set_mode(self, mode: Mode) -> None:
         if mode == self._mode:
             return
         self._mode = mode
+        if self._white and mode != Mode.SOLID:
+            # An animation on the white die is nothing — the effects draw the
+            # RGB channels — so a hand-picked animation runs in the colour.
+            self._white = False
+            if self._alert is None:
+                self._send(Op.SET_COLOR, self._resting_color_payload())
         if self._alert is None:
             self._send(Op.SET_MODE, payload_mode(mode, self._speed))
         self.state_changed.emit()
@@ -273,11 +295,18 @@ class _LEDService(QObject):
         self._mode = preset.mode
         self._speed = preset.speed
         self._brightness = preset.brightness
+        self._white = preset.white
         self._color = preset.color or (
             config.active_team.primary_color if self._follow_team else self._color
         )
         self._push_all()
         self.state_changed.emit()
+
+    def _resting_color_payload(self) -> bytes:
+        """SET_COLOR for the resting look: the white die, or the colour."""
+        if self._white:
+            return payload_color((0, 0, 0), ALL_SEGMENTS, 255)
+        return payload_color(self._wire_rgb(self._color), ALL_SEGMENTS, 0)
 
     def set_follow_team(self, on: bool) -> None:
         self._follow_team = on
@@ -304,7 +333,16 @@ class _LEDService(QObject):
     # ── Alerts ────────────────────────────────────────────────────────────
 
     def start_alert(self, alert: Alert) -> None:
-        """Put the strips into `alert`: flash, then hold or let go."""
+        """
+        Put the strips into `alert`: flash, then hold or let go.
+
+        Ignored while judges or lunch mode is active: those modes lock the
+        strips to their preset — the judges are standing in the pit, or the
+        pit is empty — and a queue call flashing the sides in the middle of
+        a judging conversation is exactly what the override is for.
+        """
+        if self.overridden:
+            return
         self._release_timer.stop()
         self._alert = alert
         self._alert_on = True
@@ -395,10 +433,9 @@ class _LEDService(QObject):
             self._push_alert(flash_phase=self._flash_timer.isActive())
             return
         self._link.send(Op.SET_BRIGHT, payload_brightness(self._brightness))
-        # W explicitly 0: a resting colour never wants the white die, and a
-        # previous alert may have left it lit on the centre run.
-        self._link.send(Op.SET_COLOR, payload_color(self._wire_rgb(self._color),
-                                                    ALL_SEGMENTS, 0))
+        # W is always explicit — 255 for the white look, 0 for a colour — so
+        # a previous alert can never leave the die lit on one segment.
+        self._link.send(Op.SET_COLOR, self._resting_color_payload())
         self._link.send(Op.SET_MODE, payload_mode(self._mode, self._speed))
 
     def _on_connected(self, info: DeviceInfo, port: str) -> None:
@@ -423,11 +460,19 @@ class _LEDService(QObject):
 
     def _on_team_changed(self, team) -> None:
         if self._follow_team:
+            # Remember the colour for when a colour look is chosen; the white
+            # work light does not change with the team.
+            was_white = self._white
             self.set_color(team.primary_color, manual=False)
+            self._white = was_white
 
     def _on_mode_changed(self, mode: str) -> None:
+        # An override mode takes the strips whole: whatever alert was up is
+        # over, and the mode's preset is what shows until the mode ends.
+        if mode in effects.OVERRIDE_MODES:
+            self.clear_alert()
         if self._follow_mode:
-            self.apply_preset(effects.MODE_PRESETS.get(mode, "team_solid"),
+            self.apply_preset(effects.MODE_PRESETS.get(mode, "white"),
                               manual=False)
 
     def _on_subsystem_focused(self, sub_id: str) -> None:
@@ -448,7 +493,7 @@ class _LEDService(QObject):
                 except ValueError:
                     return          # a malformed colour in the config is not
                                     # worth interrupting a judges demo over
-                if self._alert is None:
+                if self._alert is None and not self._white:
                     self._send(Op.SET_COLOR,
                                payload_color(palette.snap(rgb), ALL_SEGMENTS, 0))
             return

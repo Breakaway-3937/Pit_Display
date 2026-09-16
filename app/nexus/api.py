@@ -685,7 +685,17 @@ class Client:
         if code == 404:
             if path == "/events":
                 return "frc.nexus lists no active events right now."
-            key = path.split("/")[2] if path.count("/") >= 2 else "?"
+            parts = path.strip("/").split("/")
+            key = parts[1] if len(parts) >= 2 else "?"
+            # Only the event itself 404ing means the key is wrong. A
+            # sub-resource 404s when the event has nothing of that kind —
+            # a demo event has no pit map, a Thursday has no alliances.
+            if len(parts) >= 3:
+                what = {"pits": "pit addresses", "map": "pit map",
+                        "inspection": "inspection data",
+                        "teams": "team list",
+                        "alliances": "alliances"}.get(parts[2], parts[2])
+                return f"No {what} published for {key} yet."
             return (f"Event “{key}” does not exist on frc.nexus. Event keys "
                     "look like 2024casf; demo keys like demo1234.")
         if code == 500:

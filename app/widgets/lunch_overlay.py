@@ -50,7 +50,12 @@ class LunchOverlay(Chassis):
 
     def __init__(self, screen_id: str = "", parent=None):
         super().__init__(screen_id=screen_id, parent=parent)
-        config.team_changed.connect(lambda *_: self.update())
+        config.team_changed.connect(self._repaint_on_team)
+
+    def _repaint_on_team(self, *_args):
+        # A bound method, not a lambda: this widget is destroyed with its
+        # screen, and only a QObject method slot is auto-disconnected.
+        self.update()
 
     # ── Chassis hooks ─────────────────────────────────────────────────────
 

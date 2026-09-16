@@ -389,12 +389,17 @@ class _CADStage(QFrame):
         self.setObjectName("cad_stage")
         self._radius = 14
         self._target = 400
+        self._dark = True
         # Same reason as _Band: the QSS ground would square off the corners of
         # the rounded well this paints for itself.
         self.setStyleSheet("QFrame#cad_stage { background: transparent; }")
 
     def set_radius(self, r: int):
         self._radius = r
+        self.update()
+
+    def set_dark(self, dark: bool):
+        self._dark = dark
         self.update()
 
     def set_target_height(self, h: int):
@@ -428,27 +433,51 @@ class _CADStage(QFrame):
         rect = QRectF(0, 0, self.width(), self.height())
         grad = QRadialGradient(rect.width() * 0.5, rect.height() * 0.34,
                                max(rect.width() * 1.2, rect.height() * 0.9))
-        grad.setColorAt(0.0, QColor("#2A262A"))
-        grad.setColorAt(0.68, QColor("#151215"))
+        if self._dark:
+            grad.setColorAt(0.0, QColor("#2A262A"))
+            grad.setColorAt(0.68, QColor("#151215"))
+        else:
+            # The same well, lit: a pale dish the light-theme viewer sits in.
+            grad.setColorAt(0.0, QColor(brand.WHITE))
+            grad.setColorAt(0.68, QColor(brand.N200))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(grad)
         p.drawRoundedRect(rect, self._radius, self._radius)
 
-        # The Pocket: engineering scope, at 13% white so it marks the stage
+        # The Pocket: engineering scope, at 13% so it marks the stage
         # without becoming a second focal element.
         d = self.width() * 0.048
-        p.setBrush(QColor(250, 249, 248, 33))
+        p.setBrush(QColor(250, 249, 248, 33) if self._dark
+                   else QColor(24, 20, 22, 26))
         p.drawPath(pocket_path(rect.right() - d * 0.9, d * 0.9, d / 2, rot=132))
         p.end()
 
 
 class _SubsystemChip(SelectableChip):
-    """A CAD focus chip. Filled white when it is the focused subsystem."""
+    """
+    A CAD focus chip. Filled when it is the focused subsystem — white on the
+    dark plate, carbon on the light one, so "this is the one that is on" is
+    the loud neutral either way and never the accent.
+    """
 
     def __init__(self, sub_id: str, text: str):
         super().__init__(text.upper(), radius=brand.R_PILL)
         self.sub_id = sub_id
+        self._light = False
         self.setMinimumHeight(56)
+
+    def set_light(self, light: bool):
+        self._light = light
+        self.update()
+
+    def _colors(self):
+        if not self._light:
+            return super()._colors()
+        if self._active:
+            return QColor(brand.CARBON), QColor(brand.WHITE), None
+        if self.isDown():
+            return QColor(brand.N200), QColor(brand.CARBON), QColor(brand.N400)
+        return QColor(0, 0, 0, 0), QColor(brand.N600), QColor(brand.N300)
 
 
 class InteractiveBoard(PlatePanel):
@@ -459,7 +488,8 @@ class InteractiveBoard(PlatePanel):
     def __init__(self, parent=None):
         super().__init__(screen_id="project", parent=parent)
         self._scale = 1.0
-        self._fonts: list[tuple] = []          # (label, base_px, weight, family, tracking, role)
+        self._fonts: list[tuple] = []          # (label, base_px, weight, family, tracking)
+        self._roled: list[tuple] = []          # (label, colour role) — re-resolved per theme
         self._cards: list[RoundedFrame] = []
         self._chips: list[_SubsystemChip] = []
         self._sponsor_plates: list[RoundedFrame] = []
@@ -468,9 +498,14 @@ class InteractiveBoard(PlatePanel):
         self._sheet: "_DetailSheet | None" = None
 
         self._build()
-        config.team_changed.connect(lambda _t: self.update())
+        config.team_changed.connect(self._repaint_on_team)
         cad_assets.subsystem_focused.connect(self._on_subsystem_focused)
         cad_assets.config_changed.connect(self._rebuild_chips)
+
+    def _repaint_on_team(self, *_args):
+        # A bound method, not a lambda: this widget is destroyed with its
+        # screen, and only a QObject method slot is auto-disconnected.
+        self.update()
 
     # ── Type helpers (registered so everything scales together) ───────────
     # Labels get NO Qt object names: the app QSS role rules carry font sizes,
@@ -485,21 +520,38 @@ class InteractiveBoard(PlatePanel):
         if tracking:
             f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, tracking)
         lbl.setFont(f)
-        if colour:
-            lbl.setStyleSheet(f"color:{colour}; background:transparent;")
+        self._paint_label(lbl, colour)
         return lbl
 
-    def _disp(self, text, base, weight=_Bold, colour=brand.WHITE, track=0):
+    # Colour on this panel is a *role*, never a literal, so the light theme
+    # can re-resolve every label: "ink" / "body" / "muted" / "faint" map onto
+    # the chassis inks for the current plate. A literal is still accepted for
+    # the one place a fixed colour is right — white type on the red Act plate.
+    _ROLES = ("ink", "body", "muted", "faint")
+
+    def _role(self, role: str) -> str:
+        return {"ink": self.ink, "body": self.body_ink, "muted": self.muted,
+                "faint": self.faint}[role]
+
+    def _paint_label(self, lbl: QLabel, colour: str | None):
+        if not colour:
+            return
+        if colour in self._ROLES:
+            self._roled.append((lbl, colour))
+            colour = self._role(colour)
+        lbl.setStyleSheet(f"color:{colour}; background:transparent;")
+
+    def _disp(self, text, base, weight=_Bold, colour="ink", track=0):
         return self._reg(QLabel(text), base, weight, brand.FONT_DISPLAY,
                          track, colour)
 
-    def _body_lbl(self, text, base=FS_CARD_BODY, colour=brand.N400):
+    def _body_lbl(self, text, base=FS_CARD_BODY, colour="muted"):
         lbl = QLabel(text)
         lbl.setWordWrap(True)
         return self._reg(lbl, base, QFont.Weight.Normal, brand.FONT_BODY,
                          0, colour)
 
-    def _mono(self, text, base=FS_RAIL, colour=brand.N500, track=112):
+    def _mono(self, text, base=FS_RAIL, colour="faint", track=112):
         lbl = QLabel(text)
         f = QFont()
         f.setFamilies(brand.FONT_MONO_STACK)
@@ -508,7 +560,7 @@ class InteractiveBoard(PlatePanel):
         f.setPixelSize(max(8, int(base * self._scale)))
         f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, track)
         lbl.setFont(f)
-        lbl.setStyleSheet(f"color:{colour}; background:transparent;")
+        self._paint_label(lbl, colour)
         self._fonts.append((lbl, base, _Demi, None, track))
         return lbl
 
@@ -523,7 +575,9 @@ class InteractiveBoard(PlatePanel):
         col.addWidget(self._act_plate())
         col.addLayout(self._stat_row())
         col.addWidget(self._programs_band(), stretch=1)
-        col.addWidget(self._sponsor_strip())
+        # Pinned under the scroll, not in it: the sponsors are on the panel
+        # whatever a visitor has scrolled to.
+        self.footer_layout().addWidget(self._sponsor_strip())
 
     def _identity_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -548,8 +602,8 @@ class InteractiveBoard(PlatePanel):
     def _refresh_wordmark(self):
         team = config.active_team
         self._wordmark.setText(
-            f'<span style="color:{brand.WHITE}">{(team.name or "Team").upper()}</span>'
-            f'<span style="color:{brand.N500}"> {team.number}</span>')
+            f'<span style="color:{self.ink}">{(team.name or "Team").upper()}</span>'
+            f'<span style="color:{self.faint}"> {team.number}</span>')
 
     def _mission_rail(self) -> _Band:
         host = _Band(rule="bottom")
@@ -558,7 +612,7 @@ class InteractiveBoard(PlatePanel):
         row.setContentsMargins(0, 0, 0, 18)
         row.setSpacing(22)
         self._mission_lbl = self._disp("Every kid can", FS_MISSION, _Demi,
-                                       brand.N50, track=120)
+                                       "ink", track=120)
         row.addWidget(self._mission_lbl)
         row.addStretch(1)
         row.addWidget(self._mono(_MISSION_LINE, FS_RAIL))
@@ -590,7 +644,7 @@ class InteractiveBoard(PlatePanel):
         host_lay = QVBoxLayout(self._cad_host)
         host_lay.setContentsMargins(0, 0, 0, 0)
         self._cad_placeholder = self._mono(
-            "THREE.JS STAGE  ·  NO MODEL UPLOADED", FS_RAIL, brand.GRAPHITE)
+            "THREE.JS STAGE  ·  NO MODEL UPLOADED", FS_RAIL, "faint")
         self._cad_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         host_lay.addWidget(self._cad_placeholder)
         lay.addWidget(self._cad_host, stretch=1)
@@ -598,7 +652,7 @@ class InteractiveBoard(PlatePanel):
         # The caption is the one thing focusing a subsystem changes.
         self._cad_hint = self._body_lbl(
             "Drag to orbit · pinch to zoom · tap a subsystem to isolate it.",
-            FS_HINT, brand.N400)
+            FS_HINT, "muted")
         lay.addWidget(self._cad_hint)
         lay.addSpacing(12)
 
@@ -626,6 +680,7 @@ class InteractiveBoard(PlatePanel):
             pass
         for sub_id, name in entries:
             chip = _SubsystemChip(sub_id, name)
+            chip.set_light(not self.dark)
             chip.clicked.connect(lambda _c=False, s=sub_id: self._focus(s))
             self._chips.append(chip)
             self._chip_row.addWidget(chip)
@@ -685,15 +740,15 @@ class InteractiveBoard(PlatePanel):
         row = QHBoxLayout()
         row.setSpacing(14)
         for number, caption in _ABOUT_STATS:
-            tile = RoundedFrame(fill=brand.TILE_DARK, border=brand.CARBON_LINE,
+            tile = RoundedFrame(fill=self.tile, border=self.rule,
                                 radius=brand.R_CARD)
             self._cards.append(tile)
             v = QVBoxLayout(tile)
             v.setContentsMargins(22, 20, 22, 20)
             v.setSpacing(10)
-            v.addWidget(self._disp(number, FS_STAT_NUM, _Bold, brand.WHITE,
+            v.addWidget(self._disp(number, FS_STAT_NUM, _Bold, "ink",
                                    track=99))
-            cap = self._disp(caption, FS_STAT_CAP, _Demi, brand.N400,
+            cap = self._disp(caption, FS_STAT_CAP, _Demi, "muted",
                              track=114)
             # "Volunteer Hrs / Year" does not fit a quarter of a 768px panel on
             # one line, and an unwrapped caption is simply cut in half.
@@ -713,7 +768,7 @@ class InteractiveBoard(PlatePanel):
         lay.setSpacing(14)
 
         head = QHBoxLayout()
-        head.addWidget(self._disp("What we run", FS_SECTION, _Demi, brand.N50,
+        head.addWidget(self._disp("What we run", FS_SECTION, _Demi, "ink",
                                   track=120))
         head.addStretch(1)
         head.addWidget(self._mono("TAP ANY CARD", FS_RAIL))
@@ -722,28 +777,22 @@ class InteractiveBoard(PlatePanel):
         # Every card is here, two across. The comp shows four at rest; the rest
         # are a drag away rather than deleted, because they are real programs
         # the team runs and a kiosk that hides them is lying by omission.
+        # Every card, two across, at full height. The grid used to be the one
+        # thing on the panel that scrolled; now the whole plate does
+        # (`PlatePanel`), so the grid simply takes the room it needs.
         inner = QWidget()
+        inner.setObjectName("program_grid")
+        inner.setStyleSheet("QWidget#program_grid { background: transparent; }")
         grid = QGridLayout(inner)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(14)
         for i, (category, item) in enumerate(_program_items()):
             grid.addWidget(self._program_card(category, item), i // 2, i % 2)
-        grid.setRowStretch(grid.rowCount(), 1)
-
-        scroll = QScrollArea()
-        scroll.setWidget(inner)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.viewport().setStyleSheet("background: transparent;")
-        # The grid is the band that gives: on a short panel everything above it
-        # is the argument and this is the part a finger can scroll to.
-        scroll.setMinimumHeight(44)
-        lay.addWidget(scroll, stretch=1)
+        lay.addWidget(inner)
         return band
 
     def _program_card(self, category: str, item: dict) -> QWidget:
-        card = _CardButton(fill=brand.TILE_DARK, border=brand.CARBON_LINE,
+        card = _CardButton(fill=self.tile, border=self.rule,
                            accent=brand.N400, radius=brand.R_CARD)
         self._cards.append(card)
         card.clicked.connect(
@@ -752,7 +801,7 @@ class InteractiveBoard(PlatePanel):
         v = QVBoxLayout(card)
         v.setContentsMargins(24, 22, 24, 22)
         v.setSpacing(10)
-        v.addWidget(self._disp(item["name"], FS_CARD, _Bold, brand.WHITE))
+        v.addWidget(self._disp(item["name"], FS_CARD, _Bold, "ink"))
         v.addWidget(self._body_lbl(item.get("blurb", ""), FS_CARD_BODY))
         v.addStretch(1)
         return card
@@ -763,7 +812,7 @@ class InteractiveBoard(PlatePanel):
         row = QHBoxLayout(band)
         row.setContentsMargins(0, 18, 0, 0)
         row.setSpacing(18)
-        row.addWidget(self._disp("Sponsors", FS_STAT_CAP, _Demi, brand.N500,
+        row.addWidget(self._disp("Sponsors", FS_STAT_CAP, _Demi, "faint",
                                  track=120))
         for _ in _SPONSORS:
             plate = RoundedFrame(fill=brand.N50, border=None,
@@ -819,13 +868,42 @@ class InteractiveBoard(PlatePanel):
     # ── Theme / scale ─────────────────────────────────────────────────────
 
     def apply_theme(self, theme: str):
+        """
+        Re-resolve every colour on the panel for `theme`.
+
+        Everything here was once a literal — white type, carbon tiles — which
+        on the light plate left white words on a white ground. Labels carry a
+        role, tiles and cards take their fill from the chassis, the chips and
+        the CAD well and the sheet each know which plate they are on.
+        """
         self.set_theme(theme)
-        line = brand.CARBON_LINE if self.dark else brand.N200
+        line = self.rule
         for band in (getattr(self, "_band", None),
                      getattr(self, "_mission_band", None),
                      getattr(self, "_sponsor_band", None)):
             if band is not None:
                 band.set_line(line)
+        for lbl, role in self._roled:
+            lbl.setStyleSheet(f"color:{self._role(role)}; background:transparent;")
+        if hasattr(self, "_wordmark"):
+            self._refresh_wordmark()
+        for card in self._cards:
+            if card in self._sponsor_plates:
+                card.set_fill(brand.N50 if self.dark else brand.WHITE)
+                card.set_border(None if self.dark else brand.N200)
+                continue
+            if isinstance(card, _CardButton) and card._accent_hex == brand.RED:
+                continue                    # the Act plate is red on both
+            card.set_fill(self.tile)
+            card.set_border(line)
+            if isinstance(card, _CardButton):
+                card._border_rest = line
+        for chip in self._chips:
+            chip.set_light(not self.dark)
+        if hasattr(self, "_stage"):
+            self._stage.set_dark(self.dark)
+        if self._sheet is not None:
+            self._sheet.apply_theme(self.dark)
         self.update()
 
     def apply_team(self, hex_color: str):
@@ -857,9 +935,9 @@ class InteractiveBoard(PlatePanel):
                 f.setLetterSpacing(QFont.SpacingType.PercentageSpacing, tracking)
             lbl.setFont(f)
         if hasattr(self, "_stage"):
-            stage_h = int(min(CAD_STAGE_H * scale,
-                              self.height() * CAD_STAGE_RATIO))
-            self._stage.set_target_height(max(140, stage_h))
+            # The plate scrolls, so the stage no longer has to give: it is
+            # its design height at this scale, and the page grows below it.
+            self._stage.set_target_height(max(140, int(CAD_STAGE_H * scale)))
             self._stage.set_radius(int(14 * scale))
         for plate in self._sponsor_plates:
             plate.setFixedHeight(max(28, int(SPONSOR_H * scale)))
@@ -893,11 +971,6 @@ class _DetailSheet(QFrame):
         self._scale = scale
         self.setObjectName("sheet")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(
-            f"QFrame#sheet {{ background-color: {brand.CARBON_SURF};"
-            f" border-top-left-radius: {brand.R_BANNER}px;"
-            f" border-top-right-radius: {brand.R_BANNER}px;"
-            f" border: 1.5px solid {brand.CARBON_LINE}; }}")
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(40, 34, 40, 34)
@@ -905,7 +978,6 @@ class _DetailSheet(QFrame):
 
         head = QHBoxLayout()
         self._eye = QLabel(category.upper())
-        self._eye.setStyleSheet(f"color:{brand.N400}; background:transparent;")
         head.addWidget(self._eye)
         head.addStretch(1)
         self._close = RoundedButton("Close", variant="secondary",
@@ -916,18 +988,23 @@ class _DetailSheet(QFrame):
 
         self._title = QLabel(title)
         self._title.setWordWrap(True)
-        self._title.setStyleSheet(f"color:{brand.WHITE}; background:transparent;")
         lay.addWidget(self._title)
 
         self._body = QLabel(body)
         self._body.setWordWrap(True)
         self._body.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self._body.setStyleSheet(f"color:{brand.N300}; background:transparent;")
+        self.apply_theme(parent.dark)
         scroll = QScrollArea()
+        scroll.setObjectName("sheet_scroll")
         scroll.setWidget(self._body)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Both the area and its viewport, or the light QSS paints a grey box
+        # behind the body text.
+        scroll.setStyleSheet(
+            "QScrollArea#sheet_scroll { background: transparent; border: none; }")
+        scroll.viewport().setAutoFillBackground(False)
         scroll.viewport().setStyleSheet("background: transparent;")
         lay.addWidget(scroll, stretch=1)
 
@@ -935,6 +1012,24 @@ class _DetailSheet(QFrame):
         self._anim = QPropertyAnimation(self, b"geometry", self)
         self._anim.setDuration(self._RISE_MS)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def apply_theme(self, dark: bool):
+        """The sheet is a raised surface on the plate: one step lighter than
+        the plate on dark, white with a hairline on light."""
+        fill = brand.CARBON_SURF if dark else brand.WHITE
+        line = brand.CARBON_LINE if dark else brand.N200
+        self.setStyleSheet(
+            f"QFrame#sheet {{ background-color: {fill};"
+            f" border-top-left-radius: {brand.R_BANNER}px;"
+            f" border-top-right-radius: {brand.R_BANNER}px;"
+            f" border: 1.5px solid {line}; }}")
+        self._eye.setStyleSheet(
+            f"color:{brand.N400 if dark else brand.N500}; background:transparent;")
+        self._title.setStyleSheet(
+            f"color:{brand.WHITE if dark else brand.CARBON}; background:transparent;")
+        self._body.setStyleSheet(
+            f"color:{brand.N300 if dark else brand.N600}; background:transparent;")
+        self._close.set_on_light(not dark)
 
     def rescale(self, scale: float):
         self._scale = scale

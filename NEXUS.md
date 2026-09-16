@@ -198,7 +198,7 @@ the sentence the panel shows:
 |---|---|
 | 401 | No `Nexus-Api-Key` header |
 | 403 | Key not recognised, or disabled for abuse (contact@frc.nexus) |
-| 404 | `eventKey` does not exist (`/events`: no active events at all) |
+| 404 | On `/event/{key}` itself: the key does not exist. On a **sub-resource** (`/pits`, `/map`, `/inspection`, `/teams`, `/alliances`): the event has nothing of that kind — a demo event has no pit map, alliances do not exist until selection. The service holds the empty value and carries on; only the event's own 404 stops the other fetches (`/events`: no active events at all) |
 | 500 | Their fault; try later |
 
 | Endpoint | `Client` method | Returns | Cadence in the app |
@@ -454,8 +454,8 @@ chosen from the match's status: `Queuing soon` counts to the queue call,
 A passed estimate reads `NOW`. The timeline underneath is all four
 estimates with the next one lit and the passed ones faded. Once every match
 of ours is played it shows the last one as `LAST MATCH · STARTED hh:mm`.
-The ledger carries what is queuing right now, our pit, the snapshot's age,
-and the attribution.
+The ledger carries the current time (ticking), what is queuing right now,
+our pit, the snapshot's age, and the attribution.
 
 Every time on it is Nexus's *estimate* and moves with each snapshot; at an
 event that does not queue with Nexus it will not move at all.
@@ -487,7 +487,13 @@ outranks all of them.
 
 Inspection alerts only on a **transition**: the first status the app reads
 is the baseline, so a robot that passed yesterday does not celebrate on
-every launch.
+every launch. "Passed" is `status == complete` when the event sends a
+status — so clearing a re-inspection fires it again — and `inspected` when
+it does not. **Demo events send only `inspected`** (measured 2026-09-15:
+every team `{"inspected": true|false}`, no `status`, no `queuePosition`), and
+`inspected` never un-sets once the initial pass is in, so a re-inspection
+set up in the Nexus app is invisible on a demo event. Test the green by
+flipping a team from not-inspected to inspected instead.
 
 **The white centre needs controller firmware 2.2.** `SET_COLOR` gained an
 optional fifth byte — the white die, per segment — because these strips'

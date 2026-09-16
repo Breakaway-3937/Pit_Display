@@ -185,6 +185,7 @@ class RoundedButton(QPushButton):
         self._variant = variant
         self._accent = QColor(accent)
         self._radius = radius
+        self._on_light = False
         self._hover = False
         self._active = False   # sticky "selected" state (for toggle-style rows)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -216,6 +217,11 @@ class RoundedButton(QPushButton):
         self.update()
         super().leaveEvent(e)
 
+    def set_on_light(self, on_light: bool):
+        """Recolour the neutral variants for a light ground."""
+        self._on_light = bool(on_light)
+        self.update()
+
     def _colors(self):
         """
         (fill, text, border) for the current state.
@@ -238,6 +244,21 @@ class RoundedButton(QPushButton):
                     else accent.darker(112) if self._hover
                     else accent)
             return fill, QColor(brand.WHITE), None
+        if self._on_light:
+            # The same three states on a white or N50 ground (§03: carbon
+            # type, N300 hairline), for a button that sits on a light plate.
+            if self._variant == "secondary":
+                border = QColor(brand.N300)
+                if pressed:
+                    return QColor(brand.N200), QColor(brand.CARBON), border
+                if self._hover:
+                    return QColor(0, 0, 0, 0), QColor(brand.CARBON), QColor(brand.N400)
+                return QColor(0, 0, 0, 0), QColor(brand.N600), border
+            if pressed:
+                return QColor(brand.N200), QColor(brand.CARBON), None
+            if self._hover:
+                return QColor(0, 0, 0, 0), QColor(brand.CARBON), None
+            return QColor(0, 0, 0, 0), QColor(brand.N500), None
         if self._variant == "secondary":
             border = QColor(brand.N600)
             if pressed:

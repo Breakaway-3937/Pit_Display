@@ -105,6 +105,11 @@ class Chassis(QWidget):
     # Right-hand mono label in the header band, e.g. "SCREEN A  /  STANDARD".
     HEADER_LABEL = ""
 
+    # The footer ledger's mono size, in design px. A board whose ledger
+    # carries something read at a glance — the Next Match board's clock —
+    # sets it two steps up the scale.
+    FOOTER_PX = 20
+
     # The size the design was drawn at. Everything scales as a contain fit
     # against this, so a surface keeps its proportions at any window shape and
     # a wide-but-short window shrinks rather than overflowing. The pit-front
@@ -522,7 +527,7 @@ class Chassis(QWidget):
         left, right = self.footer_items()
         if not (left or right):
             return
-        f = self.mono(20, 500, 0.12)
+        f = self.mono(self.FOOTER_PX, 500, 0.12)
         p.setFont(f)
         p.setPen(QColor(self.faint))
         if left:
@@ -701,6 +706,15 @@ class PlatePanel(Chassis):
 
     `content_layout()` is the column inside the plate; its margins track the
     plate's padding as the panel resizes.
+
+    **The whole column scrolls.** The column sits on a content widget inside
+    one `QScrollArea` that covers the plate, so a panel shorter than the
+    design is dragged as a page rather than squeezed — the CAD keeps its
+    height, the cards keep their type, and the finger that lands anywhere on
+    the plate moves all of it. It used to be that only the card grid at the
+    bottom scrolled, which read as a broken page with a working widget in
+    it. The scroll area is transparent so the plate's gradient shows through,
+    and there is no scrollbar: the touch router drags it, a mouse wheels it.
     """
 
     # Drawn at 1080×1920 portrait, not 1920×1080. Inheriting the landscape
@@ -714,22 +728,67 @@ class PlatePanel(Chassis):
 
     def __init__(self, screen_id: str = "", parent=None):
         super().__init__(screen_id=screen_id, parent=parent)
-        from PyQt6.QtWidgets import QVBoxLayout
-        self._column = QVBoxLayout(self)
+        from PyQt6.QtWidgets import QScrollArea, QVBoxLayout, QFrame
+
+        self._content = QWidget()
+        self._content.setObjectName("plate_content")
+        self._content.setStyleSheet(
+            "QWidget#plate_content { background: transparent; }")
+        self._column = QVBoxLayout(self._content)
         self._column.setSpacing(20)
+
+        self._scroll = QScrollArea()
+        self._scroll.setObjectName("plate_scroll")
+        self._scroll.setWidget(self._content)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setStyleSheet(
+            "QScrollArea#plate_scroll { background: transparent; border: none; }")
+        self._scroll.viewport().setAutoFillBackground(False)
+        self._scroll.viewport().setStyleSheet("background: transparent;")
+
+        # A footer that does not scroll: pinned to the bottom of the plate
+        # under the column, for the one band that has to be there whatever
+        # the finger has done — the sponsors.
+        self._footer = QWidget()
+        self._footer.setObjectName("plate_footer")
+        self._footer.setStyleSheet(
+            "QWidget#plate_footer { background: transparent; }")
+        self._footer_col = QVBoxLayout(self._footer)
+        self._footer_col.setSpacing(0)
+        self._footer.setVisible(False)
+
+        self._frame = QVBoxLayout(self)
+        self._frame.setSpacing(0)
+        self._frame.addWidget(self._scroll, stretch=1)
+        self._frame.addWidget(self._footer, stretch=0)
         self._sync_margins()
 
     def content_layout(self):
         return self._column
 
+    def footer_layout(self):
+        """The pinned band under the scroll. Shown once something is added."""
+        self._footer.setVisible(True)
+        return self._footer_col
+
+    def scroll_area(self):
+        return self._scroll
+
     def _sync_margins(self):
         i = int(round(self.s(self.PLATE_INSET)))
-        self._column.setContentsMargins(
-            i + int(round(self.s(self.PAD_X))),
-            i + int(round(self.s(self.PAD_Y))),
-            i + int(round(self.s(self.PAD_X))),
-            i + int(round(self.s(self.PAD_Y))))
+        px, py = int(round(self.s(self.PAD_X))), int(round(self.s(self.PAD_Y)))
+        # The frame is the plate; the column's padding is the plate's own, so
+        # the content sits where a painted stage would. The footer shares the
+        # side padding and takes the bottom one.
+        self._frame.setContentsMargins(i, i, i, i)
+        self._column.setContentsMargins(px, py, px, py)
         self._column.setSpacing(int(round(self.s(20))))
+        self._footer_col.setContentsMargins(px, 0, px, py)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

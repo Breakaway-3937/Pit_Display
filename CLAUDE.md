@@ -71,6 +71,14 @@ consequences worth knowing:
 - **Anything holding a window reference has to let go.** `touch.py`'s router
   connects to `destroyed` and forgets the widget; a stale entry there is a
   dangling pointer walked on every touch event.
+- **A widget on one of these screens must connect app-wide signals to a
+  bound method, never a lambda.** PyQt auto-disconnects a slot that is a
+  method of a QObject when that object's C++ side is destroyed; a lambda is
+  not a QObject and keeps firing. `lambda _s: self.update()` on the Next
+  Match board took the whole app down with `wrapped C/C++ object … has been
+  deleted` on the first poll after the screen was powered off — and four
+  other overlays carried the same `config.team_changed` lambda, waiting for
+  a team change after a power-off. Every one is a `_repaint…` method now.
 
 **Window roles:**
 - `ControlScreen` — operator panel (team selector, mode buttons, per-screen settings, judges slide picker)
@@ -122,8 +130,10 @@ All cross-component communication uses Qt signals — no direct calls between wi
 - `config.screen_setting_changed` → theme changes applied per-window via `app.theme.apply_theme()`
 - `rotation.advance` → `SlidePanel.next_slide()` on each presentation screen
 - `judges_slides.slide_changed` / `slides_reloaded` → `JudgesOverlay` and `_SlidePicker` in control screen
-- `config.team_changed` → LED strips wash to the team colour (when following)
-- `config.mode_changed` → LED preset + EQ curve swap; judges mode auto-ducks audio
+- `config.team_changed` → LED strips wash to the team colour (when following a colour look)
+- `config.mode_changed` → LED preset + EQ curve swap; judges mode auto-ducks audio.
+  **Judges and lunch are LED overrides**: white / solid red, and every alert is
+  ignored until the mode ends (`effects.OVERRIDE_MODES`, `leds.start_alert`)
 - `cad_assets.subsystem_focused` → strips echo that subsystem's `accent_color`
 - `config.set(screen, "slide_index", n)` → that presentation screen jumps to slide n;
   the screen writes the same key back as the rotation advances, so the control
@@ -603,9 +613,23 @@ what is already visible; it never navigates away from it.
 - **Detail rises, never replaces.** A tapped card raises `_DetailSheet` over the
   lower two thirds — 340ms OutCubic — and **the CAD stays visible above it**. A
   visitor who tapped a card has not asked to stop looking at the robot.
+- **The whole plate scrolls, and the sponsors do not.** `PlatePanel` puts the
+  column on a content widget inside one transparent, scrollbar-less
+  `QScrollArea` that fills the plate, with a pinned `footer_layout()` under
+  it; the sponsor strip lives in the footer. It used to be that only the
+  programme grid scrolled, which read as a broken page with one working
+  widget. The CAD stage no longer "gives" height on a short window — it is
+  its design height and the page grows below it.
+- **Every colour on the panel is a role, never a literal.** `_disp` /
+  `_body_lbl` / `_mono` take `"ink"` / `"body"` / `"muted"` / `"faint"`,
+  resolved against the chassis inks and re-resolved by `apply_theme()`;
+  tiles and cards take `self.tile` / `self.rule`; the chips, the CAD well
+  and the detail sheet each carry a light variant. Before this, the light
+  theme was white type on a white plate. The one literal left is white on
+  the red Act plate, which is red on both themes.
 - **Every card is still reachable.** The comp shows four programmes at rest; the
-  grid holds all of them and scrolls, because they are real programmes the team
-  runs and a kiosk that hides them is lying by omission.
+  grid holds all of them, because they are real programmes the team runs and a
+  kiosk that hides them is lying by omission.
 - **Type scales from the panel's own width** (`_apply_scale`), not from a fixed
   px, and not from height — the design is drawn against the 1080 *width*.
 
@@ -626,6 +650,12 @@ so this is a re-execution, not a re-plan.
   under it, enough for an operator who has been told and invisible to a visitor.
 - **Fingers, standing.** Mode buttons are 124×46, nav and setting rows 56–64px,
   and nothing is smaller than a thumb.
+- **The body scrolls as one — sidebar and settings column together — under
+  a fixed top bar.** The sidebar alone is ten rows and two headers, taller
+  than a short laptop window, and it had no scroll of its own: its last
+  entries simply did not exist on the pit machine. One scroll area
+  (`_body_scroll`) holds both columns, so one finger-drag moves everything
+  and the touch router's `_scrollable_ancestor` finds it from anywhere.
 - **A `QWidget` ignores a stylesheet border unless `WA_StyledBackground` is
   set** — the rule simply never appears, silently. `SettingRow` sets it.
 - **The app-wide `QPushButton` rule carries 16px of horizontal padding**, which
@@ -738,6 +768,20 @@ still land in `state`, so flicking back to the middle resumes on what the app ha
 been asking for, with no round trip. The truth table lives only in
 `switchPosition()`.
 
+**The resting look is the white work light, on the W die.** `MODE_PRESETS`
+maps standard *and* judges to the `white` preset (brightness 160, matching
+the firmware's WHITE switch — every pixel lit is the full-current state the
+supply was sized against; raise both together or neither). A hand-picked
+colour or animation turns the die off; the team colour is remembered for
+when a colour look is chosen but the work light does not follow the team.
+
+**With no host the strips run a violet sparkle.** Compiled default since
+fw 2.4 — a moving pattern says the controller is alive and waiting, and
+violet is a colour nothing else in the pit uses, so it can never be read as
+an alliance, an alert, or the app having died mid-sequence. It shows at boot and five seconds after the app stops talking
+(the app blanks the strips on exit; the watchdog does the rest).
+`EEPROM_MAGIC` moved (`0xBD`, then `0xBE`) so a saved default was discarded.
+
 **There is deliberately no manual OFF.** Dark is what a pit looks like when
 something is broken, and a switch position indistinguishable from a dead board
 costs an hour at an event. The app's kill switch still turns the strips off on
@@ -802,7 +846,8 @@ link, silently and intermittently.
 
 **`State` changed shape** three times — per-strip colour (`0xB9` → `0xBA`),
 three strips down to two (`0xBA` → `0xBB`), and the per-segment W channel
-(`0xBB` → `0xBC`). Move `EEPROM_MAGIC` again on any further change: an old saved struct read into a new layout garbles every field
+(`0xBB` → `0xBC`) — and the magic moved twice more (`0xBD`, `0xBE`) to force a new
+no-host default over a saved one. Move `EEPROM_MAGIC` again on any further change: an old saved struct read into a new layout garbles every field
 after it rather than failing.
 
 **Known bug, not yet fixed:** `SET_PIXELS` writes into `leds[]` and then
@@ -1096,6 +1141,12 @@ Five things are load bearing:
   stored, so the team selector switches every board without a refetch.
   `match_changed` compares label, status *and* times — a start that moved
   four minutes is news to a crew.
+- **A 404 on a sub-resource is "nothing published", not "no such event".**
+  Demo events 404 on `/pits` and `/map` while `/event` works; alliances 404
+  until selection. `_on_failed` turns those into the empty value and never
+  cancels the other fetches — only the event's own 401/403/404 does. The
+  first build read every 404 as a bad key and silently dropped inspection,
+  teams and alliances for every demo event.
 - **Team numbers are strings** (`"3937"`) and **timestamps are Unix
   milliseconds**, because that is what the API keys on. `api.team_str()` and
   `api.when()` are the conversions; do not scatter `str(...)` and `/1000`.
@@ -1112,6 +1163,10 @@ Five things are load bearing:
   transition — the first read is the baseline. Every banner is 10 s. The
   banner (`QueueBanner`) is a child of the presentation *window*, not a
   page, so every face gets it.
+- **The Next Match board is centred on the stage's axis and spans its
+  width** — eyebrow, label + seal, numeral and "at" on the centre line, the
+  timeline's four stops at the centres of four equal columns, WITH / VS in
+  two halves. A left-ranged layout on a 55" panel left half the plate empty.
 - **The Next Match board counts down to the *next* step, never a past
   one.** `_NEXT_STEP` picks the estimate from the match's own status —
   `Queuing soon` counts to the queue call, `Now queuing` to on-deck, and so
