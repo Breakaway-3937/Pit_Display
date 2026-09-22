@@ -30,6 +30,11 @@ MIN_POLL_S = 10
 # alliance selection); inspection is cached upstream for "a couple minutes".
 MIN_SLOW_POLL_S = 60
 
+# The only two bind addresses that mean anything here. Loopback is a tunnel in
+# front; the wildcard is a port-forward. Anything else is a typo, and a typo
+# in a bind address fails at `start()` with an OSError an operator cannot read.
+BINDS = ("127.0.0.1", "0.0.0.0")
+
 DEFAULTS: dict[str, Any] = {
     # Which event this pit is at. `2024casf`-style official code, or the
     # team's demo key from frc.nexus/api. Empty means the feed is off.
@@ -44,6 +49,16 @@ DEFAULTS: dict[str, Any] = {
     # surprise on a machine that also serves the CAD viewer.
     "webhook_enabled": False,
     "webhook_port": 8766,
+    # Which interface that port listens on. **Loopback is the default and is
+    # what a tunnel wants**: cloudflared (or ngrok, or a Tailscale funnel)
+    # runs on this machine and connects to 127.0.0.1, so binding the whole
+    # machine buys nothing and costs two things. On Windows the first bind to
+    # 0.0.0.0 raises a Defender Firewall prompt an operator has to answer
+    # correctly, and answering it wrong blocks the port silently; and a pit
+    # laptop on event wifi with an open port is reachable by every other
+    # laptop in the venue. Only a real port-forward, on a network the team
+    # controls, needs "0.0.0.0".
+    "webhook_bind": "127.0.0.1",
     # Written by the service, read by the panel.
     "last_poll": "",
     "last_result": "",
@@ -69,6 +84,8 @@ def _clamp(values: dict[str, Any]) -> dict[str, Any]:
         values["webhook_port"] = port if 1024 <= port <= 65535 else DEFAULTS["webhook_port"]
     except (TypeError, ValueError):
         values["webhook_port"] = DEFAULTS["webhook_port"]
+    bind = str(values.get("webhook_bind") or "").strip()
+    values["webhook_bind"] = bind if bind in BINDS else DEFAULTS["webhook_bind"]
     values["event_key"] = str(values.get("event_key") or "").strip()
     return values
 

@@ -39,6 +39,9 @@ invisible from both ends.
 The pit laptop is behind event wifi, so Nexus cannot reach this port unless
 somebody has put a tunnel in front of it. That is why it is off by default
 and why polling is the primary path; this is the accelerator.
+
+**It listens on loopback**, because the tunnel is a process on this same
+machine. See `start()`.
 """
 
 from __future__ import annotations
@@ -139,8 +142,17 @@ class WebhookServer(QObject):
         """Bodies accepted since start — the panel's proof it is being called."""
         return self._count
 
-    def start(self, port: int, host: str = "0.0.0.0") -> str:
-        """Bind and serve. Returns `""` or the reason it could not."""
+    def start(self, port: int, host: str = "127.0.0.1") -> str:
+        """
+        Bind and serve. Returns `""` or the reason it could not.
+
+        **Loopback by default.** The tunnel that gives Nexus a route to this
+        machine runs *on* this machine and connects to 127.0.0.1, so the
+        wildcard bind buys no reachability at all — and on Windows it raises a
+        Defender Firewall prompt whose wrong answer blocks the port with no
+        error anywhere. `webhook_bind` in `nexus.json` is the override, for a
+        real port-forward on a network the team controls.
+        """
         if self._server is not None:
             return ""
         owner = self

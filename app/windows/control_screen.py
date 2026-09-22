@@ -15,6 +15,7 @@ from typing import Callable
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QFrame, QPushButton, QComboBox, QSizePolicy, QScrollArea,
+    QApplication,
 )
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
@@ -43,10 +44,18 @@ from app.widgets.update_panel import UpdatePanel
 from app.widgets.nexus_panel import NexusPanel
 from app.widgets.toggle_switch import ToggleSwitch
 from app.leds import leds
+from app.webcast import lan_address, webcast
+from app.webcast import settings as webcast_settings
 
 # Pit-wide subsystems. Unlike SCREENS these are not windows — they are hardware
 # the pit owns, so they get their own sidebar group and their own panels.
 SYSTEMS = ["leds", "music", "robot", "nexus", "updates"]
+
+# A window kept alive only for the pit network is laid out and painted but
+# never mapped to a display. Measured: a presentation screen renders its whole
+# chassis correctly this way with no monitor attached, which is the entire
+# basis of publishing a screen from a machine that has no spare video output.
+_NO_SCREEN = Qt.WidgetAttribute.WA_DontShowOnScreen
 SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music", "robot": "Robot Logs",
                  "nexus": "Event Feed", "updates": "Software Updates"}
 
@@ -1035,6 +1044,56 @@ class ScreenSettingsPanel(QWidget):
                 control=fill_row,
             ))
 
+            # ── On the pit network ────────────────────────────────────
+            # The overhead panels hang across the pit, and the cable to them
+            # is the expensive part of hanging them. Published here, a Pi on
+            # the Ethernet switch shows this screen in a browser instead —
+            # and because the window is then laid out without ever being
+            # mapped to a display, this machine needs no video output for it.
+            if screen_id in webcast_settings.PUBLISHABLE:
+                self._web_toggle, self._web_label, web_row = \
+                    self._labeled_toggle(
+                        checked=webcast_settings.is_published(screen_id),
+                        text="On" if webcast_settings.is_published(screen_id)
+                             else "Off")
+                self._web_toggle.toggled.connect(self._on_web_toggled)
+                outer.addWidget(SettingRow(
+                    label_text="Show on the pit network",
+                    description="Publish this screen to the pit LAN so a Pi "
+                                "on the Ethernet switch can show it in a "
+                                "browser instead of a monitor. The power "
+                                "switch still turns the screen on and off — "
+                                "it just stops opening a window here. "
+                                "Pit-local only; never put this port on "
+                                "event wifi.",
+                    control=web_row,
+                ))
+
+                # The address is the one thing here somebody has to reproduce
+                # exactly, on another machine, by hand. Reading an IP off a
+                # screen and typing it into a Pi is where this goes wrong, so
+                # it is selectable *and* there is a button that puts it on the
+                # clipboard — the pit machine is a touch panel, and dragging a
+                # text selection with a finger is not a real option.
+                url_row = QHBoxLayout()
+                url_row.setContentsMargins(0, 0, 0, 0)
+                url_row.setSpacing(10)
+                self._web_url = label("", "stat_label")
+                self._web_url.setWordWrap(True)
+                self._web_url.setTextInteractionFlags(
+                    Qt.TextInteractionFlag.TextSelectableByMouse)
+                self._web_url.setCursor(Qt.CursorShape.IBeamCursor)
+                url_row.addWidget(self._web_url, stretch=1)
+                self._web_copy = RoundedButton("Copy", variant="secondary")
+                self._web_copy.setFixedWidth(96)
+                self._web_copy.clicked.connect(self._copy_web_url)
+                url_row.addWidget(self._web_copy,
+                                  alignment=Qt.AlignmentFlag.AlignTop)
+                url_holder = QWidget()
+                url_holder.setLayout(url_row)
+                outer.addWidget(url_holder)
+                self._refresh_web_url()
+
         outer.addWidget(divider())
         outer.addSpacing(12)
 
@@ -1167,6 +1226,62 @@ class ScreenSettingsPanel(QWidget):
         self._fill_label.setText("Filling" if fill else "Windowed")
         config.set(self._screen_id, "fullscreen", fill)
 
+    def _on_web_toggled(self, on: bool):
+        """
+        Publish or unpublish this screen on the pit LAN.
+
+        The service writes `webcast.json` and restarts its socket; the control
+        screen separately reconciles the window, because a published screen
+        needs one whether or not a monitor is showing it.
+        """
+        # One call: the service turns the feature on if it was off, settles
+        # the settings, brings the socket up and only then announces the
+        # change, so window lifetime is reconciled against the finished state.
+        webcast.set_screen_published(self._screen_id, on)
+        if on and not webcast.listening:
+            self._web_label.setText("Failed")
+        else:
+            self._web_label.setText("On" if on else "Off")
+        self._refresh_web_url()
+
+    def _refresh_web_url(self):
+        """The exact address to type into the Pi — never left to be guessed."""
+        if not getattr(self, "_web_url", None):
+            return
+        published = webcast_settings.is_published(self._screen_id)
+        self._web_copy.setVisible(published)
+        if not published:
+            self._web_address = ""
+            self._web_url.setText(
+                "Not published. Turn this on to show the screen in a browser "
+                "on the pit switch instead of on a monitor.")
+            return
+        host = lan_address()
+        port = webcast_settings.get("port")
+        # Held verbatim, because this is what the Copy button puts on the
+        # clipboard: the sentence around it is for reading, the string itself
+        # has to survive being pasted into a Pi's address bar unchanged.
+        self._web_address = f"http://{host}:{port}/screen/{self._screen_id}"
+        powered = self._screen_id in getattr(self.window(), "_powered", set())
+        state = ("" if powered else
+                 "  This screen is switched off — turn its power on to start "
+                 "it; it will not open a window here.")
+        self._web_url.setText(
+            f"{self._web_address}\n"
+            f"Open that on the pit switch and put the browser full screen. "
+            f"http://{host}:{port}/ lists every published screen.{state}")
+
+    def _copy_web_url(self):
+        """Put the bare address on the clipboard — no sentence, no trailing dot."""
+        address = getattr(self, "_web_address", "")
+        if not address:
+            return
+        QApplication.clipboard().setText(address)
+        self._web_copy.setText("Copied")
+        # Back to "Copy" on its own, so the button never sits lying about what
+        # it will do next time.
+        QTimer.singleShot(1400, lambda: self._web_copy.setText("Copy"))
+
     def _on_pres_content_changed(self, _index: int):
         config.set(self._screen_id, "content", self._pres_content.currentData())
 
@@ -1235,6 +1350,13 @@ class ControlScreen(QMainWindow):
         self._settings_panels: dict[str, ScreenSettingsPanel] = {}
         self._managed_windows: dict[str, QMainWindow] = {}
         self._window_factories: dict[str, Callable[[], QMainWindow]] = {}
+        # Which screens the operator has switched on. Window *existence* used
+        # to be the whole answer, and it stopped being one when a screen could
+        # also be kept alive headless for the pit network: a published screen
+        # that is powered off still has a window, and it must not be placed on
+        # a monitor. `_reconcile` is where the two reasons are resolved.
+        self._powered: set[str] = set()
+        self._webcast = None
         self._mode_buttons: dict[str, ModeButton] = {}
         self._build_ui()
         config.team_changed.connect(self._on_team_changed)
@@ -1256,8 +1378,96 @@ class ControlScreen(QMainWindow):
         self._window_factories = factories
 
     def managed_window(self, screen_id: str):
-        """The live window for a screen, or None while it is powered off."""
+        """
+        The live window for a screen, or None when nothing wants one.
+
+        This is what the webcast service renders, so it is deliberately *not*
+        "the window if it is powered on": a screen published to the pit
+        network has a window whether or not a monitor is showing it.
+        """
         return self._managed_windows.get(screen_id)
+
+    def set_webcast(self, service) -> None:
+        """
+        The pit-network publisher, so window lifetime can account for it.
+
+        Window lifetime has exactly one owner and this is it. The service
+        asks for windows and never builds one; in return this has to know
+        when a screen is published, so it can keep one alive headless.
+        """
+        self._webcast = service
+        service.published_changed.connect(self._on_published_changed)
+        for screen_id in ("presentation_a", "presentation_b"):
+            self._reconcile(screen_id)
+
+    def _on_published_changed(self, screen_id: str, _on: bool) -> None:
+        self._reconcile(screen_id)
+
+    def _published(self, screen_id: str) -> bool:
+        return (self._webcast is not None
+                and screen_id in self._webcast.published())
+
+    def _reconcile(self, screen_id: str) -> None:
+        """
+        Make the window match the power switch, and decide where it goes.
+
+        **The power switch always means the same thing: is this screen on.**
+        What changes is where it comes out.
+
+            off                     → no window at all
+            on, not published       → a window on its monitor, as always
+            on, published           → a window that is never mapped to a
+                                      display — laid out and painted for the
+                                      browser across the pit and nowhere else
+
+        **A published screen is blind by design.** The pit machine is driving
+        a panel on the far side of the pit through a Pi; opening a second copy
+        of it on the operator's own monitor is not a preview, it is a window
+        in the way, and on a single-display machine it lands on top of the
+        control panel. So publishing does not merely *allow* a headless
+        window, it *requires* one: on the network is instead of on a monitor,
+        never as well as.
+
+        The earlier shape had publishing keep a window alive on its own, so an
+        unpowered published screen still streamed. That made the power switch
+        mean two different things depending on a setting three rows above it —
+        "off" turned the monitor off but left the Pi showing a live screen.
+        One switch, one meaning: off is off, whichever wire it was coming out
+        of.
+        """
+        powered = screen_id in self._powered
+        published = self._published(screen_id)
+        window = self._managed_windows.get(screen_id)
+
+        if not powered:
+            self._destroy_window(screen_id)
+            return
+
+        if window is None:
+            window = self._build_window(screen_id)
+            if window is None:
+                return
+
+        headless = published
+        # Qt only reads this attribute when a widget is mapped, so a window
+        # changing between headless and placed has to be hidden across the
+        # change or it keeps whichever state it was shown with.
+        if bool(window.testAttribute(_NO_SCREEN)) != headless:
+            window.hide()
+            window.setAttribute(_NO_SCREEN, headless)
+
+        if headless:
+            # **This window is the state engine, not a picture.** Nothing
+            # renders it any more — the browser draws from the state it
+            # publishes — but it still owns the rotation: it advances its own
+            # `slide_index` and writes it back to `config`, which is what
+            # keeps a monitor and a browser showing the same slide. It is laid
+            # out at the design size so every face resolves the geometry it
+            # expects, and never mapped to a display.
+            window.resize(1920, 1080)
+            window.show()
+        else:
+            self._place(screen_id, window)
 
     def shutdown_managed(self) -> None:
         """Close every managed screen — called when the control panel closes."""
@@ -1542,16 +1752,18 @@ class ControlScreen(QMainWindow):
         if screen_id == "leds":
             leds.set_enabled(on)
             return
+        if on:
+            self._powered.add(screen_id)
+        else:
+            self._powered.discard(screen_id)
+        self._reconcile(screen_id)
+        # The panel's address line says whether the screen is running, so it
+        # goes stale the moment the power switch moves without it.
+        panel = self._settings_panels.get(screen_id)
+        if panel is not None and hasattr(panel, "_refresh_web_url"):
+            panel._refresh_web_url()
         if not on:
-            self._destroy_window(screen_id)
             return
-
-        window = self._managed_windows.get(screen_id)
-        if window is None:
-            window = self._build_window(screen_id)
-        if window is None:
-            return
-        self._place(screen_id, window)
         # `show()` activates the window it shows, and keystrokes go to the
         # active window. The audience screens never need a keyboard, so letting
         # one take it means the operator's next keystroke — a CAN-id name, a

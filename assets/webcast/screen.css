@@ -1,0 +1,314 @@
+/*
+  The chassis, in CSS. A faithful port of app/widgets/chassis.py.
+
+  **Every number here is the design measurement from chassis.py**, in design
+  pixels at 1920x1080, multiplied by `--u`. That is deliberate: the Qt side
+  writes `self.s(94)` and this writes `calc(94 * var(--u))`, so the two can be
+  read side by side and a change to one is obviously a change to the other.
+  Inventing a second set of proportions here is how the overhead panel and the
+  browser start looking like two different apps.
+
+  `--u` is one design pixel, as a real length:
+
+      --u: min(100vw / 1920, 100vh / 1080)
+
+  which is the same **contain fit** `design_scale()` computes — `min(w/dw,
+  h/dh)`, never one axis. It is pure CSS, so there is no resize handler and
+  nothing to get out of step, and because it produces a real layout (rather
+  than a transform on a rasterised layer) text is drawn at the panel's own
+  device resolution. That is the whole quality argument against the JPEG path
+  this replaced: a 32" 1080p panel now gets 1080p type instead of a re-encoded
+  photograph of it.
+
+  Colours arrive from the server as the plate's ink roles and are written onto
+  the root as custom properties. They are *not* the app palette bundle — the
+  plate is a lit surface and its inks are brighter. See state.palette().
+*/
+
+@font-face { font-family: "Chakra Petch"; src: url("/fonts/ChakraPetch-Bold.ttf") format("truetype"); font-weight: 700; font-display: block; }
+@font-face { font-family: "Chakra Petch"; src: url("/fonts/ChakraPetch-SemiBold.ttf") format("truetype"); font-weight: 600; font-display: block; }
+@font-face { font-family: "Chakra Petch"; src: url("/fonts/ChakraPetch-Medium.ttf") format("truetype"); font-weight: 500; font-display: block; }
+@font-face { font-family: "Roboto"; src: url("/fonts/Roboto-Regular.ttf") format("truetype"); font-weight: 400; font-display: block; }
+@font-face { font-family: "Roboto"; src: url("/fonts/Roboto-Medium.ttf") format("truetype"); font-weight: 500; font-display: block; }
+@font-face { font-family: "JetBrains Mono"; src: url("/fonts/JetBrainsMono-Medium.ttf") format("truetype"); font-weight: 500; font-display: block; }
+
+:root {
+  --u: min(100vw / 1920, 100vh / 1080);
+  --ground: #121013;
+  --plate: #1A1719;
+  --ink: #FFFFFF;
+  --body: #CFCBC9;
+  --muted: #A6A19E;
+  --faint: #6A6462;
+  --rule: #332F32;
+  --red: #BA141A;
+  --accent: #BA141A;
+  --display: "Chakra Petch", system-ui, sans-serif;
+  --sans: "Roboto", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; background: var(--ground); }
+body.screen { cursor: none; }
+
+/* ── The plate ────────────────────────────────────────────────────────────
+   Inset 40, radius 18. The ambient light-fall is a static gradient here
+   rather than the 34-second drift the Qt widget animates: the drift exists so
+   a painted surface is not perfectly dead, and a browser compositing a
+   gradient forever would be the one thing on this page that costs power for
+   no reason. */
+.ground {
+  position: fixed; inset: 0;
+  background: var(--ground);
+  display: grid; place-items: center;
+}
+.plate {
+  position: relative;
+  width: calc(1920 * var(--u)); height: calc(1080 * var(--u));
+  padding: 0 calc(64 * var(--u));
+  display: flex; flex-direction: column;
+}
+.plate::before {
+  content: ""; position: absolute;
+  inset: calc(40 * var(--u));
+  border-radius: calc(18 * var(--u));
+  background:
+    radial-gradient(120% 90% at 22% 8%, rgba(255,255,255,.06), transparent 60%),
+    var(--plate);
+  box-shadow: 0 calc(18 * var(--u)) calc(48 * var(--u)) rgba(0,0,0,.45);
+  z-index: -1;
+}
+:root[data-theme="light"] .plate::before {
+  background:
+    radial-gradient(120% 90% at 22% 8%, rgba(0,0,0,.04), transparent 60%),
+    var(--plate);
+  box-shadow: 0 calc(10 * var(--u)) calc(30 * var(--u)) rgba(0,0,0,.10);
+}
+
+/* ── Header band: top 56, height 94, rule lands at 150 ─────────────────── */
+.band {
+  margin-top: calc(56 * var(--u)); height: calc(94 * var(--u));
+  display: flex; align-items: center; justify-content: space-between;
+}
+.wordmark {
+  font-family: var(--display); font-weight: 700;
+  font-size: calc(34 * var(--u)); letter-spacing: .01em;
+  color: var(--ink); white-space: nowrap;
+}
+.wordmark span { color: var(--faint); }
+.mono {
+  font-family: var(--mono); font-weight: 500;
+  font-size: calc(22 * var(--u)); letter-spacing: .12em;
+  color: var(--muted); white-space: nowrap;
+}
+.rule { height: calc(2 * var(--u)); background: var(--rule); flex: none; }
+
+/* ── Stage: 216 from the top, ends 168 up from the bottom ─────────────── */
+.stage {
+  flex: 1 1 auto; position: relative;
+  padding-top: calc(66 * var(--u));   /* 216 - 150 */
+  min-height: 0;
+  display: flex; flex-direction: column; justify-content: center;
+}
+
+/* ── Footer ledger ────────────────────────────────────────────────────── */
+.ledger {
+  height: calc(112 * var(--u));
+  display: flex; align-items: center; gap: calc(26 * var(--u));
+  font-size: calc(20 * var(--u));
+}
+.ledger .mono { font-size: calc(20 * var(--u)); }
+.rail {
+  flex: 1 1 auto; height: calc(4 * var(--u));
+  background: var(--rule); border-radius: calc(2 * var(--u));
+  overflow: hidden;
+}
+/* White on dark, carbon on light — never red. The red budget is spent on the
+   Trace or the seal, and a progress bar is not the focal element. */
+.rail i {
+  display: block; height: 100%; width: 0%;
+  background: var(--ink);
+}
+body[data-side="right"] .ledger { flex-direction: row-reverse; }
+
+/* ── Archetype: statement ─────────────────────────────────────────────── */
+.eyebrow {
+  font-family: var(--display); font-weight: 600;
+  font-size: calc(24 * var(--u)); letter-spacing: .16em;
+  text-transform: uppercase; color: var(--muted);
+}
+.trace { width: calc(400 * var(--u)); height: calc(83 * var(--u)); display: block; }
+.trace path, .trace circle {
+  fill: none; stroke: var(--red);
+  stroke-width: 7; stroke-linecap: square; stroke-linejoin: miter;
+}
+.headline {
+  font-family: var(--display); font-weight: 700;
+  /* line-height 1.0 is load bearing: at this size the font's own leading runs
+     the headline off the stage, which is why the Qt side uses QTextLayout. */
+  line-height: 1.0; letter-spacing: -.018em;
+  color: var(--ink);
+  font-size: calc(140 * var(--u));
+}
+.subline {
+  font-family: var(--sans); font-weight: 400;
+  font-size: calc(34 * var(--u)); line-height: 1.5;
+  color: var(--body); max-width: calc(1100 * var(--u));
+}
+.stack { display: flex; flex-direction: column; gap: calc(16 * var(--u)); }
+.stack .subline { margin-top: calc(18 * var(--u)); }
+
+/* ── Archetype: figure ────────────────────────────────────────────────── */
+.figure-row { display: flex; align-items: baseline; gap: calc(18 * var(--u)); }
+.figure {
+  font-family: var(--display); font-weight: 700; line-height: .9;
+  letter-spacing: -.02em; color: var(--ink);
+  font-size: calc(260 * var(--u));
+}
+.figure-unit {
+  font-family: var(--display); font-weight: 600;
+  font-size: calc(64 * var(--u)); color: var(--muted);
+}
+/* The one red thing on a figure slide: the seal. A filled shape, never type
+   on carbon — red on carbon is 2.8:1 and forbidden for letterforms. */
+.seal {
+  display: inline-flex; align-items: center; gap: calc(10 * var(--u));
+  background: var(--red); color: #fff;
+  font-family: var(--mono); font-weight: 500;
+  font-size: calc(18 * var(--u)); letter-spacing: .14em;
+  padding: calc(8 * var(--u)) calc(16 * var(--u));
+  border-radius: calc(999 * var(--u));
+  align-self: flex-start;
+}
+
+/* ── Archetype: roster ────────────────────────────────────────────────── */
+.roster {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: calc(28 * var(--u));
+}
+.roster div {
+  border: calc(1.5 * var(--u)) solid var(--rule);
+  border-radius: calc(14 * var(--u));
+  padding: calc(26 * var(--u));
+  font-family: var(--display); font-weight: 600;
+  font-size: calc(30 * var(--u)); color: var(--body);
+  display: grid; place-items: center; text-align: center;
+  min-height: calc(120 * var(--u));
+}
+
+/* ── Checklist ────────────────────────────────────────────────────────── */
+.check-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: calc(20 * var(--u));
+}
+.check-title {
+  font-family: var(--display); font-weight: 700;
+  font-size: calc(48 * var(--u)); color: var(--ink);
+}
+.check-count { font-family: var(--mono); font-size: calc(28 * var(--u)); color: var(--muted); }
+.check-bar {
+  height: calc(8 * var(--u)); background: var(--rule);
+  border-radius: calc(4 * var(--u)); overflow: hidden;
+  margin-bottom: calc(24 * var(--u));
+}
+.check-bar i { display: block; height: 100%; background: var(--red); }
+.check-rows { display: flex; flex-direction: column; gap: calc(10 * var(--u)); }
+.check-row {
+  display: flex; align-items: center; gap: calc(20 * var(--u));
+  font-family: var(--sans); font-size: calc(34 * var(--u));
+  color: var(--body); height: calc(64 * var(--u));
+  border-bottom: calc(1 * var(--u)) solid var(--rule);
+}
+/* Done is green, never the accent: on Breakaway the team accent *is* red, and
+   a red tick at ten feet reads "fault", not "finished". */
+.check-row .tick {
+  width: calc(34 * var(--u)); height: calc(34 * var(--u)); flex: none;
+  border-radius: calc(8 * var(--u));
+  border: calc(2 * var(--u)) solid var(--faint);
+}
+.check-row.done .tick { background: #2E8B7F; border-color: #2E8B7F; }
+.check-row.done { color: var(--muted); }
+
+/* ── Boards ───────────────────────────────────────────────────────────── */
+.board-status {
+  font-family: var(--display); font-weight: 700;
+  font-size: calc(108 * var(--u)); color: var(--ink); line-height: 1;
+}
+.vitals { display: grid; grid-template-columns: repeat(4, 1fr); gap: calc(22 * var(--u)); margin-top: calc(28 * var(--u)); }
+.vital {
+  border: calc(1.5 * var(--u)) solid var(--rule);
+  border-radius: calc(14 * var(--u));
+  padding: calc(22 * var(--u)); position: relative; overflow: hidden;
+}
+.vital .label { font-family: var(--mono); font-size: calc(18 * var(--u)); letter-spacing: .12em; color: var(--muted); }
+.vital .value { font-family: var(--display); font-weight: 700; font-size: calc(64 * var(--u)); color: var(--ink); }
+.vital .unit { font-size: calc(26 * var(--u)); color: var(--muted); }
+.vital svg { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: calc(52 * var(--u)); }
+.vital svg path { fill: none; stroke: var(--faint); stroke-width: 2; }
+.vital.fault { border-color: var(--red); }
+.vital.fault svg path { stroke: var(--red); }
+.motors { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: calc(24 * var(--u)); color: var(--body); }
+.motors th { text-align: left; color: var(--muted); font-size: calc(18 * var(--u)); letter-spacing: .12em; padding-bottom: calc(10 * var(--u)); }
+.motors td { padding: calc(8 * var(--u)) 0; border-top: calc(1 * var(--u)) solid var(--rule); }
+.motors tr.fault td { color: var(--red); }
+
+/* ── Judges: full-bleed, never boxed ──────────────────────────────────── */
+body[data-face="judges"] .plate { padding: 0; }
+body[data-face="judges"] .stage { padding: 0; }
+.judges-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+
+/* ── Face transition ──────────────────────────────────────────────────── */
+/* 420ms in, matching the painted panel's own timing.
+
+   **No `animation-fill-mode: both`, and that is load bearing.** With `both`
+   the element holds the `from` frame until the animation runs — so anywhere
+   animations do not run, the stage stays at `opacity: 0` forever and the
+   panel shows a perfect empty chassis. That is not hypothetical: it is
+   exactly what a headless render and a reduced-motion kiosk both do. Without
+   `both` the resting state is the visible one and the animation is only an
+   entrance, which is what it was ever meant to be. */
+.stage > .face { animation: face-in 420ms cubic-bezier(.22,.61,.36,1); }
+@keyframes face-in {
+  from { opacity: 0; transform: translateY(calc(26 * var(--u))); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stage > .face { animation: none; }
+}
+
+/* ── Offline ──────────────────────────────────────────────────────────── */
+.offline { position: fixed; inset: 0; display: grid; place-items: center;
+  background: rgba(18,16,19,.72); backdrop-filter: blur(calc(3 * var(--u))); }
+.offline[hidden] { display: none; }
+.offline-card { text-align: center; }
+.offline-title {
+  font-family: var(--display); font-weight: 700;
+  font-size: calc(46 * var(--u)); color: #fff;
+}
+.offline-body {
+  font-family: var(--sans); font-size: calc(26 * var(--u));
+  color: var(--muted); margin-top: calc(12 * var(--u));
+}
+
+/* ── The picker page ──────────────────────────────────────────────────── */
+body.index {
+  cursor: auto; overflow: auto; padding: 6vh 6vw;
+  background: #181416; color: #fff; font-family: var(--display);
+}
+body.index h1 { font-size: 2.4rem; margin-bottom: .2em; }
+body.index h1 b { color: var(--red); }
+body.index p { color: #A6A19E; font-family: var(--sans); line-height: 1.6;
+  max-width: 46rem; margin-bottom: 2.4rem; }
+body.index .screen {
+  display: block; padding: 1.4rem 1.6rem; margin-bottom: 1rem;
+  border: 1px solid #443F3D; border-radius: 14px; color: #fff;
+  text-decoration: none; font-size: 1.4rem; letter-spacing: .04em;
+}
+body.index .screen:hover { border-color: #fff; }
+body.index .screen small { display: block; margin-top: .4rem; font-size: .8rem;
+  color: #6A6462; font-family: var(--mono); letter-spacing: .08em; }
+body.index .off { color: #6A6462; border-style: dashed; }
+body.index footer { margin-top: 3rem; color: #443F3D; font-size: .8rem;
+  font-family: var(--mono); }

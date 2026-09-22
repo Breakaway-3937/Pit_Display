@@ -20,6 +20,8 @@ selfcheck.log
 secrets/*
 !secrets/README.md
 nexus.json
+# Which screens are published to the pit LAN — per machine (app/webcast/)
+webcast.json
 nexus_webhook.log
 # Pit setup files carry keys (app/provision.py) — made for a stick, never committed
 pit-setup.json
@@ -33,3 +35,11 @@ pit-setup.json.imported
 build/
 dist/
 *.spec.bak
+
+# The Windows libVLC runtime, fetched by tools/fetch_vlc.py (~136 MB of
+# upstream VideoLAN binaries). Downloaded at build time, never committed —
+# see the module docstring for why it has to be in the bundle at all.
+vlc/
+
+# Scratch data tree for tools/webcast_check.py — wiped and rebuilt each run
+.webcast_check/

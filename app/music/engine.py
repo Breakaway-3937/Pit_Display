@@ -14,11 +14,65 @@ sounddevice+numpy pipeline where the same buffer feeds the EQ, the meters and
 the LED frames. Keeping playback behind this protocol makes that a contained
 swap rather than a rewrite.
 
-Packaging note: on Windows the VLC runtime must be present — either install
-VLC, or ship libvlc.dll plus the plugins directory alongside the app.
+**The VLC runtime ships inside the bundle on Windows**, and `_point_at_bundled
+_vlc()` below is what makes python-vlc find it. Before that, a fresh pit
+machine had music and the whole equaliser dead until somebody separately
+downloaded VLC and picked the 64-bit build to match — an install step that is
+invisible until an operator presses play, and the wrong-architecture version
+fails exactly like no version at all.
 """
 
+import os
+import sys
 from typing import Protocol, runtime_checkable
+
+
+def _point_at_bundled_vlc() -> str:
+    """
+    Tell python-vlc about the libVLC we shipped, before it goes looking.
+
+    python-vlc finds the native runtime at *import* time, so this has to run
+    first — there is no second chance once `import vlc` has failed. Its Windows
+    search order is `PYTHON_VLC_LIB_PATH`, then the registry key a VLC
+    installer writes, then `PATH`; a machine with no VLC installed has none of
+    the three. Setting the two variables puts the bundled copy at the front of
+    that order without disturbing a machine where somebody *has* installed VLC
+    and set them deliberately.
+
+    `PYTHON_VLC_MODULE_PATH` is the one that is easy to forget and produces the
+    strangest failure: `libvlc.dll` loads, `Instance()` returns, and every
+    single `play()` is silent, because libVLC without its plugin directory has
+    no audio output module to use. It is not an error — there is simply no
+    codec and no sink.
+
+    `add_dll_directory` is needed on top of both: `libvlc.dll` links against
+    `libvlccore.dll` beside it, and since Python 3.8 Windows no longer searches
+    the DLL's own folder for its dependencies.
+
+    Returns a note for the log, or `""` when there was nothing to point at
+    (every non-Windows machine, and any checkout).
+    """
+    if sys.platform != "win32":
+        return ""                      # macOS/Linux resolve libvlc themselves
+    try:
+        from app import paths
+        folder = paths.resource("vlc")
+        lib = folder / "libvlc.dll"
+        plugins = folder / "plugins"
+        if not lib.exists():
+            return ""                  # a checkout, or a build made without it
+        os.environ.setdefault("PYTHON_VLC_LIB_PATH", str(lib))
+        if plugins.is_dir():
+            os.environ.setdefault("PYTHON_VLC_MODULE_PATH", str(plugins))
+        os.add_dll_directory(str(folder))
+        return f"using the bundled libVLC at {folder}"
+    except (OSError, ImportError, AttributeError) as e:
+        # A bundled runtime that will not load must never stop the app booting;
+        # the import below then fails and NullEngine takes over, as it always did.
+        return f"could not use the bundled libVLC ({type(e).__name__}: {e})"
+
+
+VLC_RUNTIME_NOTE = _point_at_bundled_vlc()
 
 # python-vlc raises OSError (not ImportError) when the native runtime is
 # missing, which is the common case on a machine without VLC installed.

@@ -140,11 +140,26 @@ class Chassis(QWidget):
         self._drift.setInterval(2000)
         self._drift.timeout.connect(self.update)
         self._drift.start()
+        # **A surface nobody can see does not need to breathe.** A window
+        # carrying `WA_DontShowOnScreen` is a state engine for the pit-network
+        # pages, never drawn — so every one of these repaints is a full-plate
+        # blit into a backing store no eye will ever reach. Two such windows
+        # cost ~5% of a core doing exactly that. The attribute is set on the
+        # top level after this widget is built, so the check is deferred to
+        # the first tick rather than read here.
+        self._drift.timeout.connect(self._stop_if_unseen)
 
         if screen_id:
             config.screen_setting_changed.connect(self._on_setting_changed)
 
     # ── Theme ─────────────────────────────────────────────────────────────
+
+    def _stop_if_unseen(self) -> None:
+        """Stop the ambient drift on a window that is never mapped to a display."""
+        window = self.window()
+        if window is not None and window.testAttribute(
+                Qt.WidgetAttribute.WA_DontShowOnScreen):
+            self._drift.stop()
 
     def _on_setting_changed(self, screen: str, key: str, value):
         if screen == self.screen_id and key == "theme":
@@ -671,7 +686,15 @@ class SmoothRail(QWidget):
         self._last = -1.0
 
     def showEvent(self, e):
-        self._timer.start()
+        # Not on a window that is never mapped to a display: the rail exists
+        # so a visitor can see time passing, and a state engine for the
+        # pit-network pages has no visitor. Those pages animate their own rail
+        # against the dwell deadline instead, which costs this machine nothing.
+        window = self.window()
+        unseen = window is not None and window.testAttribute(
+            Qt.WidgetAttribute.WA_DontShowOnScreen)
+        if not unseen:
+            self._timer.start()
         super().showEvent(e)
 
     def hideEvent(self, e):

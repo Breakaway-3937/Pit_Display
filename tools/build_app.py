@@ -90,6 +90,14 @@ def preflight(include_model: bool, want_installer: bool = False) -> None:
             print("  ! no windows owlet binary present — a Windows build will "
                   "not be able to import .hoot files", file=sys.stderr)
 
+    # Windows has no libVLC of its own. A build without this one is not
+    # broken — it boots, and everything but music works — which is exactly why
+    # it needs saying out loud here rather than being discovered at an event.
+    if sys.platform == "win32" and not (ROOT / "vlc" / "libvlc.dll").exists():
+        print("  ! vlc/ is empty — music and the equaliser will be dead on "
+              "every machine this ships to. Run `uv run tools/fetch_vlc.py`.",
+              file=sys.stderr)
+
     if want_installer:
         # Checked in preflight, not at the point of use: ISCC runs *after* a
         # ten-minute package, and a typo in the .iss should not cost that.

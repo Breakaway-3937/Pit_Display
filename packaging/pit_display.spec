@@ -47,11 +47,28 @@ datas += tree("assets/logos", optional=True)
 # --self-check parses to prove the models still match the spec.
 datas += tree("assets/nexus")
 
+# The pit-LAN screen pages. Served to a browser across the pit, so a bundle
+# that dropped them answers 500 to a panel and nothing else complains —
+# `--self-check` looks for all three by name for exactly that reason.
+datas += tree("assets/webcast")
+
 # The owlet extractors. Without these a `.hoot` cannot be imported at all, and
 # "no owlet for your platform" is the one failure an operator can neither
 # diagnose nor fix from the error text — so both platforms' binaries ship,
 # always, regardless of which one we are building on.
 datas += tree("tools/owlet")
+
+# The VLC runtime, on Windows only. Windows ships no libVLC and a pit machine
+# has none, so without this the music player and the entire equaliser are dead
+# on a fresh install until somebody downloads VLC *and* picks the 64-bit build
+# to match — a separate install step whose failure only shows up when an
+# operator presses play. macOS and Linux resolve libvlc through the system, so
+# there is nothing to carry there.
+# `tools/fetch_vlc.py` populates `vlc/`; it is optional so that a build on a
+# machine that has not run it still succeeds and simply has no audio, which is
+# the behaviour that existed before.
+if sys.platform == "win32":
+    datas += tree("vlc", optional=True)
 
 # Seeds: copied into the writable data directory on first run (app/paths.py).
 datas += [(str(ROOT / "data" / "pit_display.db"), "data")]

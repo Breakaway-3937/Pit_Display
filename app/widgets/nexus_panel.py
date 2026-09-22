@@ -600,12 +600,18 @@ class NexusPanel(QWidget):
             self._port_edit.setText(str(prefs["webhook_port"]))
         wh = nexus.webhook
         if wh.listening:
+            bind = str(prefs["webhook_bind"])
+            where = ("127.0.0.1 — reachable only through a tunnel running on "
+                     "this machine" if bind == "127.0.0.1"
+                     else f"{bind} — open to the whole network")
             self._webhook_lbl.setText(
-                f"Listening on port {wh.port} — {wh.count} push"
+                f"Listening on {where}, port {wh.port}. {wh.count} push"
                 f"{'' if wh.count == 1 else 'es'} accepted this session. "
-                "Register http://<this machine's public address>:"
-                f"{wh.port}/ at frc.nexus/api, for the event and for team "
-                f"{nexus.our_team}. Event wifi will need a tunnel in front of it.")
+                "Point the tunnel at "
+                f"http://localhost:{wh.port}, then register its public "
+                f"https:// address at frc.nexus/api — once for the event and "
+                f"once for team {nexus.our_team}. See NEXUS.md, "
+                "\u201cGiving Nexus a route in\u201d.")
         else:
             self._webhook_lbl.setText(
                 "Off. Polling still brings every update; a push just arrives "

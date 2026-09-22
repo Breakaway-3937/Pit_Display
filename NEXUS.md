@@ -425,12 +425,53 @@ before the next poll would.
 outcome, and the body when it was not usable. When Nexus says it got an
 error, or the panel's count does not move, that file says what arrived.
 
-**The pit laptop is behind event wifi**, so Nexus cannot reach that port
-unless something is in front of it — a tunnel (ngrok, cloudflared, a Tailscale
-funnel) or a port-forward on a network the team controls. That is why the
-webhook is off by default and polling is the primary path. Register
-`http://<public address>:8766/` at frc.nexus/api, once for the event feed and
-once for the team. The panel counts accepted pushes so you can see it working.
+**It listens on `127.0.0.1`, not on the whole machine.** The tunnel that gives
+Nexus a route in is a process on this same laptop and connects to loopback, so
+a wildcard bind buys no reachability at all — and costs two things. On Windows
+the first bind to `0.0.0.0` raises a Defender Firewall prompt whose wrong
+answer blocks the port with no error anywhere, and a pit laptop on event wifi
+with an open port is reachable by every other laptop in the venue.
+`webhook_bind` in `nexus.json` is the override, and `"0.0.0.0"` is only right
+for a real port-forward on a network the team controls.
+
+### Giving Nexus a route in
+
+**The pit laptop is behind event wifi**, so Nexus cannot reach that port unless
+something is in front of it. A **Cloudflare named tunnel** is the one shape
+worth setting up, because it is the only one that gives a *stable* URL: the
+app dials out, so there is no port-forward, no inbound firewall rule, and
+nothing to re-register each morning. It needs a domain on Cloudflare (the free
+plan is fine) and costs nothing.
+
+Once, in the Cloudflare dashboard:
+
+1. **Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared.**
+2. Copy the `eyJ...` **token** it shows you. That is the only secret the pit
+   machine needs; it goes in a password manager, not in git.
+3. **Public Hostname** → subdomain `pit`, your domain, service
+   **HTTP** → `localhost:8766`.
+
+Once, on the pit machine, in an administrator PowerShell:
+
+```powershell
+winget install --id Cloudflare.cloudflared
+cloudflared service install <THE-eyJ-TOKEN>
+```
+
+That runs it as a Windows service: it starts at boot, reconnects itself, and
+survives a laptop that moved between networks — which is the normal state of a
+machine that gets carried into a venue.
+
+Then register `https://pit.<your domain>/` at frc.nexus/api, **once for the
+event feed and once for the team**. The URL never changes again.
+
+**A quick tunnel (`cloudflared tunnel --url …`, or ngrok's free tier) is not
+worth it here.** The URL is random and changes on every restart, so somebody
+re-registers it at frc.nexus every morning of an event — more steps than the
+push saves, and one more thing to forget at 7 a.m.
+
+**None of this is required.** Polling brings the same data; push brings it
+seconds sooner. The panel counts accepted pushes so you can see it working.
 
 ---
 

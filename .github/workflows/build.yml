@@ -98,6 +98,14 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           PIT_LEDS_FAKE: "1"
 
+      # Windows ships no libVLC, so without this the music player and the whole
+      # equaliser are dead on every fresh pit machine until somebody installs
+      # VLC by hand — an extra step that fails silently, because the app boots
+      # perfectly without it and only goes quiet when an operator presses play.
+      # The download is checked against VideoLAN's published SHA-256.
+      - name: Fetch the VLC runtime
+        run: uv run tools/fetch_vlc.py
+
       - name: Build
         run: uv run tools/build_app.py --no-model --zip --installer
 

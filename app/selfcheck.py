@@ -187,18 +187,45 @@ def _check_owlet() -> Result:
 
 
 def _check_audio() -> Result:
-    try:
-        import vlc
-        _ = vlc.Instance
-    except (ImportError, OSError) as e:
-        # python-vlc raises OSError, not ImportError, when the native runtime
-        # is missing — catching only ImportError is the classic mistake here.
-        return Result("audio", True,
-                      f"libVLC not available ({type(e).__name__}) — music and "
-                      "the equaliser are disabled; everything else works.\n"
-                      "Install VLC on this machine to enable them.",
-                      critical=False)
-    return Result("audio", True, "libVLC present")
+    """
+    Is there a libVLC, and — the part that catches a bad Windows build — did
+    its *plugins* come along?
+
+    Importing `app.music.engine` rather than `vlc` directly is deliberate: that
+    module is what points python-vlc at the bundled runtime, and doing it in
+    the other order would test a code path the app never takes. A runtime with
+    no plugin directory loads fine and then plays nothing at all, so the plugin
+    count is reported rather than assumed.
+    """
+    from app.music import engine
+    note = engine.VLC_RUNTIME_NOTE
+    if not engine.HAVE_VLC:
+        detail = (f"libVLC not available ({engine.VLC_ERROR or 'unknown'}) — "
+                  "music and the equaliser are disabled; everything else works.")
+        if sys.platform == "win32":
+            detail += ("\nThis build should have carried one: check that CI ran "
+                       "tools/fetch_vlc.py.")
+        else:
+            detail += "\nInstall VLC on this machine to enable them."
+        if note:
+            detail += f"\n{note}"
+        return Result("audio", True, detail, critical=False)
+
+    lines = ["libVLC present"]
+    if note:
+        lines.append(note)
+    plugins = os.environ.get("PYTHON_VLC_MODULE_PATH")
+    if plugins:
+        from pathlib import Path
+        count = len(list(Path(plugins).rglob("*.dll")))
+        lines.append(f"plugins     {count} in {plugins}")
+        if count == 0:
+            # Loads, returns an Instance, and is silent on every play().
+            return Result("audio", True,
+                          "\n".join(lines) + "\nNo plugins — playback would be "
+                          "silent with no error. The build is incomplete.",
+                          critical=False)
+    return Result("audio", True, "\n".join(lines))
 
 
 def _check_webengine() -> Result:
@@ -350,6 +377,50 @@ def _check_updates() -> Result:
     return Result("updates", True, "\n".join(lines))
 
 
+def _check_webcast() -> Result:
+    """
+    Are the overhead screens published to the pit LAN, and on what address?
+
+    The whole feature fails silently when it fails: a Windows Firewall prompt
+    answered wrong leaves the port bound but unreachable, and the only symptom
+    is two dark panels across the pit with nothing logged anywhere. Printing
+    the exact URL is the point — an operator can then try it from the Pi's own
+    browser and find out in five seconds which half is broken.
+    """
+    from app.webcast import settings as wset
+    from app.webcast.server import lan_address
+    prefs = wset.load()
+    if not prefs["enabled"]:
+        return Result("webcast", True,
+                      "off — the overhead screens are on their own monitors.\n"
+                      "Control -> a presentation screen -> Show on the pit "
+                      "network publishes one.", critical=False)
+    if not prefs["screens"]:
+        return Result("webcast", True,
+                      "on, but no screens are selected — nothing is published.",
+                      critical=False)
+    host = lan_address()
+    lines = [f"page        {prefs['bind']}:{prefs['port']}",
+             f"live data   {prefs['bind']}:{wset.socket_port(prefs['port'])} "
+             f"(websocket)"]
+    for screen_id in prefs["screens"]:
+        lines.append(f"screen      http://{host}:{prefs['port']}/screen/{screen_id}")
+    # The page is a real file on disk, and a bundle that dropped it would
+    # serve a 500 to a panel across the pit with nothing else complaining.
+    from app import paths
+    from app.webcast.server import WEB_ROOT
+    missing = [n for n in ("screen.html", "screen.css", "screen.js")
+               if not paths.resource(*WEB_ROOT, n).exists()]
+    if missing:
+        return Result("webcast", False,
+                      "\n".join(lines)
+                      + f"\nmissing from the bundle: {', '.join(missing)}")
+    warnings = []
+    if prefs["bind"] == "127.0.0.1":
+        warnings.append("bound to loopback — no other machine can reach it")
+    return Result("webcast", True, "\n".join(lines), warnings=warnings)
+
+
 def _check_nexus() -> Result:
     """
     Is the event feed set up, and do the models still fit the API?
@@ -369,7 +440,9 @@ def _check_nexus() -> Result:
              f"every {prefs['poll_interval_s']}s / "
              f"{prefs['slow_poll_interval_s']}s",
              f"webhook     {'on' if prefs['webhook_enabled'] else 'off'}, "
-             f"port {prefs['webhook_port']}",
+             f"{prefs['webhook_bind']}:{prefs['webhook_port']}"
+             + ("  (tunnel on this machine)"
+                if prefs['webhook_bind'] == '127.0.0.1' else "  (open to the network)"),
              f"api key     {credentials.source(api.API_KEY_SECRET)}",
              f"push token  {credentials.source(api.WEBHOOK_TOKEN_SECRET)}",
              f"secrets     {credentials.folder()}"]
@@ -480,6 +553,7 @@ def run() -> int:
         results.append(_check_audio())
         results.append(_check_updates())
         results.append(_check_nexus())
+        results.append(_check_webcast())
         results.append(_check_windows(app))
 
     return _report(results)

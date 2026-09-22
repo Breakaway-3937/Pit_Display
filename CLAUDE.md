@@ -107,6 +107,7 @@ Twelve module-level singletons share the `LazyProxy` helper in `app/lazy_proxy.p
 | `from app.admin import admin` | `init_admin()` | Admin lock gating the LED/EQ controls |
 | `from app.update import update` | `init_update()` | Release feed, staged installs, channel and rollback |
 | `from app.nexus import nexus` | `init_nexus()` | The frc.nexus event feed — live match queuing, pits, inspection, alliances (see [`NEXUS.md`](NEXUS.md)) |
+| `from app.webcast import webcast` | `init_webcast()` | Publishes the two overhead screens to the pit LAN as web pages |
 | `from app.nexus.alerts import alerts` | `init_alerts()` | Queue and inspection alerts: drives the strips, hands the overhead screens their banner |
 
 `init_config()` must be called first; the others depend on `config` being ready.
@@ -243,6 +244,85 @@ Also: **`helpers.label()` does not word-wrap.** A long unwrapped label forces it
 whole panel wider than the window and pushes table columns off-screen. Call
 `setWordWrap(True)` on any prose.
 
+### The overhead screens on the pit LAN (`app/webcast/`)
+
+**One Cat6 instead of one HDMI.** The two overhead panels hang across the pit
+and the cable to them is the expensive part of hanging them. Published here, a
+Raspberry Pi at each panel opens a page on the pit machine and shows that
+screen full-screen.
+
+    ControlScreen ──builds headless──▶ PresentationScreenA/B   (state engine)
+                                            │
+    config / rotation / checklist  ──signals─┤
+                                            ▼
+    Pi on the switch ◀── ws:// JSON ── ScreenSocketServer   (:3939)
+                     ◀── http ─────── WebcastServer         (:3938)
+
+| File | Role |
+|---|---|
+| `settings.py` | `webcast.json` — which screens, the port, the bind |
+| `state.py` | What a screen *is*, as JSON. No widgets, no pixels |
+| `sockets.py` | `QWebSocketServer` on the Qt event loop — no threads |
+| `server.py` | The page, its CSS and JS, the fonts, the judges artwork |
+| `service.py` | `_WebcastService` — the signal subscriptions and lifetime |
+| `assets/webcast/` | The page itself, edited like the web asset it is |
+| `tools/webcast_check.py` | 40 automated checks against a live server. Exit 0/1 |
+
+**The browser draws; the pit machine sends state.** The first build got this
+exactly wrong and the numbers say how badly. It rasterised each screen to JPEG
+several times a second — ~15 ms of full-chassis repaint plus encode per frame —
+so **one viewer cost 22% of a core and two cost ~40%**, and the picture arrived
+soft because it was a re-encoded photograph of type rather than type. It was
+redoing the most expensive thing in the app to report that nothing had changed,
+because a slide holds for 45 seconds. Measured now: **0.1%** for two published
+screens with a viewer attached, and the type is drawn at the panel's own
+resolution. Seven things are load bearing:
+
+- **The protocol is Cheesy Arena's.** `{"type": ..., "data": ...}`, the full
+  state on connect and deltas after, and the screen named in the socket path.
+  Every `screen` message is a *complete* state, so a message missed across a
+  reconnect repairs itself on the next one — nothing to sequence, nothing to
+  re-request.
+- **The dwell rail is never sent.** The payload carries the dwell's *deadline*
+  and `screen.js` animates against it with `requestAnimationFrame`. That is
+  the single biggest saving: a rail at 60 fps costs this machine nothing, and
+  sending a position instead would put the whole mistake straight back.
+  `server_now_ms` rides along so a Pi with no RTC — the normal case at an
+  event — still counts down correctly.
+- **`QtWebSockets` ships in the standard PyQt6 wheel**, so the socket costs no
+  dependency and runs on the Qt event loop. No threads, no GIL contention, and
+  it can read `config` and `rotation` directly. The page is on 3938 and the
+  socket on 3939 (`settings.socket_port()`, always port + 1); **a second port
+  costs nothing operationally** because Windows Firewall prompts per
+  *application*.
+- **The headless window stays, as the state engine.** It owns the rotation —
+  it advances its own `slide_index` and writes it back to `config` — so a
+  monitor and a browser cannot disagree. Nothing renders it.
+- **A window that is never mapped to a display stops its own repaint timers.**
+  `Chassis._stop_if_unseen()` kills the 2 s ambient drift and `SmoothRail`
+  never starts its 50 ms tick when the top level carries
+  `WA_DontShowOnScreen`. Two state-engine windows breathing into a backing
+  store no eye can reach cost ~5% of a core; this is what took the total to
+  0.1%.
+- **`screen.css` is a port of `chassis.py`, number for number.** `--u` is one
+  design pixel — `min(100vw/1920, 100vh/1080)`, the same contain fit
+  `design_scale()` computes — so the Qt side's `self.s(94)` reads as
+  `calc(94 * var(--u))` here. Inventing a second set of proportions is how the
+  two overhead panels start looking like two different apps.
+- **No `animation-fill-mode: both` on the face transition.** With `both` the
+  stage holds its `from` frame until the animation runs, so anywhere
+  animations do not run — a reduced-motion kiosk — the panel shows a perfect,
+  empty chassis forever. The resting state must be the visible one.
+
+**The palette sent is the plate's ink roles, not `brand.DARK`/`LIGHT`.** The
+plate is a lit surface and its body ink is brighter than a control's;
+`state.palette()` mirrors what `chassis.py` picks. Sending the control bundle
+would make every web surface a step too dark in a way nobody could pin down.
+
+**Judges artwork is served as files, not pixels** — the page loads the image,
+which is the one place the old path was actively worse: a photograph of a
+photograph, re-encoded every frame.
+
 ### The Plate — the chassis (`app/widgets/chassis.py`)
 
 **Every full-screen surface is built on one inset panel.** The slide rotation,
@@ -308,7 +388,10 @@ Two settings per screen, in `config`:
 
 Powering a screen **off destroys the window**, so `place()` is called on a
 freshly built one every time it comes back — there is no hidden window to
-restore.
+restore. **The webcast changed where a window goes, not whether it exists**:
+`ControlScreen._reconcile()` still destroys on power-off, but a *published*
+screen is built with `WA_DontShowOnScreen` and `place()` is never called on
+it.
 
 **`default_fullscreen()` is `len(screens) > 1`** — and that is load bearing. On
 a single-display machine a full-screen audience window covers the control panel,
@@ -877,9 +960,35 @@ it can never be equalised. `sources.py` has the full reasoning and a stub.
 
 **libVLC is chosen for the EQ.** Qt Multimedia has no DSP hooks at all, so an
 equaliser is impossible through it. `python-vlc` raises **`OSError`, not
-`ImportError`**, when the native runtime is missing — catch both. On Windows the
-VLC runtime must be installed or `libvlc.dll` + plugins bundled; without it the
+`ImportError`**, when the native runtime is missing — catch both; without it the
 app still boots and the panel explains why.
+
+**Windows ships no libVLC, so the bundle carries one.** `tools/fetch_vlc.py`
+pulls the official VideoLAN zip (SHA-256 checked against their own published
+digest), keeps `libvlc.dll`, `libvlccore.dll`, `plugins/` and the licence
+files in `vlc/`, and `pit_display.spec` includes that tree on Windows only —
+optional, so a build without it still succeeds and simply has no audio. CI
+runs the fetch before every build. macOS and Linux resolve libvlc through the
+system and get nothing.
+
+Three things about it are load bearing:
+
+- **`engine._point_at_bundled_vlc()` runs before `import vlc`**, because
+  python-vlc resolves the native runtime *at import time* and there is no
+  second chance once that import has failed. It sets `PYTHON_VLC_LIB_PATH`
+  and `PYTHON_VLC_MODULE_PATH` with `setdefault`, so a machine where somebody
+  set them deliberately is left alone.
+- **`PYTHON_VLC_MODULE_PATH` is the one that fails silently.** libVLC with no
+  plugin directory loads, returns an `Instance`, and plays *nothing* — no
+  codec, no audio sink, and no error. `--self-check` counts the plugins rather
+  than assuming them, and `fetch_vlc.py` refuses to finish with zero.
+- **`os.add_dll_directory` is needed on top of both.** `libvlc.dll` links
+  against `libvlccore.dll` beside it, and since 3.8 Windows no longer searches
+  a DLL's own folder for its dependencies.
+
+Licensing: these are unmodified upstream binaries, libvlc/libvlccore LGPLv2.1+
+with several plugins GPLv2+. The `COPYING*` files and a `SOURCE.txt` naming the
+version and origin ship beside them. Do not strip those to save space.
 
 Swapping to a sounddevice+numpy pipeline later (for beat-to-LED sync) means
 implementing `MusicEngine` — nothing above it changes.
@@ -1185,6 +1294,22 @@ Five things are load bearing:
   service's call, not the server's. It is off by default: the pit laptop is
   behind event wifi and needs a tunnel in front of it, and polling already
   brings everything — a push is only sooner.
+- **The webhook binds loopback, not `0.0.0.0`.** The tunnel is a process on
+  the same laptop and connects to 127.0.0.1, so a wildcard bind buys no
+  reachability and costs two things: on Windows the first bind raises a
+  Defender Firewall prompt whose wrong answer blocks the port with no error
+  anywhere, and a pit laptop on event wifi with an open port is reachable by
+  every other laptop in the venue. `webhook_bind` in `nexus.json` is the
+  override and is only right for a real port-forward; `settings.BINDS` is the
+  whitelist, because a typo in a bind address surfaces as an `OSError` at
+  `start()` that no operator can read.
+- **The tunnel worth setting up is a Cloudflare *named* tunnel**, not a quick
+  one. A quick tunnel's URL is random per restart, so somebody re-registers it
+  at frc.nexus every morning of an event — more steps than the push saves.
+  A named tunnel against a domain the team owns is a stable URL registered
+  once, and `cloudflared service install <token>` makes it a Windows service
+  that reconnects itself. See [`NEXUS.md`](NEXUS.md), "Giving Nexus a route
+  in".
 
 `PIT_NEXUS_FAKE=1` serves the spec's example payloads (`assets/nexus/`) and
 steps through a whole event, one snapshot per poll; the example teams are

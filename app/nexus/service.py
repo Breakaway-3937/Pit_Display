@@ -559,11 +559,17 @@ class _NexusService(QObject):
 
     def _start_webhook(self) -> None:
         port = int(settings.get("webhook_port"))
-        problem = self._webhook.start(port)
+        host = str(settings.get("webhook_bind"))
+        problem = self._webhook.start(port, host)
         if problem:
             self.log.emit(problem)
+        elif host == "127.0.0.1":
+            self.log.emit(f"Webhook listening on 127.0.0.1:{port} — reachable "
+                          "through the tunnel on this machine, and from "
+                          "nowhere else.")
         else:
-            self.log.emit(f"Webhook listening on port {port}.")
+            self.log.emit(f"Webhook listening on {host}:{port} — open to the "
+                          "whole network.")
 
     def _live_message(self, source: str) -> str:
         s = self._status

@@ -27,6 +27,7 @@ from app.rotation import init_rotation
 from app.theme import dark_qss
 from app.touch import install as install_touch
 from app.update import init_update
+from app.webcast import init_webcast
 from app.windows.control_screen import ControlScreen
 from app.windows.presentation_a import PresentationScreenA
 from app.windows.presentation_b import PresentationScreenB
@@ -185,12 +186,25 @@ def main():
     })
     install_touch(app, control)
 
+    # The overhead screens, optionally published to the pit LAN so a Pi on the
+    # Ethernet switch can show one in a browser instead of a monitor on the end
+    # of an HDMI run. It asks the control screen for windows rather than
+    # building any — window lifetime has one owner — and the control screen
+    # keeps a published screen's window alive (headless, never placed on a
+    # monitor) even while its power toggle is off, which is what lets the pit
+    # machine drive these with no video output at all.
+    webcast_service = init_webcast()
+    webcast_service.set_window_provider(control.managed_window)
+    control.set_webcast(webcast_service)
+    webcast_service.start()
+
     # Leave the hardware in a known state on the way out: strips blanked (the
     # firmware watchdog takes over from there) and the audio device released.
     app.aboutToQuit.connect(control.shutdown_managed)
     app.aboutToQuit.connect(led_service.shutdown)
     app.aboutToQuit.connect(music_service.shutdown)
     app.aboutToQuit.connect(nexus_service.shutdown)
+    app.aboutToQuit.connect(webcast_service.stop)
     # Closing the control panel is quitting the app: it is the only window an
     # operator can reach, and the audience screens have no chrome to close.
     app.setQuitOnLastWindowClosed(True)

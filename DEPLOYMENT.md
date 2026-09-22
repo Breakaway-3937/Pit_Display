@@ -3,8 +3,9 @@
 How the app gets from this repo onto a machine at an event, and how it stays
 current afterwards.
 
-**This is the reference — the why.** If you just want the steps, in order, use
-[`RELEASING.md`](RELEASING.md).
+**This is the reference — the why.** If you just want to put the app on a pit
+machine, that is one page: [`INSTALL.md`](INSTALL.md). If you want the steps to
+*ship* a release, in order, use [`RELEASING.md`](RELEASING.md).
 
 The short version, in the order you will actually want them:
 
@@ -27,6 +28,7 @@ Everything the app needs is in the package except the music.
 | Fonts | Chakra Petch, Roboto, JetBrains Mono — the app never relies on the machine having them |
 | CAD | the Three.js viewer, `subsystems.json`, and the season's `robot.glb` |
 | Robot logs | the `owlet` extractors for **both** Windows and macOS |
+| Audio | on Windows, the libVLC runtime and its plugins (`tools/fetch_vlc.py`) — Windows has none of its own, and without it music and the whole equaliser are dead on a fresh machine |
 | Database | `data/pit_display.db` as a **seed** — settings, presets, the CAN-id name map, imported-log metadata |
 
 **Not in the package: the music library.** The library is an index of file paths
@@ -40,8 +42,9 @@ Also not included: `data/pit_display_samples.db`. That is the bulk telemetry —
 
 ### Size
 
-About **1.4 GB installed**, ~750 MB as the installer or the zip. Roughly a quarter of that is the
-CAD model and most of the rest is Chromium. `--no-model` drops ~340 MB; the app
+About **1.5 GB installed**, ~800 MB as the installer or the zip. Roughly a
+quarter of that is the CAD model, most of the rest is Chromium, and ~136 MB is
+the Windows libVLC runtime. `--no-model` drops ~340 MB; the app
 then runs with no robot on screen until somebody uploads one from
 Control → Project → CAD Viewer Config.
 
@@ -107,6 +110,9 @@ That is the whole install — one file, the same as any application off the
 internet. It asks two things (start with Windows? a token for updates?), and
 puts the app in the versioned layout below with a Start Menu entry and an
 Add/Remove Programs entry.
+
+**[`INSTALL.md`](INSTALL.md) is that, on one page**, including the three things
+only the crew can set up afterwards. What follows here is the why.
 
 **No administrator, at install or at update time.** Everything is per-user,
 under `%LOCALAPPDATA%`.
@@ -292,8 +298,13 @@ would leave an operator with nothing fail the run.
 ### Things it will tell you about
 
 **`[WARN] audio — libVLC not available`**
-Windows has no VLC runtime by default. Install [VLC] (64-bit, matching the
-app) and music plus the equaliser come back. Everything else already works.
+On Windows this should not happen any more — the runtime ships inside the
+bundle. If it does, the build was made without running `tools/fetch_vlc.py`,
+which CI does for every release; installing [VLC] (64-bit, matching the app) on
+the machine is the workaround. On macOS and Linux libvlc comes from the system.
+A related line, `No plugins — playback would be silent with no error`, means
+`libvlc.dll` shipped and its plugin directory did not: it loads, it returns an
+Instance, and every `play()` is quiet. Everything else already works either way.
 
 **`[WARN] nexus — no Nexus API key in the secret folder`**
 The event feed is off; everything else works. Paste the key from
