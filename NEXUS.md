@@ -24,7 +24,7 @@ should look to draw it. `app/nexus/api.py` is the same reference as code.
 | Relay | **Live** at `https://nexus.bh-stack.com` (deployed 2026-09-23) |
 | Webhook | **Resolved.** Registered at frc.nexus/api for *live event status, all events* → `https://nexus.bh-stack.com/nexus/webhook`. Once for the season; no per-event re-registration |
 | Pit machine | Needs only `secrets/nexus_relay_token`; setup in [`OPERATOR_GUIDE.md`](OPERATOR_GUIDE.md#the-event-feed-nexus) |
-| Not on an audience screen yet | the pit map, the alliance board, announcements, parts requests ([table at the end](#what-the-pit-can-say--and-where-each-fact-comes-from)) |
+| Planned for an audience screen | the alliance board, announcements, parts requests. **The pit map is not wanted**; it stays fetched for the Event Feed panel only |
 
 **Credentials** live in `secrets/` in the data directory (`app/credentials.py`),
 one file each, overridable as `PIT_SECRET_<NAME>`, and never in `nexus.json`,
@@ -480,6 +480,5 @@ list to build screens from.
 | Does anyone need a part we have? | `nexus.status.parts_requests` | `EventStatus.partsRequests` |
 | How stale is all this? | `nexus.age_s()` | `dataAsOfTime` |
 
-The Next Match board and the alerts cover the first six rows. The pit map,
-the alliance board, announcements and parts requests are not on an audience
-screen yet.
+The Next Match board and the alerts cover the first six rows. The alliance
+board, announcements and parts requests are planned; the pit map is not.

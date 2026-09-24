@@ -125,6 +125,27 @@ begin
   TokenPage.Add('GitHub token (optional):', False);
 end;
 
+// Smart App Control admits only binaries signed by a CA in Microsoft's
+// Trusted Root Program; this app is unsigned, so SAC must be Off on a pit
+// machine. When it is On this installer never runs at all. Evaluation is the
+// trap: everything works today and Windows may switch to blocking later,
+// at an event. 0 = Off, 1 = On, 2 = Evaluation. Read-only on purpose: writing
+// the value directly can leave Windows blocking nearly everything.
+function InitializeSetup(): Boolean;
+var
+  State: Cardinal;
+begin
+  Result := True;
+  if RegQueryDWordValue(HKLM, 'SYSTEM\CurrentControlSet\Control\CI\Policy',
+                        'VerifiedAndReputablePolicyState', State) and (State = 2) then
+    SuppressibleMsgBox('Smart App Control is in evaluation mode on this PC.' + #13#10#13#10 +
+      'The Pit Display is not code-signed, so Windows may later switch Smart App Control' + #13#10 +
+      'on by itself and block the app and its updates - possibly at an event.' + #13#10#13#10 +
+      'On a pit machine, turn it off before continuing:' + #13#10 +
+      'Windows Security > App & browser control > Smart App Control > Off',
+      mbInformation, MB_OK, IDOK);
+end;
+
 function DataDir(): String;
 begin
   Result := ExpandConstant('{localappdata}\{#DataDirName}');

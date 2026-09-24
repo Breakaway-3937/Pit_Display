@@ -377,6 +377,29 @@ def _check_updates() -> Result:
     return Result("updates", True, "\n".join(lines))
 
 
+def _check_crash_log() -> Result:
+    """
+    Has this machine recorded a crash? The last one, verbatim.
+
+    `crash.log` (app/crash_log.py) is the only record of an app that died
+    before anyone could see why. Printing its tail here puts it in
+    `selfcheck.log`, which is the file an operator gets asked for anyway.
+    """
+    from app import crash_log
+    text = crash_log.tail(200)
+    blocks = text.split("UNHANDLED")
+    faults = text.count("Fatal Python error")
+    if len(blocks) == 1 and not faults:
+        return Result("crashlog", True, f"no crashes recorded ({crash_log.path()})")
+    last = ("UNHANDLED" + blocks[-1]) if len(blocks) > 1 else text
+    lines = last.strip().splitlines()[-25:]
+    return Result("crashlog", True,
+                  f"log         {crash_log.path()}\n" + "\n".join(lines),
+                  critical=False,
+                  warnings=["this machine has recorded a crash — the last one "
+                            "is above"])
+
+
 def _check_qt_warnings() -> Result:
     """
     Anything Qt complained about, and where the record of it lives.
@@ -439,6 +462,50 @@ def _check_webcast() -> Result:
     if prefs["bind"] == "127.0.0.1":
         warnings.append("bound to loopback — no other machine can reach it")
     return Result("webcast", True, "\n".join(lines), warnings=warnings)
+
+
+def _check_app_control() -> Result:
+    """
+    Will Windows' Smart App Control let this build keep running?
+
+    SAC admits only binaries Microsoft's cloud already trusts or that are
+    signed by a CA in the Trusted Root Program, and it judges every DLL, not
+    just the .exe. Nothing free can sign this bundle that way, and a
+    self-signed certificate doesn't count however it's installed. So on a pit
+    machine SAC has to be **Off**.
+
+    The one state worth a line here is **Evaluation**. Windows lets the app
+    run today and may switch itself to enforcement later, at which point the
+    app — and every update — is blocked with no "run anyway". Better to learn
+    that at the shop than at an event. Read-only: Microsoft warns that
+    writing this value directly can leave Windows blocking almost everything,
+    so the fix is the Windows Security switch, not this code.
+    """
+    if sys.platform != "win32":
+        return Result("appcontrol", True, "not Windows — nothing to check")
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SYSTEM\CurrentControlSet\Control\CI\Policy") as key:
+            state, _ = winreg.QueryValueEx(key, "VerifiedAndReputablePolicyState")
+    except OSError:
+        return Result("appcontrol", True,
+                      "Smart App Control not present on this Windows")
+    where = ("Windows Security -> App & browser control -> Smart App Control "
+             "-> Off")
+    if state == 0:
+        return Result("appcontrol", True, "Smart App Control is off")
+    if state == 2:
+        return Result("appcontrol", True,
+                      "Smart App Control is in EVALUATION mode",
+                      critical=False,
+                      warnings=["Windows may switch it to enforcement on its "
+                                "own and block this unsigned app and its "
+                                f"updates. Turn it off: {where}"])
+    return Result("appcontrol", True, f"Smart App Control is ON (state {state})",
+                  critical=False,
+                  warnings=["it will block unsigned updates of this app. "
+                            f"Turn it off: {where}"])
 
 
 def _check_network() -> Result:
@@ -622,9 +689,11 @@ def run() -> int:
         results.append(_check_audio())
         results.append(_check_updates())
         results.append(_check_network())
+        results.append(_check_app_control())
         results.append(_check_nexus())
         results.append(_check_webcast())
         results.append(_check_qt_warnings())
+        results.append(_check_crash_log())
         results.append(_check_windows(app))
 
     return _report(results)

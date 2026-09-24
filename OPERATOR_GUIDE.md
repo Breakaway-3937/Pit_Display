@@ -258,6 +258,7 @@ It writes `selfcheck.log` in the data directory, which is the file to send.
 Do this at the shop, the week before. For Ozark Mountain Brawl, set the event
 key the night before.
 
+- [ ] **Smart App Control off** (`--self-check` has no `appcontrol` warning)
 - [ ] App on the latest release; **automatic update checks turned off** for the event
 - [ ] `--self-check` passes on the pit machine
 - [ ] Admin password changed from `Password`

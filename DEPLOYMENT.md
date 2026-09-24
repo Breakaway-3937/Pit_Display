@@ -45,6 +45,13 @@ health check), about a minute of Linux runner time; see
 
 ## B · Install on a new pit machine
 
+0. **Turn Smart App Control off:** Windows Security → App & browser control →
+   Smart App Control → **Off**. The app isn't code-signed, and SAC blocks
+   unsigned apps outright, with no "Run anyway". If it's in **Evaluation**,
+   turn it off anyway; Windows can switch it to blocking on its own later. The
+   installer warns if it finds Evaluation, and `--self-check` reports it
+   (`appcontrol`). See [Code signing](#code-signing) for why there's no free
+   way around this.
 1. On the pit machine, sign in to GitHub (the repo is private) → **Releases** →
    download **`Breakaway-Pit-Display-<version>-Setup.exe`**. Not the zip.
 2. Run it. SmartScreen warns once because we aren't code-signed: **More info →
@@ -185,6 +192,7 @@ nothing fails.
 | `owlet` | the extractor for this platform | `.hoot` import dead; `.wpilog`/`.txt` still work (`tools/owlet/README.md`) |
 | `audio` | libVLC **and** its plugins | "No plugins" means silent playback; the build skipped `fetch_vlc.py` |
 | `updates` | version, channel, layout, token | names which of four reasons self-update is off |
+| `appcontrol` | Windows Smart App Control state | `WARN` on Evaluation or On: turn it off before an event, or it may block the app |
 | `network` | Qt TLS backend (schannel on Windows) + Python `ssl` | `FAIL` means the relay socket can never connect; a packaging fault (`PyQt6.QtNetwork` in the spec's `hiddenimports`) |
 | `nexus` | relay/key present, models parse the bundled examples | `WARN` with no relay token and no key means the feed is off |
 | `webcast` | which screens are published, their exact URLs, and that the pages are in the bundle | try the printed URL from the Pi's browser |
@@ -193,10 +201,29 @@ nothing fails.
 
 ---
 
+## Code signing
+
+**The build is not signed, deliberately, because there's no free way to do
+it that Windows accepts.** Checked 2026-09-23 against Microsoft's docs:
+
+- **Smart App Control** accepts only binaries its cloud already trusts, or
+  ones signed by a CA in Microsoft's **Trusted Root Program**. A self-signed
+  certificate doesn't count, however it's installed. It also judges every DLL
+  in the bundle, not just the `.exe`.
+- The trusted routes all cost money: Azure Artifact Signing (~$10/month, US
+  organisations or self-employed individuals, identity-verified, drops into
+  GitHub Actions) or a CA certificate on a cloud HSM (~$200–500/year).
+
+So pit machines run with **Smart App Control off**, and SmartScreen shows
+"Windows protected your PC" once on the downloaded Setup.exe (**More info →
+Run anyway**). Updates are fetched by the app itself and never see
+SmartScreen. If the team ever funds signing, it's one step in `build.yml`
+signing every `.exe`/`.dll`/`.pyd` in `dist/` and the installer before
+`--self-check`.
+
 ## Known limits
 
-- **Not code-signed**, so SmartScreen warns once per machine. Updates are
-  fetched by the app, so it never asks again.
+- **Not code-signed**; see above.
 - **Updates are the whole package**, with no deltas. Fine at the shop; not on
   event wifi.
 - **Two versions on disk ≈ 2 GB.** Older ones are pruned at startup.

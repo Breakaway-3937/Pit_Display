@@ -16,6 +16,7 @@ updates/
 selfcheck.log
 # Qt's own warnings, per machine (app/qt_log.py)
 qt_warnings.log
+crash.log
 
 # The secret folder (app/credentials.py) — every key the app is handed. Only
 # its README is tracked. The Nexus event-feed preferences sit beside it.

@@ -4,6 +4,11 @@ import os
 import sys
 from pathlib import Path
 
+# First, before any other app import: an import-time failure in a
+# console-less build must still land somewhere. See app/crash_log.py.
+from app import crash_log
+crash_log.install()
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 

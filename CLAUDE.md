@@ -41,6 +41,11 @@ the one that covers what you touched.
   something a bundle can silently lose. The shipped app is `console=False`, so
   `_attach_console()` borrows the parent console, and the report also goes to
   `selfcheck.log`.
+- **The build is unsigned, and that's a decision, not an oversight**:
+  Smart App Control accepts only Trusted-Root-Program signatures, so no free
+  option exists. Pit machines run with SAC off; `--self-check`'s `appcontrol`
+  line and the installer's `InitializeSetup` warn about Evaluation mode.
+  **Only read** `VerifiedAndReputablePolicyState`, never write it.
 - **The version is stamped by CI from the tag, never edited.** `app/version.py`
   holds a sentinel that `version.is_release()` refuses.
 - **Windows stdout is cp1252 when redirected.** Every entry point that prints
