@@ -16,7 +16,8 @@ uv run main.py --self-check        # boot everything offscreen, exit 0/1
 
 No unit tests and no linter. The checks run the real thing and exit 0/1:
 `--self-check`, `tools/relay_check.py` (`--local` against `wrangler dev`),
-`tools/webcast_check.py`, `tools/upgrade_check.py`, `tools/eq_check.py`. Run
+`tools/webcast_check.py`, `tools/upgrade_check.py`, `tools/eq_check.py`,
+`tools/led_diag.py` (real LED controller). Run
 the one that covers what you touched.
 
 | Doc | Owns |
@@ -385,6 +386,15 @@ frames (on AVR, `show()` disables interrupts and drops serial bytes). Change
   holds interrupts off, which is exactly what's being measured. Maxima reset
   per reply; the host keeps the session worst. STATUS does not set `dirty`,
   so measuring doesn't cost a redraw.
+- **Measured on the real controller (2026-09-24, fw 2.5, `tools/led_diag.py`).**
+  The no-host violet sparkle animates at ~66 redraws/s with a **7.9 ms strip
+  write** each, so the UART is deaf about half the time: ~60% of commands
+  never ACKed, broken frames climbing, and the app's resting-look push lost,
+  so **the pit keeps sparkling while the app believes it's white** (Telemetry
+  flags this drift from `STATUS` mode/brightness). The host never resends. The
+  handshake now resends HELLO every 150 ms (a single HELLO was answered
+  ~50%; five, 5/5). **Round trip ~54 ms is host-side:** pyserial's `read(256)`
+  blocks for the whole 50 ms timeout unless 256 bytes arrive.
 - **Measured finding (2026-09-23, simulated port):** `_pump` blocks up to 50 ms
   in `read()` plus a 5 ms sleep, so a command waits **median 23 ms / p95 59 ms**
   in the host queue against a 1.3 ms round trip. A 2 ms read wait cut that to

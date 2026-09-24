@@ -60,6 +60,9 @@ _RELAY_COLOR = {
     "off":          brand.STATUS_IDLE,
 }
 
+_MODE_NAMES = {0: "solid", 1: "breathe", 2: "wipe", 3: "chase",
+               4: "sparkle", 5: "rainbow", 6: "alert", 7: "off"}
+
 _JOBS = (("status", "live snapshot"), ("pits", "pits"), ("map", "map"),
          ("inspection", "inspection"), ("teams", "teams"),
          ("alliances", "alliances"))
@@ -420,6 +423,9 @@ class NetworkPanel(QWidget):
         info = leds.device
         dev = t["device"]
         findings = self._led_findings(t, dev)
+        drift = self._led_drift(dev)
+        if drift:
+            findings.insert(0, drift)
         self._led_dot.set_color(brand.STATUS_PENDING if findings else brand.STATUS_ONLINE)
         self._led_head.setText(
             f"Connected on {leds.port_name or '?'}"
@@ -463,12 +469,19 @@ class NetworkPanel(QWidget):
                          f"{us(dev['show_us'])}, worst {us(dev['show_max_session_us'])}")
             lines.append(f"Longest the serial port went unread: "
                          f"{us(dev['gap_max_session_us'])}")
-            lines.append(f"Command received → on the strips: last {us(dev['cmd_us'])}, "
-                         f"worst {us(dev['cmd_max_session_us'])}")
+            if dev["cmd_us"] or dev["cmd_max_session_us"]:
+                lines.append(f"Command received → on the strips: last {us(dev['cmd_us'])}, "
+                             f"worst {us(dev['cmd_max_session_us'])}")
+            else:
+                lines.append("Command received → on the strips: no command has "
+                             "reached the strips since the controller started")
             lines.append(f"Receive errors since boot: {dev['crc_errors']} bad checksum · "
                          f"{dev['decode_errors']} broken frames · {dev['overruns']} "
                          f"overruns · {dev['unknown_ops']} unknown commands · "
                          f"{dev['fallbacks']} watchdog fallbacks")
+            running = _MODE_NAMES.get(dev["mode"], f"mode {dev['mode']}")
+            lines.append(f"Running: {running} at brightness {dev['brightness']}"
+                         + (" · blanked (off)" if dev["blanked"] else ""))
             switch_name, switch_age = dev["switch"], dev["age_s"]
 
         switch = {"HOST": "middle — the app is in charge",
@@ -496,6 +509,29 @@ class NetworkPanel(QWidget):
             lines.append("Controller says: " + " · ".join(
                 f"{text} ({_ago(time.time() - at)} ago)" for at, text in t["logs"][:3]))
         self._leds.setText("\n".join(lines))
+
+    @staticmethod
+    def _led_drift(dev: dict | None) -> str:
+        """
+        Is the controller running what the app asked for? A lost SET_MODE or
+        SET_BRIGHT leaves the strips on the old look while the app believes
+        otherwise. Only judged on a report the controller produced after the
+        app's last output command, so a command still in flight never counts.
+        """
+        if (dev is None or not dev.get("after_last_command") or not leds.enabled
+                or leds.alert is not None or leds.overridden or dev["switch"] != "HOST"):
+            return ""
+        # The firmware caps brightness (MAX_BRIGHTNESS 200 in pit_leds.ino);
+        # a request above it is clamped, not lost.
+        wanted = (int(leds.mode), min(leds.brightness, 200))
+        actual = (dev["mode"], dev["brightness"])
+        if actual == wanted:
+            return ""
+        return (f"The strips aren't showing what the app asked for: the controller "
+                f"is running {_MODE_NAMES.get(actual[0], actual[0])} at "
+                f"{actual[1]}, the app wants {_MODE_NAMES.get(wanted[0], wanted[0])} "
+                f"at {wanted[1]}. Commands were lost on the way in, and the app "
+                f"doesn't resend them.")
 
     @staticmethod
     def _led_findings(t: dict, dev: dict | None) -> list[str]:

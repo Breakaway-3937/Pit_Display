@@ -102,6 +102,7 @@ class LinkStats:
         self._rtts: deque[float] = deque(maxlen=_SAMPLES)       # ms
         self._waits: deque[float] = deque(maxlen=_SAMPLES)      # ms, queue → wire
         self._writes: deque[float] = deque(maxlen=2000)         # monotonic
+        self.last_cmd_at = 0.0      # monotonic: last command that changes the output
         self.status = None          # latest DeviceStatus (fw 2.5+)
         self.status_at = 0.0
         self._status_prev = None
@@ -126,9 +127,12 @@ class LinkStats:
             self.connected_at = 0.0
             self._pending = {}
 
-    def on_write(self, seq: int, size: int, waited_s: float = 0.0) -> None:
+    def on_write(self, seq: int, size: int, waited_s: float = 0.0,
+                 op: int | None = None) -> None:
         now = time.monotonic()
         with self._lock:
+            if op is not None and op not in (Op.PING, Op.STATUS, Op.HELLO):
+                self.last_cmd_at = now
             self.sent += 1
             self.bytes_out += size
             self._waits.append(waited_s * 1000)
@@ -204,6 +208,10 @@ class LinkStats:
             return None
         out = {k: getattr(st, k) for k in st.__dataclass_fields__}
         out["age_s"] = time.monotonic() - self.status_at
+        # Produced after every output command had been written (with margin
+        # for the wire and the controller) — so a disagreement with the app's
+        # intent means a command was lost, not that one is still in flight.
+        out["after_last_command"] = self.status_at > self.last_cmd_at + 0.3
         out["show_max_session_us"] = self.dev_show_max_us
         out["gap_max_session_us"] = self.dev_gap_max_us
         out["cmd_max_session_us"] = self.dev_cmd_max_us
@@ -297,7 +305,7 @@ class SerialLink(QThread):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._out: queue.Queue[tuple[int, bytes, float]] = queue.Queue(maxsize=256)
+        self._out: queue.Queue[tuple[int, bytes, float, int]] = queue.Queue(maxsize=256)
         self.stats = LinkStats()
         self._running = False
         self._seq = 0
@@ -323,7 +331,7 @@ class SerialLink(QThread):
     def send(self, op: int, payload: bytes = b"") -> None:
         """Queue a frame. Never blocks; drops the oldest if the queue backs up."""
         self._seq = (self._seq + 1) & 0xFF
-        item = (self._seq, proto.encode_frame(self._seq, op, payload), time.monotonic())
+        item = (self._seq, proto.encode_frame(self._seq, op, payload), time.monotonic(), int(op))
         try:
             self._out.put_nowait(item)
         except queue.Full:
@@ -392,11 +400,22 @@ class SerialLink(QThread):
             port.reset_input_buffer()
 
             self._reader.reset()
-            port.write(proto.encode_frame(0, Op.HELLO))
-            port.flush()
 
+            # HELLO is resent every 150 ms until INFO comes back. One HELLO
+            # was a coin toss: the controller boots into its animated no-host
+            # look, and every strip write leaves its UART deaf for ~8 ms of
+            # each 16 ms frame, so a single frame is lost about half the time
+            # (measured 2026-09-24: 1 HELLO answered ~50%, 5 HELLOs 5/5). Each
+            # lost HELLO then cost a whole backoff cycle of up to 8 s.
             deadline = time.monotonic() + 2.0
+            next_hello = 0.0
+            hello_seq = 0
             while time.monotonic() < deadline:
+                if time.monotonic() >= next_hello:
+                    port.write(proto.encode_frame(hello_seq, Op.HELLO))
+                    port.flush()
+                    hello_seq = (hello_seq + 1) & 0xFF
+                    next_hello = time.monotonic() + 0.15
                 chunk = port.read(256)
                 if chunk:
                     for _seq, op, payload in self._reader.feed(chunk):
@@ -440,11 +459,11 @@ class SerialLink(QThread):
 
                 while True:
                     try:
-                        seq, data, queued_at = self._out.get_nowait()
+                        seq, data, queued_at, op = self._out.get_nowait()
                     except queue.Empty:
                         break
                     self._port.write(data)
-                    self.stats.on_write(seq, len(data), time.monotonic() - queued_at)
+                    self.stats.on_write(seq, len(data), time.monotonic() - queued_at, op)
 
                 chunk = self._port.read(256)
                 if chunk:
@@ -503,7 +522,7 @@ class MockLink(SerialLink):
         # Behave like a healthy fw 2.5 controller on the counters: written,
         # then answered — an ACK, or for STATUS a plausible telemetry reply.
         self._seq = (self._seq + 1) & 0xFF
-        self.stats.on_write(self._seq, 8 + len(payload))
+        self.stats.on_write(self._seq, 8 + len(payload), 0.0, int(op))
         if self._device is None:
             return
         self._frames += 1
