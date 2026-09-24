@@ -319,6 +319,10 @@ def verify(folder: Path,
         env["PIT_DISPLAY_DATA"] = scratch
         env["PIT_CAD_PORT"] = "0"          # 0 = pick any free port
         env["PIT_LEDS_FAKE"] = "1"
+        # The launcher splash is drawn before Python runs, so the app can't
+        # skip it itself; this is the bootloader's own switch. Without it the
+        # check would flash a splash over whatever the pit is showing.
+        env["PYINSTALLER_SUPPRESS_SPLASH_SCREEN"] = "1"
         env["QT_QPA_PLATFORM"] = "offscreen"
         try:
             result = subprocess.run(

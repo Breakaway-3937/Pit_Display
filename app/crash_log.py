@@ -46,6 +46,10 @@ def _version() -> str:
 
 def install() -> None:
     global _file
+    # Idempotent. `main.py` runs as `__main__`, so anything that later does
+    # `from main import …` (the self-check does) executes its top again.
+    if _file is not None:
+        return
     try:
         p = path()
         if p.exists() and p.stat().st_size > _MAX_BYTES:

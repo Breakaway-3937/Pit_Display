@@ -179,6 +179,38 @@ a = Analysis(
 
 pyz = PYZ(a.pure)
 
+# ── The launcher splash (Windows) ────────────────────────────────────────────
+# Shown by the bootloader **before Python starts**, which on a pit machine is
+# most of the wait: ~2,100 files load and Defender scans every new DLL on the
+# first launch after an update. main.py swaps in the live boot screen
+# (app/widgets/boot_splash.py) at the same size the moment Qt is up, and
+# closes this one. `splash.png` is rendered from that widget by
+# tools/make_splash.py; the text sits on the boot screen's status baseline.
+#
+# Windows only: PyInstaller's splash is unsupported on macOS. It needs Tcl/Tk
+# in the build interpreter, so it is optional — a build that can't make one
+# ships without it and says so, rather than failing a release over a splash.
+# The updater's hidden self-check sets PYINSTALLER_SUPPRESS_SPLASH_SCREEN so
+# it never flashes over a pit screen (app/update/install.py).
+splash = None
+splash_png = ROOT / "packaging" / "splash.png"
+if sys.platform == "win32" and splash_png.exists():
+    try:
+        splash = Splash(
+            str(splash_png),
+            binaries=a.binaries,
+            datas=a.datas,
+            text_pos=(40, 297),          # bottom-left anchor, the status baseline
+            text_size=11,
+            text_font="Segoe UI",
+            text_color="#F3F1F0",        # brand.INK_DARK
+            text_default="Starting…",
+            always_on_top=False,         # never over another app's window
+        )
+    except Exception as exc:             # no Tcl/Tk in this interpreter, etc.
+        print(f"pit_display.spec: no launcher splash — {exc}")
+        splash = None
+
 icon = None
 for candidate in ("packaging/icon.ico", "packaging/icon.icns"):
     if (ROOT / candidate).exists():
@@ -188,6 +220,7 @@ for candidate in ("packaging/icon.ico", "packaging/icon.icns"):
 exe = EXE(
     pyz,
     a.scripts,
+    *([splash] if splash else []),
     [],
     exclude_binaries=True,
     name=APP_NAME,
@@ -208,6 +241,7 @@ coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
+    *([splash.binaries] if splash else []),
     strip=False,
     upx=False,
     upx_exclude=[],

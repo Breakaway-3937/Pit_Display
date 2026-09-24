@@ -156,6 +156,11 @@ uv run tools/build_app.py --zip --installer    # on Windows: the release artefac
   directory.
 - **The version is stamped from the tag** (`tools/stamp_version.py`). An
   unstamped build reports `0.0.0+dev` and never updates itself.
+- **Startup splash:** on Windows the launcher shows `packaging/splash.png` before
+  Python starts, then the live boot screen takes over and shows each startup
+  step. The PNG is rendered from the boot screen by `tools/make_splash.py`; rerun
+  it after changing `app/widgets/boot_splash.py`. If a build can't make the
+  launcher splash (no Tcl/Tk), it prints why and ships without it.
 - The build refuses to start without the seed database or the owlet binaries.
   `tools/check_installer.py` lints `packaging/installer.iss` first, because Inno
   can only compile on Windows.
@@ -197,6 +202,7 @@ nothing fails.
 | `nexus` | relay/key present, models parse the bundled examples | `WARN` with no relay token and no key means the feed is off |
 | `webcast` | which screens are published, their exact URLs, and that the pages are in the bundle | try the printed URL from the Pi's browser |
 | `qt` | Qt's own warnings this run | full text in `qt_warnings.log` |
+| `crashlog` | the last crash recorded in `crash.log` | `WARN` quotes it; that file is the one to send |
 | `windows` | all four built and rendered | |
 
 ---

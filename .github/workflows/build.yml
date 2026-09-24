@@ -116,6 +116,9 @@ jobs:
       - name: Self-check the packaged app
         if: inputs.run_self_check != false
         shell: pwsh
+        env:
+          # No launcher splash window on a headless runner.
+          PYINSTALLER_SUPPRESS_SPLASH_SCREEN: "1"
         run: |
           & "dist\Breakaway Pit Display\Breakaway Pit Display.exe" --self-check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

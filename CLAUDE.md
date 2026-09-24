@@ -46,6 +46,20 @@ the one that covers what you touched.
   option exists. Pit machines run with SAC off; `--self-check`'s `appcontrol`
   line and the installer's `InitializeSetup` warn about Evaluation mode.
   **Only read** `VerifiedAndReputablePolicyState`, never write it.
+- **Startup shows progress from the first second, in two stages.**
+  PyInstaller's launcher splash (Windows, `packaging/splash.png`) covers the
+  time before Python runs, which on a pit machine is most of it (2,100 files,
+  Defender scanning new DLLs after an update). `BootSplash`
+  (`app/widgets/boot_splash.py`) takes over at the same size once Qt is up
+  and names each `_boot()` step in `main.py` *before* running it. So **keep
+  `main.py`'s top-level imports minimal**: everything heavy loads inside the
+  first step. Change the splash? Rerun `tools/make_splash.py` and commit the
+  PNG. Every non-GUI path must close the launcher splash, and the updater's
+  hidden self-check sets `PYINSTALLER_SUPPRESS_SPLASH_SCREEN`. A splash
+  failure must never stop the app from starting.
+- **`crash.log`** (`app/crash_log.py`, installed first thing in `main.py`)
+  records unhandled exceptions and native crashes; `--self-check` prints the
+  last one. The app has no console, so it's the only record of a failed start.
 - **The version is stamped by CI from the tag, never edited.** `app/version.py`
   holds a sentinel that `version.is_release()` refuses.
 - **Windows stdout is cp1252 when redirected.** Every entry point that prints
