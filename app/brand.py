@@ -2,7 +2,7 @@
 Breakaway 3937 — brand system tokens and helpers (Brand System v2.0).
 
 Single source of truth for colors, fonts, the Rounded radius scale, and the
-typography scale. See Breakaway_Branding.md for the full spec. Everything
+typography scale. See breakaway_branding.md for the full spec. Everything
 visual in the app should pull from here rather than hard-coding hex values.
 
 Design thesis: *Precision under speed.* Confident, disciplined, roomy. One red

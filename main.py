@@ -12,6 +12,7 @@ QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
 import app.db.migrations  # noqa: F401 — registers migrations before init_db()
 from app import paths
+from app import qt_log
 from app.console import use_utf8
 from app.admin import init_admin
 from app.cad_assets import init_cad_assets
@@ -122,6 +123,11 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Pit Display")
+
+    # Qt's own warnings, to a file. The shipped app has no console behind the
+    # screens, so anything Qt writes to stderr is lost — including the object
+    # lifetime complaints that name a class and nothing else. See app/qt_log.py.
+    qt_log.install()
     app.setOrganizationName("FRC Pit")
     _load_fonts(app)
 
@@ -161,6 +167,13 @@ def main():
     # Queue and inspection alerts: reads the feed, drives the strips, and
     # hands the overhead screens their banner. After both of those.
     init_alerts()
+
+    # Before the control screen, because its Pit Network panel subscribes to
+    # this service while it is being built. The service itself depends on
+    # nothing but its own settings file; what it needs from the control screen
+    # — how to find a window — is handed over below, once there is one.
+    webcast_service = init_webcast()
+
     app.setStyleSheet(dark_qss())
 
     control = ControlScreen()
@@ -193,7 +206,6 @@ def main():
     # keeps a published screen's window alive (headless, never placed on a
     # monitor) even while its power toggle is off, which is what lets the pit
     # machine drive these with no video output at all.
-    webcast_service = init_webcast()
     webcast_service.set_window_provider(control.managed_window)
     control.set_webcast(webcast_service)
     webcast_service.start()

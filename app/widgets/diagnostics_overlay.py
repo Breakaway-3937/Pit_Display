@@ -168,7 +168,7 @@ class DiagnosticsOverlay(Chassis):
         self.draw_wrapped(
             p, rect.x(), y + self.s(24), min(self.s(1200), rect.width()),
             "Import a .hoot, .wpilog or Phoenix text export from Control → "
-            "Pit Systems → Robot Logs and this board fills itself in.",
+            "Pit Systems → Telemetry → Robot telemetry and this board fills itself in.",
             self.body(32), self.body_ink, 1.4)
 
     # ── The head: status block + headline ─────────────────────────────────

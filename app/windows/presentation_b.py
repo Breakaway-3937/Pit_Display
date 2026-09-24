@@ -27,7 +27,7 @@ class PresentationScreenB(PresentationScreen):
         # The sponsors slide is a Roster, not a Statement: a sponsor mark needs
         # a light ground and its own colour, so the stage becomes a grid of
         # white media plates and the surface spends **no** red at all. The
-        # cells are placeholders until artwork is supplied — see MEDIA_GUIDE.md.
+        # cells are placeholders until artwork is supplied — see OPERATOR_GUIDE.md.
         Slide(
             kind=ROSTER,
             eyebrow="Our partners",

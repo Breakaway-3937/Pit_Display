@@ -7,7 +7,7 @@ we have passed inspection, and who is on our alliance. All of it comes from
 public API, `https://frc.nexus/api/v1`, spec **v1.8.0**
 ([docs](https://frc.nexus/api/v1/docs)).
 
-This file is the reference for the whole feature: how to set it up, what every
+This file is the reference for the whole feature: its status, what every
 endpoint and field means, how the app keeps the data fresh, and where a screen
 should look to draw it. `app/nexus/api.py` is the same reference as code.
 
@@ -17,99 +17,48 @@ should look to draw it. `app/nexus/api.py` is the same reference as code.
 
 ---
 
-## Setting it up
+## Status
 
-Three things, in this order. All of them are on **Control → Pit Systems →
-Event Feed**.
-
-1. **The API key.** Sign in at [frc.nexus/api](https://frc.nexus/api) as the
-   team and copy the key. Unlock admin (the Breakaway mark, top left), paste it
-   under *Nexus access*, Save. It is written to `secrets/nexus_api_key` in the
-   [secret folder](#the-secret-folder). Or write that file by hand.
-2. **The event.** Type the event key — `2026casf`-style, the code on
-   frc.events — and press Use, or press *List events* and pick from what Nexus
-   currently has registered. The team's **demo event key** (also on
-   frc.nexus/api) is a real event with fake data, and is the thing to use for
-   testing before the season.
-3. **Watch the dot.** Grey is off, white is fetching, green is live, red is the
-   last fetch failing (the message says why). *Refresh now* fetches everything.
-
-Polling is on by default at 30 s. Nothing else is needed. The
-[webhook](#the-push-webhook) is optional and off.
-
-To check from a terminal, with the key in place:
-
-    uv run python tools/nexus_probe.py events
-    uv run python tools/nexus_probe.py team 2026casf 3937
-    uv run python tools/nexus_probe.py all  2026casf
-    uv run python tools/nexus_probe.py status 2026casf --raw     what Nexus actually sent
-
-### The secret folder
-
-`secrets/` in the data directory (`app/credentials.py`). From a checkout that
-is `secrets/` at the repo root; on the pit machine it is beside the database
-(`%LOCALAPPDATA%\Breakaway Pit Display\secrets\`), so an upgrade never touches
-it. One file per credential, no extension, the value on the first line:
-
-| File | Header it becomes | From |
-|---|---|---|
-| `nexus_api_key` | `Nexus-Api-Key`, sent by us on every request | frc.nexus/api |
-| `nexus_webhook_token` | `Nexus-Token`, sent **by Nexus** to our webhook; we refuse pushes without it | frc.nexus/api, after registering a webhook URL |
-
-`PIT_SECRET_NEXUS_API_KEY` / `PIT_SECRET_NEXUS_WEBHOOK_TOKEN` in the
-environment override the files. `.gitignore` keeps everything in the folder
-but its README out of git. **Never put a key in `nexus.json`, the database, or
-`app/`.**
-
-### Getting it onto the pit machine
-
-Keys are typed **once**, on the Mac, into `secrets/`. From then on the whole
-setup — both keys, the event, the polling and webhook settings, and the
-GitHub update token if there is one — travels as **one file**
-(`app/provision.py`):
-
-    uv run python tools/pit_setup.py make ~/Desktop/pit-setup.json --event 2026casf
-
-Or, on any machine that already has the keys: Control → Event Feed → (admin)
-**Export setup file…**. Then on the pit machine, whichever is at hand:
-
-| How | What to do |
+| | |
 |---|---|
-| **Drop it in** | Copy it to `%LOCALAPPDATA%\Breakaway Pit Display\pit-setup.json` and start the app. It is applied first thing and renamed `pit-setup.json.imported`, so it is applied exactly once |
-| **Import it** | Control → Event Feed → (admin) **Import setup file…**, from the stick |
-| **Script it** | `"Breakaway Pit Display" --provision D:\pit-setup.json` |
+| Relay | **Live** at `https://nexus.bh-stack.com` (deployed 2026-09-23) |
+| Webhook | **Resolved.** Registered at frc.nexus/api for *live event status, all events* → `https://nexus.bh-stack.com/nexus/webhook`. Once for the season; no per-event re-registration |
+| Pit machine | Needs only `secrets/nexus_relay_token`; setup in [`OPERATOR_GUIDE.md`](OPERATOR_GUIDE.md#the-event-feed-nexus) |
+| Not on an audience screen yet | the pit map, the alliance board, announcements, parts requests ([table at the end](#what-the-pit-can-say--and-where-each-fact-comes-from)) |
 
-Applying only ever *writes*: a file that carries just an event key leaves the
-machine's keys alone, so one file can be reused all season and re-sent with
-each new event key. `tools/pit_setup.py show <file>` says what one carries
-without printing a key.
+**Credentials** live in `secrets/` in the data directory (`app/credentials.py`),
+one file each, overridable as `PIT_SECRET_<NAME>`, and never in `nexus.json`,
+the database or git:
 
-**The file is a credential in plain text.** It is for moving keys, not
-keeping them: make it onto a stick, import it, delete it. `.gitignore`
-refuses `pit-setup.json` and `*.pitsetup.json`.
+| File | What | Needed |
+|---|---|---|
+| `nexus_relay_token` | `Authorization: Bearer …` to the relay (its `CLIENT_TOKEN`) | yes |
+| `nexus_api_key` | `Nexus-Api-Key`, for polling frc.nexus directly if the relay is unreachable | optional |
 
-### Without a key or a network
+The webhook token lives only in the relay's Worker secrets. They travel to a
+pit machine in a setup file; see [`DEPLOYMENT.md`](DEPLOYMENT.md#b--install-on-a-new-pit-machine).
 
-    PIT_NEXUS_FAKE=1 uv run main.py
+**From a terminal:**
 
-`FakeClient` serves the spec's own example payloads from
-`assets/nexus/examples.json`. Each poll steps through the eight example
-snapshots — empty schedule → practice → qualifications → alliance selection →
-playoffs — so a screen can be watched progressing through a whole event in
-four minutes. The example event has teams `100`–`3600`, so pick one of those
-as the active team to see "our" match populate. `--self-check` parses every
-one of these payloads through the real models, so a field that Nexus renames
-shows up there rather than as an empty board at an event.
+    uv run tools/relay_check.py                         the relay, end to end
+    uv run python tools/nexus_probe.py team <key> 3937 --relay
+    uv run python tools/nexus_probe.py status <key> --raw     what Nexus actually sent
+    PIT_NEXUS_FAKE=1 uv run main.py                     the spec's examples, stepping through a whole event
+
+With `PIT_NEXUS_FAKE=1` the example teams are `100`–`3600`, so pick one as the
+active team to see "our" match. `--self-check` parses every example payload
+through the real models, so a field Nexus renames shows up there first.
 
 ---
 
 ## Where the data goes
 
 ```
-frc.nexus ──GET /event/{key}  every 30 s──▶ EventStatus ─┐
-          ──POST webhook  (optional)──────▶              │
-          ──pits · map · inspection · teams · alliances   │   every 5 min
-                                                          ▼
+frc.nexus ──webhooks──▶ relay (nexus.bh-stack.com) ──wss push──▶ EventStatus ─┐
+          ◀──pull 30s── (while a pit is subscribed)                           │
+          ◀──/api/v1 mirror── pits · map · inspection · teams · alliances     │  every 5 min
+frc.nexus ◀──direct GET── only while the relay is unreachable ────────────────┤
+                                                                              ▼
                             _NexusService  (app/nexus/service.py)
                                                           │
        status_changed · match_changed · now_queuing_changed · pits_changed · …
@@ -120,9 +69,10 @@ frc.nexus ──GET /event/{key}  every 30 s──▶ EventStatus ─┐
 | File | Role |
 |---|---|
 | `app/nexus/api.py` | Every endpoint, every schema as a typed model, `FakeClient`. No Qt |
-| `app/nexus/settings.py` | `nexus.json` — event key, cadences, webhook switch |
-| `app/nexus/webhook.py` | The HTTP server for the two push webhooks |
-| `app/nexus/service.py` | The `nexus` singleton: polling, freshness, "our match" |
+| `nexus-relay/` | The relay — a Cloudflare Worker + Durable Object, TypeScript, its own README |
+| `app/nexus/settings.py` | `nexus.json` — event key, cadences, relay address |
+| `app/nexus/relay.py` | `RelayLink` — the WebSocket to the relay: heartbeat, watchdog, backoff |
+| `app/nexus/service.py` | The `nexus` singleton: relay, fallback polling, freshness, "our match" |
 | `app/nexus/alerts.py` | The `alerts` singleton: queue and inspection alerts → strips + banner |
 | `app/widgets/queue_banner.py` | The banner along the bottom of both overhead screens |
 | `app/widgets/next_match_overlay.py` | The Next Match board — a pinnable face on either overhead screen |
@@ -130,7 +80,9 @@ frc.nexus ──GET /event/{key}  every 30 s──▶ EventStatus ─┐
 | `app/provision.py` | The pit setup file — make, apply, the drop-in at launch |
 | `tools/pit_setup.py` | `make` / `show` / `apply` a setup file |
 | `app/widgets/nexus_panel.py` | Control → Pit Systems → Event Feed |
-| `tools/nexus_probe.py` | The CLI |
+| `app/widgets/network_panel.py` | Control → Pit Systems → Telemetry — the relay's health from both ends |
+| `tools/nexus_probe.py` | The CLI; `--relay` goes through the relay |
+| `tools/relay_check.py` | The relay end to end, ~35 checks, exit 0/1; `--local` against `wrangler dev` |
 | `assets/nexus/examples.json` | The spec's example payloads, for the fake and the self-check |
 
 Screens read the singleton and subscribe to its signals, like every other
@@ -165,7 +117,7 @@ All from `app.nexus.service._NexusService`. Payloads are the models below.
 | `teams_changed(list[str])` | team numbers attending | each slow poll |
 | `alliances_changed(Alliances \| None)` | the playoff board | each slow poll; also on team change |
 | `events_changed(dict[str, EventSummary])` | every event Nexus lists | after *List events* |
-| `pushed(str, object)` | `"event"` / `"match"`, the raw parsed body | every accepted webhook, before freshness is judged |
+| `relay_changed()` | — | the relay socket's state or the relay's counters move |
 | `log(str)` | one line | anything the panel's log should show |
 
 **Derived accessors** — read `config.active_team` at call time, so the team
@@ -176,21 +128,24 @@ the held snapshot), `event_name()`.
 
 ### Freshness — the rule everything obeys
 
-**The newest `dataAsOfTime` wins, whichever way it arrived.** Every snapshot,
-polled or pushed, goes through `_offer_status()`, which drops anything not
-newer than what is held. A match push is folded into the held snapshot the
-same way: that one match replaced, the snapshot's clock moved to the push's.
-The spec is explicit that pushes repeat and arrive out of order; this is the
-whole defence.
+**The newest `dataAsOfTime` wins, whichever way it arrived — and it is applied
+twice.** The relay applies it to webhooks and its own pulls before storing
+anything; the app applies it again in `_offer_status()` to whatever arrives,
+pushed down the socket or polled. The spec is explicit that pushes repeat and
+arrive out of order, and a poll can land between two pushes; this is the whole
+defence. A team (match-status) webhook is folded into the held snapshot **on
+the relay** — that one match replaced, the clock moved to the push's — so the
+pit only ever receives whole snapshots.
 
 A snapshot for a *different* event key than the configured one is ignored and
-logged — a webhook registered last season keeps posting.
+logged.
 
 ---
 
 ## The endpoints
 
-All `GET`, all under `https://frc.nexus/api/v1`, all with `Nexus-Api-Key`.
+All `GET`, under `https://frc.nexus/api/v1` with `Nexus-Api-Key`, or the relay's
+mirror `https://nexus.bh-stack.com/api/v1` with the bearer token.
 Errors are the same four everywhere and `Client._explain()` turns them into
 the sentence the panel shows:
 
@@ -204,15 +159,15 @@ the sentence the panel shows:
 | Endpoint | `Client` method | Returns | Cadence in the app |
 |---|---|---|---|
 | `/events` | `events()` | `{key: EventSummary}` | on *List events* |
-| `/event/{key}` | `event_status(key)` | `EventStatus` | **30 s** (`poll_interval_s`) |
+| `/event/{key}` | `event_status(key)` | `EventStatus` | **pushed** by the relay; 30 s poll (`poll_interval_s`) only while it's unreachable |
 | `/event/{key}/pits` | `pit_addresses(key)` | `{team: "A1"}` | 5 min (`slow_poll_interval_s`) |
 | `/event/{key}/map` | `pit_map(key)` | `PitMap` | 5 min |
 | `/event/{key}/inspection` | `inspection(key)` | `{team: InspectionStatus}` | 5 min |
 | `/event/{key}/teams` | `teams(key)` | `["100", …]` | 5 min |
 | `/event/{key}/alliances` | `alliances(key)` | `Alliances` | 5 min |
 
-Nexus publishes no rate limit. 30 s is what "on deck reaches the pit within
-half a minute" needs; 10 s is the floor the settings file enforces.
+Nexus publishes no rate limit. The relay's pulls and the fallback poll are both
+30 s; 10 s is the floor the settings file enforces.
 
 ### Two things the docs say only in prose
 
@@ -323,8 +278,8 @@ compares — a start that moved four minutes is news.
 
 `event_key`, `data_as_of`, and one `match`: the match of ours whose status
 just changed. Nexus sends it for every status change of any match containing
-the team the webhook was registered for. The service folds it into the held
-`EventStatus`.
+the team the webhook was registered for. The **relay** folds it into the held
+`EventStatus` (`EventRoom.ingestMatch`); the pit never receives one on its own.
 
 ### `EventSummary` — `GET /events`
 
@@ -394,84 +349,46 @@ and `Alliances.alliance_of(team)`, `selection_started`, `selection_complete`.
 
 ---
 
-## The push webhook
+## The relay
 
-Nexus can POST to a URL the team registers at frc.nexus/api:
+A Cloudflare Worker with one Durable Object per event key, in `nexus-relay/`
+([its README](nexus-relay/README.md) covers deploy, secrets, cost and checks).
+It runs on Cloudflare's edge, with no tunnel and nothing on the pit laptop or
+in the home lab.
 
-- **Live event status** — the full `EventStatus`, whenever a match status, a
-  break time, a playoff alliance, an announcement or a parts request changes.
-- **Match status** — one `MatchStatus`, registered *per team number*, whenever
-  a match with that team in it changes.
+    frc.nexus ──POST /nexus/webhook──▶ Worker ──▶ EventRoom "<event key>"  (every event, all season)
+                                                  • newest snapshot in storage
+                                                  • pulls Nexus every 30 s while a pit is subscribed
+    pit display ◀──wss /api/v1/event/<key>/ws─────┘ • fans out to every pit socket
+    pit display ──GET /api/v1/…──▶ Worker ──edge cache──▶ frc.nexus/api/v1/…
 
-Both are the same shapes as the pulls, so nothing downstream knows or cares
-which way a snapshot arrived. The point is latency: a push lands seconds
-before the next poll would.
+- **Every event arrives; the app chooses.** Nexus offers no webhook filter
+  (only "live event status" and per-team "match status"), so the relay keeps
+  every event's latest snapshot in its own room. Picking an event on the Event
+  Feed panel is instant, even one never looked at before.
+- **Every webhook POST is answered 200.** Nexus disables a hook that keeps
+  failing, without telling anyone. A wrong token is ignored and counted as
+  *refused*, and Telemetry says so in words.
+- **The relay pulls on its own** while any pit is subscribed, so a quiet
+  event or a broken registration costs latency, never data.
+- **Team (match-status) webhooks are merged** into the held snapshot on the
+  relay; the pit only ever receives whole snapshots.
+- **The relay holds the Nexus API key** and mirrors Nexus's paths under
+  `/api/v1/`, so `RelayClient` is `Client` with a different base URL and
+  header.
 
-**Control → Event Feed → Push webhook** turns on a small HTTP server
-(`app/nexus/webhook.py`, default port **8766**; the CAD viewer has 8765). It:
+**On the pit:** `RelayLink` (`app/nexus/relay.py`) holds the socket: a 30 s
+ping answered by the runtime without waking the object, a 75 s watchdog for
+the venue-wifi case where the OS never notices a dead link, and a 1 s → 30 s
+backoff. After `fallback_after_s` (60 s) down, the live snapshot is polled
+through `_tiered()`: the relay's HTTP mirror first (some venues break
+WebSocket upgrades but allow HTTPS), then frc.nexus directly if there's a key.
+Every path needs internet; the team carries a hotspot.
 
-1. refuses anything without the exact `Nexus-Token` from
-   `secrets/nexus_webhook_token` (403);
-2. works out which webhook it is **from the body's shape** — Nexus does not
-   say, and both are just "the URL you registered" — so the path is ignored;
-3. answers **200 to anything that carried the right token** — a stale
-   snapshot, an empty registration ping, a body it cannot parse. The spec:
-   any other status is an error, is not retried, and a webhook that keeps
-   failing is disabled by Nexus without telling anyone. Only a wrong or
-   missing token is refused (403).
-
-**Every POST is written to `nexus_webhook.log`** in the data directory
-(the repo root from a checkout) — headers with the token redacted, size,
-outcome, and the body when it was not usable. When Nexus says it got an
-error, or the panel's count does not move, that file says what arrived.
-
-**It listens on `127.0.0.1`, not on the whole machine.** The tunnel that gives
-Nexus a route in is a process on this same laptop and connects to loopback, so
-a wildcard bind buys no reachability at all — and costs two things. On Windows
-the first bind to `0.0.0.0` raises a Defender Firewall prompt whose wrong
-answer blocks the port with no error anywhere, and a pit laptop on event wifi
-with an open port is reachable by every other laptop in the venue.
-`webhook_bind` in `nexus.json` is the override, and `"0.0.0.0"` is only right
-for a real port-forward on a network the team controls.
-
-### Giving Nexus a route in
-
-**The pit laptop is behind event wifi**, so Nexus cannot reach that port unless
-something is in front of it. A **Cloudflare named tunnel** is the one shape
-worth setting up, because it is the only one that gives a *stable* URL: the
-app dials out, so there is no port-forward, no inbound firewall rule, and
-nothing to re-register each morning. It needs a domain on Cloudflare (the free
-plan is fine) and costs nothing.
-
-Once, in the Cloudflare dashboard:
-
-1. **Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared.**
-2. Copy the `eyJ...` **token** it shows you. That is the only secret the pit
-   machine needs; it goes in a password manager, not in git.
-3. **Public Hostname** → subdomain `pit`, your domain, service
-   **HTTP** → `localhost:8766`.
-
-Once, on the pit machine, in an administrator PowerShell:
-
-```powershell
-winget install --id Cloudflare.cloudflared
-cloudflared service install <THE-eyJ-TOKEN>
-```
-
-That runs it as a Windows service: it starts at boot, reconnects itself, and
-survives a laptop that moved between networks — which is the normal state of a
-machine that gets carried into a venue.
-
-Then register `https://pit.<your domain>/` at frc.nexus/api, **once for the
-event feed and once for the team**. The URL never changes again.
-
-**A quick tunnel (`cloudflared tunnel --url …`, or ngrok's free tier) is not
-worth it here.** The URL is random and changes on every restart, so somebody
-re-registers it at frc.nexus every morning of an event — more steps than the
-push saves, and one more thing to forget at 7 a.m.
-
-**None of this is required.** Polling brings the same data; push brings it
-seconds sooner. The panel counts accepted pushes so you can see it working.
+**Telemetry** (Control → Pit Systems) shows both ends: this machine's socket
+(uptime, messages, reconnects, last error), the relay's counters for the event
+(webhooks received / newer / stale / refused, pulls, subscribers), and which
+route each piece of data came through.
 
 ---
 
@@ -543,7 +460,7 @@ the current. Older firmware ignores the byte and the centre run goes dark
 for the duration instead — never anything unsafe. The panel says so when it
 sees an old controller. Reflash `firmware/pit_leds`.
 
-## What the pit can now say — and where each fact comes from
+## What the pit can say — and where each fact comes from
 
 Everything a board might want, with the accessor that answers it. This is the
 list to build screens from.

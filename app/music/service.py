@@ -41,6 +41,10 @@ class _MusicService(QObject):
     def __init__(self):
         super().__init__()
         self._engine = make_engine()
+        # The EQ's live band display. Built lazily and only while somebody is
+        # looking at it — see `set_analyser_enabled()`.
+        self._analyser = None
+        self._analyser_sync = None
         self._sources = {s.key: s for s in (LocalSource(), SpotifySource())}
         self._source_key = "local"
 
@@ -187,6 +191,59 @@ class _MusicService(QObject):
     @property
     def ducked(self) -> bool:
         return self._ducked
+
+    # ── The EQ's live band display ────────────────────────────────────────
+
+    def analyser(self):
+        """The band analyser, or None while the display is off."""
+        return self._analyser
+
+    def set_analyser_enabled(self, on: bool):
+        """
+        Turn the EQ's live band display on or off.
+
+        **On costs a second decode of the same file and nothing else.** The
+        player the pit is listening to is never reconfigured: libVLC's audio
+        callbacks replace the output, so the analyser is fed by a separate,
+        output-less decoder running alongside. If it fails to start there is
+        simply no display — there is no path by which this stops the music.
+        """
+        if not on:
+            self._analyser = None
+            if self._analyser_sync is not None:
+                self._analyser_sync.stop()
+                self._analyser_sync = None
+            setter = getattr(self._engine, "set_analyser", None)
+            if setter:
+                setter(None)
+            return self._analyser
+
+        if self._analyser is None:
+            from app.music.analyser import BandAnalyser
+            self._analyser = BandAnalyser()
+        setter = getattr(self._engine, "set_analyser", None)
+        if setter:
+            setter(self._analyser)
+            # Two decoders of one file drift apart by a couple of hundred
+            # milliseconds. Invisible on a level meter, so this nudges rarely
+            # rather than correcting constantly — every correction is a seek.
+            self._analyser_sync = QTimer(self)
+            # **Measured: the two decoders stay within ±200 ms on their own.**
+            # An earlier reading of nearly a second turned out to be the two
+            # players diverging as one reached the end of the file, not drift
+            # — so this is a safety net for a genuine stall or a track change,
+            # not a correction that has to keep up with anything. Checking
+            # every second seeked four times in fourteen, and each seek is a
+            # gap in the shadow's audio, which is a hole in the display.
+            self._analyser_sync.setInterval(2000)
+            self._analyser_sync.timeout.connect(self._resync_analyser)
+            self._analyser_sync.start()
+        return self._analyser
+
+    def _resync_analyser(self):
+        resync = getattr(self._engine, "resync_analyser", None)
+        if resync:
+            resync()
 
     def _effective_volume(self) -> int:
         base = min(self._volume, self._volume_cap)

@@ -51,7 +51,17 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; background: var(--ground); }
-body.screen { cursor: none; }
+
+/* **The pointer always shows, on every surface.** A kiosk normally hides it,
+   and that is exactly wrong here: these panels are across the pit on machines
+   with no keyboard, and the first thing anyone does when one misbehaves is
+   plug in a mouse and look for the pointer. A hidden pointer turns a
+   ten-second check into a hunt. `cursor: default` is stated rather than left
+   to inherit so no child rule can quietly take it away again. */
+body.screen,
+body.screen * { cursor: default; }
+body.screen a,
+body.screen .screen { cursor: pointer; }
 
 /* ── The plate ────────────────────────────────────────────────────────────
    Inset 40, radius 18. The ambient light-fall is a static gradient here

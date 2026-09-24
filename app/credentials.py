@@ -11,8 +11,8 @@ never touches it.
 
     secrets/
       README.md               committed — what goes here and how to get it
-      nexus_api_key           the `Nexus-Api-Key` header value
-      nexus_webhook_token     the `Nexus-Token` Nexus sends to our webhook
+      nexus_relay_token       the bearer token for the team's Nexus relay
+      nexus_api_key           the `Nexus-Api-Key` header value (direct fallback)
 
 **A file is a credential; an environment variable overrides it.** Every name
 here can be supplied as `PIT_SECRET_<NAME>` in upper case instead, which is how

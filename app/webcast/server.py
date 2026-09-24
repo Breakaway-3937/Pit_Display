@@ -29,6 +29,7 @@ to be reachable. Two consequences that are not optional:
 
 from __future__ import annotations
 
+import hashlib
 import html
 import mimetypes
 import socket
@@ -54,6 +55,52 @@ _TEXT_TYPES = {
     ".ttf": "font/ttf",
     ".woff2": "font/woff2",
 }
+
+
+# The page's own assets, and the cache-busting stamp built from them.
+_VERSIONED = ("screen.css", "screen.js")
+_version_cache: dict[tuple, str] = {}
+
+
+def asset_version() -> str:
+    """
+    A short hash of the page's CSS and JS, for the URL they are fetched by.
+
+    **Without this a display never sees a change.** The page itself is
+    `no-store`, but its stylesheet and script were served `max-age=86400`, so
+    a browser that had fetched them once would not ask again for a day — it
+    would keep loading a fresh page against a stale design and stale
+    behaviour. On a kiosk nobody ever reloads by hand, "a day" is however long
+    until someone notices, and the symptom is the worst kind: the operator
+    changes something, the panel does not change, and nothing anywhere reports
+    an error.
+
+    Hashing the content rather than stamping a build number means a file
+    edited on the pit machine takes effect on the next page load, which is how
+    anyone working on this will actually test it. The result is memoised
+    against each file's mtime and size, so a page load is not a re-hash.
+    """
+    try:
+        stat_key = []
+        for name in _VERSIONED:
+            st = paths.resource(*WEB_ROOT, name).stat()
+            stat_key.append((name, st.st_mtime_ns, st.st_size))
+        key = tuple(stat_key)
+    except OSError:
+        return "0"
+    cached = _version_cache.get(key)
+    if cached is not None:
+        return cached
+    digest = hashlib.sha256()
+    for name in _VERSIONED:
+        try:
+            digest.update(paths.resource(*WEB_ROOT, name).read_bytes())
+        except OSError:
+            pass
+    version = digest.hexdigest()[:10]
+    _version_cache.clear()          # only the current build is worth keeping
+    _version_cache[key] = version
+    return version
 
 
 def lan_address() -> str:
@@ -95,7 +142,7 @@ def _index_page(port: int) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Breakaway Pit Display</title>
-<link rel="stylesheet" href="/static/screen.css">
+<link rel="stylesheet" href="/static/screen.css?v={asset_version()}">
 <body class="index">
 <h1>BREAKAWAY <b>3937</b></h1>
 <p>Pick the screen this display should show. Put the browser in full screen
@@ -215,7 +262,8 @@ class WebcastServer:
         body = (body.replace("{{SCREEN_ID}}", html.escape(screen_id))
                     .replace("{{SCREEN_LABEL}}",
                              html.escape(SCREEN_LABELS.get(screen_id, screen_id)))
-                    .replace("{{WS_PORT}}", str(ws_port)))
+                    .replace("{{WS_PORT}}", str(ws_port))
+                    .replace("{{VERSION}}", asset_version()))
         self._send(req, 200, "text/html; charset=utf-8", body.encode("utf-8"))
 
     def _static(self, req, name: str) -> None:
@@ -243,9 +291,12 @@ class WebcastServer:
             req.send_header("Content-Type", content_type)
             req.send_header("Content-Length", str(len(body)))
             # Fonts and artwork never change within a run and a Pi on a slow
-            # card should not re-fetch them; the page itself must never be
-            # cached, or a changed layout would not reach a kiosk nobody ever
-            # reloads by hand.
+            # card should not re-fetch them. The CSS and JS may be cached just
+            # as hard, but **only because their URL carries a hash of their
+            # contents** — change either file and the URL changes with it, so
+            # a stale copy can never be served. The page itself is never
+            # cached, or a kiosk nobody reloads by hand would keep asking for
+            # the previous version's assets.
             req.send_header("Cache-Control",
                             "public, max-age=86400" if cache else "no-store")
             req.end_headers()

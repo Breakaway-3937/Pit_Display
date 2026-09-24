@@ -147,6 +147,14 @@ hiddenimports = [
     "app.db.migrations",     # imported for its registration side effect only
     "PyQt6.QtWebEngineCore",
     "PyQt6.QtWebEngineWidgets",
+    # The pit-LAN screens and the Nexus relay socket. Both are imported
+    # normally and PyInstaller finds them; they are named here because the
+    # relay's `wss://` also needs QtNetwork's `plugins/tls/` backend, which the
+    # QtNetwork hook collects only when QtNetwork is in the graph. A build
+    # without it starts fine and the relay never connects — `--self-check`'s
+    # `network` result is what proves it made it in.
+    "PyQt6.QtNetwork",
+    "PyQt6.QtWebSockets",
 ]
 
 excludes = [

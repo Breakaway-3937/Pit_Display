@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nexus-relay",
+  // Not a secret: it names the account, it grants nothing. Pinned so CI
+  // deploys to the right account without asking. The API token is the secret.
+  "account_id": "41c3e7774d59d7355f3bc75d6d5471e3",
+  "main": "src/index.ts",
+  // Pins runtime behaviour. Bump it deliberately, and re-run the checks when you do.
+  "compatibility_date": "2026-09-01",
+
+  // The one static address everything goes through. A custom domain gets its
+  // DNS record and certificate made automatically — and deploy FAILS if a DNS
+  // record with this name already exists, so delete any old one first.
+  "routes": [{ "pattern": "nexus.bh-stack.com", "custom_domain": true }],
+
+  "durable_objects": {
+    "bindings": [{ "name": "EVENT_ROOM", "class_name": "EventRoom" }]
+  },
+  // Append-only. Never edit a tag once it has been deployed; add v2, v3, …
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["EventRoom"] }],
+
+  // Not secret — the upstream API. Secrets (CLIENT_TOKEN, NEXUS_WEBHOOK_TOKEN,
+  // NEXUS_API_KEY) are set with `wrangler secret put` and never appear here.
+  "vars": { "NEXUS_API": "https://frc.nexus/api/v1" },
+
+  "observability": { "enabled": true }
+}

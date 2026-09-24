@@ -192,13 +192,22 @@ def face_for(screen_id: str) -> str:
     ) else "rotation"
 
 
-def screen_state(screen_id: str) -> dict[str, Any]:
-    """Everything a page needs to draw `screen_id` right now."""
+def screen_state(screen_id: str, on: bool = True) -> dict[str, Any]:
+    """
+    Everything a page needs to draw `screen_id` right now.
+
+    **`on` is the sidebar power switch, and it is not derivable from here.**
+    Power is not a `config` key — it lives with the window the control screen
+    builds — so it has to be handed in. Getting this wrong is what made a
+    networked screen ignore its own switch: the page kept the last state it
+    was sent and carried on rotating a screen the operator had turned off.
+    """
     team = config.active_team
     theme = config.screen_theme(screen_id)
-    face = face_for(screen_id)
+    face = face_for(screen_id) if on else "off"
 
     state: dict[str, Any] = {
+        "on": bool(on),
         "screen": screen_id,
         "label": SCREEN_LABELS.get(screen_id, screen_id),
         "mode": config.mode,
@@ -216,6 +225,11 @@ def screen_state(screen_id: str) -> dict[str, Any]:
         "server_now_ms": now_ms(),
         "dwell": _dwell(),
     }
+
+    if not on:
+        # Nothing else is worth building or sending: the page draws its off
+        # state from this alone, and a screen that is off has no face.
+        return state
 
     try:
         if face == "rotation":

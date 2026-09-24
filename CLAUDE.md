@@ -1,1459 +1,497 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for working on this repository. **Every rule below exists because
+breaking it has already caused a real bug.** The reasoning is kept short;
+`git log` and the module docstrings hold the long versions.
 
 @breakaway_branding.md
 
-## Running the app
+## Running and checking
 
 ```bash
-uv run main.py
-# or via the installed entry point:
-uv run pit-display
+uv run main.py                     # only the control screen opens
+PIT_LEDS_FAKE=1 PIT_NEXUS_FAKE=1 uv run main.py
+uv run main.py --self-check        # boot everything offscreen, exit 0/1
 ```
 
-There are no tests and no linter configured. The only runtime check is launching the app.
+No unit tests and no linter. The checks run the real thing and exit 0/1:
+`--self-check`, `tools/relay_check.py` (`--local` against `wrangler dev`),
+`tools/webcast_check.py`, `tools/upgrade_check.py`, `tools/eq_check.py`. Run
+the one that covers what you touched.
 
-## Database
+| Doc | Owns |
+|---|---|
+| [`DATABASE.md`](DATABASE.md) | **The contract** for every table, query and invariant. Read before touching storage; update it with any table, migration or query |
+| [`NEXUS.md`](NEXUS.md) | The event feed, the relay, every Nexus field |
+| [`nexus-relay/README.md`](nexus-relay/README.md) | The Cloudflare Worker (a separate npm/TypeScript subproject) |
+| [`DEPLOYMENT.md`](DEPLOYMENT.md) | Build, release, install, update, the `--self-check` table |
+| [`OPERATOR_GUIDE.md`](OPERATOR_GUIDE.md) | What the crew does. Operator-facing detail goes there, not here |
 
-**[`DATABASE.md`](DATABASE.md) is the authoritative reference** — every table,
-every column, every query, and the invariants that will bite you. Read it before
-touching storage, and update it whenever you add a table, a migration, or a
-query. It is the contract between the schema and everything that reads it.
+## Packaging rules that constrain code
 
-The short version: two SQLite files. `data/pit_display.db` holds settings,
-presets, the music library and all robot-log metadata; `data/pit_display_samples.db`
-is ATTACHed as `samples` and holds only bulk telemetry. The second is disposable
-by design and its schema is deliberately unversioned.
-
-## Packaging and deployment
-
-**[`DEPLOYMENT.md`](DEPLOYMENT.md) is the reference** — what ships, what does
-not, how to build for Windows, how a tag reaches the pit machines, and what the
-data directory is. Three things belong here because they constrain how code is
-written:
-
-- **Nothing outside `app/paths.py` may build a path from `__file__`.** A frozen
-  app has a read-only resource tree (inside the bundle; `Program Files` on
-  Windows) and a writable data tree (per-user), and they are different
-  directories. `paths.resource()`, `paths.data()` and `paths.find()` are the
-  only correct ways to ask. From a checkout both are the repo, so the dev loop
-  is unchanged.
-- **`main.py --self-check` boots everything offscreen and reports**, exit 0/1.
-  It exists because packaging failures are invisible: the app starts, and only
-  the one screen that needed the missing file ever finds out. It has already
-  caught PyInstaller dropping Chromium's helper process *and* its resource
-  `.pak`s — both of which leave the CAD viewer dead and nothing else
-  complaining. It is now also the **gate an update has to pass**: the staged
-  build runs it on the pit machine before the launcher is pointed at it, so
-  anything that breaks a bundle stops there rather than at an event.
-  **Its output needs help to be readable on Windows**: the shipped app is
-  `console=False`, and a GUI-subsystem executable is not attached to the
-  console that launched it, so every `print()` here went nowhere at all.
-  `_attach_console()` borrows the parent's console when there is one, and the
-  report is written to `selfcheck.log` in the data directory either way.
-- **The version is stamped at build time, never edited.** `app/version.py`
-  carries a sentinel that `version.is_release()` refuses; CI rewrites it from
-  the git tag. A file somebody has to remember to bump is a file that
-  eventually lies about which build is on the pit laptop.
+- **Nothing outside `app/paths.py` builds a path from `__file__`.** A frozen
+  app has a read-only resource tree and a separate writable data tree.
+  `paths.resource()`, `paths.data()`, `paths.data_dir()` and `paths.find()` are
+  the only correct ways to ask. From a checkout both are the repo.
+- **`--self-check` is the gate an update must pass on the pit machine.**
+  Packaging failures are invisible otherwise: the app starts, and only one
+  screen ever finds out. It has caught PyInstaller dropping Chromium's helper
+  and its `.pak`s; its `network` line guards QtNetwork's TLS plugin (without
+  which the relay's `wss://` never connects). Add a check when you add
+  something a bundle can silently lose. The shipped app is `console=False`, so
+  `_attach_console()` borrows the parent console, and the report also goes to
+  `selfcheck.log`.
+- **The version is stamped by CI from the tag, never edited.** `app/version.py`
+  holds a sentinel that `version.is_release()` refuses.
+- **Windows stdout is cp1252 when redirected.** Every entry point that prints
+  calls `console.use_utf8()` first (`tools/make_manifest.py` inlines it). Fix
+  the encoding, never the character.
 
 ## Architecture
 
-Four-window PyQt6 desktop app for FRC pit displays. **Only the control screen is
-built at startup**; the other three are built on demand by the power toggles in
-its sidebar and **destroyed when switched off** — the control screen holds
-factories, not instances (`set_window_factories`). Off means off: no timers, no
-signal subscriptions, and for the project screen no Chromium process. Two
-consequences worth knowing:
+Four PyQt6 windows. **Only the control screen is built at startup**; the
+others come from factories (`set_window_factories`) behind power toggles and
+are **destroyed when switched off**: no timers, no subscriptions, no Chromium.
+A screen is rebuilt from scratch each time it's powered on.
 
-- **A screen is rebuilt from scratch each time it is powered on**, so it re-reads
-  slides, fun facts and boards. "Turn it off and on again" genuinely resets it.
-- **Anything holding a window reference has to let go.** `touch.py`'s router
-  connects to `destroyed` and forgets the widget; a stale entry there is a
-  dangling pointer walked on every touch event.
-- **A widget on one of these screens must connect app-wide signals to a
-  bound method, never a lambda.** PyQt auto-disconnects a slot that is a
-  method of a QObject when that object's C++ side is destroyed; a lambda is
-  not a QObject and keeps firing. `lambda _s: self.update()` on the Next
-  Match board took the whole app down with `wrapped C/C++ object … has been
-  deleted` on the first poll after the screen was powered off — and four
-  other overlays carried the same `config.team_changed` lambda, waiting for
-  a team change after a power-off. Every one is a `_repaint…` method now.
+- **Anything holding a window reference must let go.** `touch.py`'s router
+  forgets a widget on `destroyed`.
+- **Widgets on these screens connect app-wide signals to bound methods,
+  never lambdas.** PyQt auto-disconnects a QObject's method when its C++ side
+  dies; a lambda keeps firing and crashed the app with `wrapped C/C++ object …
+  has been deleted`.
 
-**Window roles:**
-- `ControlScreen` — operator panel (team selector, mode buttons, per-screen settings, judges slide picker)
-- `PresentationScreenA` / `PresentationScreenB` — audience-facing rotating slides; switch to `LunchOverlay` or `JudgesOverlay` based on mode
-- `ProjectScreen` — the pit-front touch panel: one interpretive surface with the CAD as its top band (`content="board"`), or the CAD alone (`content="cad"`)
+| Window | Role |
+|---|---|
+| `ControlScreen` | operator panel: top bar, 220px sidebar, settings column |
+| `PresentationScreenA` / `B` | overhead audience screens (a `QStackedWidget` of faces) |
+| `ProjectScreen` | pit-front portrait touch panel: `content="board"` or `"cad"` |
 
-**Three display modes** (set globally via `config.set_mode()`):
-- `standard` — the painted `SlidePanel` with 45-second auto-advance driven by `RotationManager`
-- `judges` — `JudgesOverlay` showing slides from `assets/judges_slides/`; controlled from the control screen thumbnail picker. The **artwork is full-bleed** — it is the team's own finished graphic and boxing it inside the plate would put two containers around one image — but the header band follows the chassis
-- `lunch` — `LunchOverlay`, the holding card, on the chassis. One enormous auto-fitted line and nothing competing; the Trace is its one red
+**Modes** (`config.set_mode()`), whole-pit: `standard` (slide rotation, 45 s,
+`RotationManager`), `judges` (`JudgesOverlay`, full-bleed artwork, header
+follows the chassis), `lunch` (`LunchOverlay`, one auto-fitted line, the Trace
+is its red). **Per-screen content** in standard mode
+(`config.get(screen, "content")`): `rotation`, `next_match`, `checklist`,
+`diagnostics`, `robot_info`.
 
-### Global singletons (lazy-proxy pattern)
+**`config`'s per-screen settings are memory-only and reset every launch**
+(theme, content, slide index, `checklist_id`). Anything that must survive a
+reboot goes in a JSON beside the database (`webcast.json`, `nexus.json`,
+`update.json`) or in the database.
 
-Twelve module-level singletons share the `LazyProxy` helper in `app/lazy_proxy.py` — safe to import at module level, but raise if accessed before their `init_*()` function is called in `main()`:
+### Singletons (`app/lazy_proxy.py`)
 
-| Import | Init call | Purpose |
+Safe to import at module level; raise if used before their `init_*()`.
+
+| Import | Init | Needs |
 |---|---|---|
-| `from app.config import config` | `init_config()` | Active team, display mode, per-screen theme settings; emits Qt signals on change |
-| `from app.rotation import rotation` | `init_rotation()` | 45-second timer that emits `advance` signal in standard mode |
-| `from app.judges_slides import judges_slides` | `init_judges_slides()` | Loads images from `assets/judges_slides/`, tracks current slide index |
-| `from app.cad_assets import cad_assets` | `init_cad_assets()` | Local HTTP server (port 8765) + subsystems config + CAD focus signals |
-| `from app.db import db` | `init_db()` | SQLite connection + versioned migration runner (`data/pit_display.db`) |
-| `from app.checklist import checklist` | `init_checklist()` | Pit checklists — lists, items, ticks (see [`DATABASE.md`](DATABASE.md)) |
-| `from app.leds import leds` | `init_leds()` | USB-serial link to the LED controller + strip state |
-| `from app.music import music` | `init_music()` | Playback, queue, local library, 10-band EQ |
-| `from app.admin import admin` | `init_admin()` | Admin lock gating the LED/EQ controls |
-| `from app.update import update` | `init_update()` | Release feed, staged installs, channel and rollback |
-| `from app.nexus import nexus` | `init_nexus()` | The frc.nexus event feed — live match queuing, pits, inspection, alliances (see [`NEXUS.md`](NEXUS.md)) |
-| `from app.webcast import webcast` | `init_webcast()` | Publishes the two overhead screens to the pit LAN as web pages |
-| `from app.nexus.alerts import alerts` | `init_alerts()` | Queue and inspection alerts: drives the strips, hands the overhead screens their banner |
+| `app.config.config` | `init_config()` | **first** |
+| `app.update.update` | `init_update()` | nothing, deliberately: updating out of a broken config/DB must work |
+| `app.db.db` | `init_db()` | import `app.db.migrations` first (registers by side effect) |
+| `app.rotation.rotation` | `init_rotation()` | config |
+| `app.judges_slides.judges_slides` | `init_judges_slides()` | config |
+| `app.cad_assets.cad_assets` | `init_cad_assets()` | config; HTTP server on :8765 |
+| `app.checklist.checklist` | `init_checklist()` | db; **before presentation screens are built** |
+| `app.leds.leds` | `init_leds()` | after `cad_assets` (subscribes to `subsystem_focused`) |
+| `app.music.music` | `init_music()` | db |
+| `app.admin.admin` | `init_admin()` | db |
+| `app.nexus.nexus` | `init_nexus()` | config only |
+| `app.nexus.alerts.alerts` | `init_alerts()` | nexus, leds |
+| `app.webcast.webcast` | `init_webcast()` | before the control screen (its Telemetry panel subscribes) |
 
-`init_config()` must be called first; the others depend on `config` being ready.
-`init_update()` depends on **neither** `config` nor the database — deliberately,
-since the states worth updating out of are the ones where those are broken; it
-is called early only because the control screen's panel reads it while building.
-`init_nexus()` needs only `config` (it reads the active team) and no
-database; `init_alerts()` comes after both `init_nexus()` and `init_leds()`. `init_leds()` must come after `init_cad_assets()` (it subscribes to
-`subsystem_focused`); `init_music()` and `init_admin()` after `init_db()` (they
-seed EQ presets and the admin credential). `init_checklist()` also needs the DB,
-and must come **before the presentation screens are constructed** — they read
-their list while building.
-`app.db.migrations` must be imported before `init_db()` — it registers the
-schema by side effect.
+**Upgrades keep what people typed, and that's tested:** `tools/upgrade_check.py`
+fills every user-owned table, runs the shipped seed DB and a migration against
+it, and checks every row survived. `paths.seed_user_data()` must only ever
+*skip* an existing file.
 
 ### Signal flow
 
-All cross-component communication uses Qt signals — no direct calls between windows:
-- `config.team_changed` → all screens re-brand (colors, labels)
-- `config.mode_changed` → presentation screens swap their `QStackedWidget` page
-- `config.screen_setting_changed` → theme changes applied per-window via `app.theme.apply_theme()`
-- `rotation.advance` → `SlidePanel.next_slide()` on each presentation screen
-- `judges_slides.slide_changed` / `slides_reloaded` → `JudgesOverlay` and `_SlidePicker` in control screen
-- `config.team_changed` → LED strips wash to the team colour (when following a colour look)
-- `config.mode_changed` → LED preset + EQ curve swap; judges mode auto-ducks audio.
-  **Judges and lunch are LED overrides**: white / solid red, and every alert is
-  ignored until the mode ends (`effects.OVERRIDE_MODES`, `leds.start_alert`)
-- `cad_assets.subsystem_focused` → strips echo that subsystem's `accent_color`
-- `config.set(screen, "slide_index", n)` → that presentation screen jumps to slide n;
-  the screen writes the same key back as the rotation advances, so the control
-  screen's picker stays in sync
-- `admin.lock_state_changed` → `LEDPanel` / `MusicPanel` show or hide their gated blocks
-- `config.set(screen, "content", "checklist"|"rotation")` → that presentation
-  screen swaps between the slide rotation and the checklist
-- `checklist.items_changed` / `item_toggled` → `ChecklistOverlay` rebuilds rows or
-  repaints the one that changed; the control-screen editor mirrors it
-- `nexus.match_changed` / `now_queuing_changed` / `status_changed` / … → whatever
-  draws the event; the full list is in [`NEXUS.md`](NEXUS.md). Nothing on an
-  audience screen subscribes yet — only the Event Feed panel does
-
-### Touch input (`app/touch.py`)
-
-Two panels in the pit take fingers at the same time — the operator's
-**control screen** and the visitor-facing **project screen** — so simultaneous
-touches on different screens are routine, not an edge case.
-
-**Qt's default handling cannot survive that.** A plain QWidget never sees a
-touch: unless it sets `WA_AcceptTouchEvents`, Qt *synthesizes* mouse events
-from the touch stream, and that synthesis runs through the single
-application-wide mouse state — one pressed button, one implicit grab, one
-release. Press on control, press on project, lift one finger: the other widget
-stays latched. A button drawn pressed forever, a slider still tracking a finger
-that left the glass.
-
-So `main.py` calls `touch.install(app, control, project)`, which flags exactly
-those two top-levels and routes their touch per point. **Every point gets its
-own target widget and its own press/move/release, keyed by `(device, point
-id)`** — two panels are two devices, two fingers on one panel are two ids —
-so no point can steal another's state.
-
-Three things about that are load bearing:
-
-- **Only the top-level windows get `WA_AcceptTouchEvents`, never their
-  children.** `QWebEngineView`'s internal render widget sets the attribute on
-  itself, so Qt targets *it* and the router never sees those points — Chromium
-  gets the raw multi-touch stream for the CAD viewer's pinch and two-finger
-  pan. Flagging children re-targets the touch at an ancestor and takes those
-  gestures away from the web view.
-- **Presentation screens and dialogs are deliberately not registered**, so they
-  keep Qt's synthesis. Single touch is all an audience screen or a modal needs.
-- **Mouse events arrive accepted; `QWidget`'s default handler calls
-  `ignore()`.** The router follows that convention when it propagates a press
-  up the parent chain. Clearing the flag first instead would deliver the same
-  press to a widget *and* every ancestor above it.
-
-**A drag over a scrollable area is a scroll, not a tap.** Past `_DRAG_SLOP`
-the router unlatches the widget the finger landed on with a release *outside*
-its rect (Qt buttons only emit `clicked` on a release inside) and drags the
-scroll area instead. Sliders are exempt — they own their own drags, and a
-scrollbar is itself a child of the area it drives, so `_scrollable_ancestor`
-checks for a slider first.
-
-**Anything that activates on `mousePressEvent` breaks under this.** The press
-has already fired by the time the router decides the gesture was a scroll, so
-activate on release-inside instead — `_Thumbnail` and `_StandardSlideRow` in
-the control screen were converted for exactly this reason.
-
-**A synthesized press does not move keyboard focus, and the router has to do
-it by hand.** Qt focuses a widget on click inside its *native* mouse dispatch
-(`QApplicationPrivate::giveFocusAccordingToFocusPolicy`), which an event built
-and handed to `sendEvent()` never goes through — so a finger on a text field
-blinked a caret that no keystroke ever reached. `_focus_on_press` does both
-halves Qt would: activate the window (keystrokes go to the *active* window
-first) and walk up from the tapped widget to the first one accepting
-`ClickFocus`, before the press is delivered.
-
-This was invisible while the control screen was the only window — whatever had
-focus at startup still had it — and appeared the moment a second window existed
-to hold the focus instead. **The symptom was "open any other screen and the
-control panel stops accepting keyboard input."** Two more things belt-and-brace
-it: `_on_power_toggled` hands activation back to the control screen after
-`show()`, and the two presentation screens carry
-`WindowDoesNotAcceptFocus` — they have no input widget on them, so they can
-never take the keyboard in the first place. The **project** screen deliberately
-does not, being a touch panel with a web view that wants ordinary focus.
-
-**A touchscreen sends no `leaveEvent`**, so anything that paints itself on
-hover has to undo that itself. Synthesized events carry the real touch device,
-so `touch.is_touch(event)` tells a tap from a click; `_CardButton` uses it to
-drop its accent border, which would otherwise stay on every card ever tapped.
-
-Web side, in `assets/cad_viewer/`: the canvas sets **`touch-action: none`** —
-without it the browser claims two-finger gestures for page pan/zoom and fires
-`pointercancel` mid-pinch — the viewport meta pins page zoom, and
-`onCanvasTouch` ignores a `touchend` that ended a pinch (`multiTouch`) while
-`onCanvasClick` ignores the compatibility click that follows every tap.
-
-### Qt layout traps hit in this codebase
-
-Three real bugs, all from the same root cause — **`addWidget(w, alignment=…)`
-lays the widget out at its `sizeHint()`**, ignoring `heightForWidth` and any
-expanding policy:
-
-- A word-wrapped `QLabel` gets a one-line height, so long body text is clipped.
-- A custom `QWidget` with no `sizeHint()` gets zero width. `Trace` had this —
-  it silently never painted on any presentation slide.
-
-Centre with a stretch row (`addStretch / addWidget / addStretch`) instead, and
-give custom painted widgets a real `sizeHint()`. Related: `layout.setAlignment(
-AlignCenter)` on a `QVBoxLayout` collapses it to minimum size, so wrapped labels
-wrap at their narrowest — use stretches for vertical centring too.
-
-Also: **`helpers.label()` does not word-wrap.** A long unwrapped label forces its
-whole panel wider than the window and pushes table columns off-screen. Call
-`setWordWrap(True)` on any prose.
-
-### The overhead screens on the pit LAN (`app/webcast/`)
-
-**One Cat6 instead of one HDMI.** The two overhead panels hang across the pit
-and the cable to them is the expensive part of hanging them. Published here, a
-Raspberry Pi at each panel opens a page on the pit machine and shows that
-screen full-screen.
-
-    ControlScreen ──builds headless──▶ PresentationScreenA/B   (state engine)
-                                            │
-    config / rotation / checklist  ──signals─┤
-                                            ▼
-    Pi on the switch ◀── ws:// JSON ── ScreenSocketServer   (:3939)
-                     ◀── http ─────── WebcastServer         (:3938)
-
-| File | Role |
-|---|---|
-| `settings.py` | `webcast.json` — which screens, the port, the bind |
-| `state.py` | What a screen *is*, as JSON. No widgets, no pixels |
-| `sockets.py` | `QWebSocketServer` on the Qt event loop — no threads |
-| `server.py` | The page, its CSS and JS, the fonts, the judges artwork |
-| `service.py` | `_WebcastService` — the signal subscriptions and lifetime |
-| `assets/webcast/` | The page itself, edited like the web asset it is |
-| `tools/webcast_check.py` | 40 automated checks against a live server. Exit 0/1 |
-
-**The browser draws; the pit machine sends state.** The first build got this
-exactly wrong and the numbers say how badly. It rasterised each screen to JPEG
-several times a second — ~15 ms of full-chassis repaint plus encode per frame —
-so **one viewer cost 22% of a core and two cost ~40%**, and the picture arrived
-soft because it was a re-encoded photograph of type rather than type. It was
-redoing the most expensive thing in the app to report that nothing had changed,
-because a slide holds for 45 seconds. Measured now: **0.1%** for two published
-screens with a viewer attached, and the type is drawn at the panel's own
-resolution. Seven things are load bearing:
-
-- **The protocol is Cheesy Arena's.** `{"type": ..., "data": ...}`, the full
-  state on connect and deltas after, and the screen named in the socket path.
-  Every `screen` message is a *complete* state, so a message missed across a
-  reconnect repairs itself on the next one — nothing to sequence, nothing to
-  re-request.
-- **The dwell rail is never sent.** The payload carries the dwell's *deadline*
-  and `screen.js` animates against it with `requestAnimationFrame`. That is
-  the single biggest saving: a rail at 60 fps costs this machine nothing, and
-  sending a position instead would put the whole mistake straight back.
-  `server_now_ms` rides along so a Pi with no RTC — the normal case at an
-  event — still counts down correctly.
-- **`QtWebSockets` ships in the standard PyQt6 wheel**, so the socket costs no
-  dependency and runs on the Qt event loop. No threads, no GIL contention, and
-  it can read `config` and `rotation` directly. The page is on 3938 and the
-  socket on 3939 (`settings.socket_port()`, always port + 1); **a second port
-  costs nothing operationally** because Windows Firewall prompts per
-  *application*.
-- **The headless window stays, as the state engine.** It owns the rotation —
-  it advances its own `slide_index` and writes it back to `config` — so a
-  monitor and a browser cannot disagree. Nothing renders it.
-- **A window that is never mapped to a display stops its own repaint timers.**
-  `Chassis._stop_if_unseen()` kills the 2 s ambient drift and `SmoothRail`
-  never starts its 50 ms tick when the top level carries
-  `WA_DontShowOnScreen`. Two state-engine windows breathing into a backing
-  store no eye can reach cost ~5% of a core; this is what took the total to
-  0.1%.
-- **`screen.css` is a port of `chassis.py`, number for number.** `--u` is one
-  design pixel — `min(100vw/1920, 100vh/1080)`, the same contain fit
-  `design_scale()` computes — so the Qt side's `self.s(94)` reads as
-  `calc(94 * var(--u))` here. Inventing a second set of proportions is how the
-  two overhead panels start looking like two different apps.
-- **No `animation-fill-mode: both` on the face transition.** With `both` the
-  stage holds its `from` frame until the animation runs, so anywhere
-  animations do not run — a reduced-motion kiosk — the panel shows a perfect,
-  empty chassis forever. The resting state must be the visible one.
-
-**The palette sent is the plate's ink roles, not `brand.DARK`/`LIGHT`.** The
-plate is a lit surface and its body ink is brighter than a control's;
-`state.palette()` mirrors what `chassis.py` picks. Sending the control bundle
-would make every web surface a step too dark in a way nobody could pin down.
-
-**Judges artwork is served as files, not pixels** — the page loads the image,
-which is the one place the old path was actively worse: a photograph of a
-photograph, re-encoded every frame.
-
-### The Plate — the chassis (`app/widgets/chassis.py`)
-
-**Every full-screen surface is built on one inset panel.** The slide rotation,
-both robot boards and the pit-front panel all subclass `Chassis`, which paints
-the ground, the plate, the header band and the footer ledger; subclasses fill in
-`paint_stage()` and, where they want more than two mono strings, `paint_footer()`.
-Two overhead panels are in the same glance all day — if they do not share a
-chassis they read as two apps.
-
-    ┌─ 40px inset ──────────────────────────────────┐
-    │  BREAKAWAY 3937           SCREEN A / STANDARD │  header, top 56, h 94
-    │ ───────────────────────────────────────────── │  2px rule at 150
-    │  the stage                                    │  216 → height−168
-    │ ───────────────────────────────────────────── │  2px rule
-    │  01 / 07  ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔     ROTATION A │  footer ledger
-    └───────────────────────────────────────────────┘
-
-Three things about it are load bearing:
-
-- **Every number is a *design* measurement, converted by `s()`.** A pit panel
-  is 1080 tall and the machine you are developing on is not, so a literal pixel
-  count is always wrong somewhere.
-- **The scale is a contain fit — `min(w/DESIGN_W, h/DESIGN_H)` — never one
-  axis.** A single-axis rule is right until a window is the wrong shape: the
-  pit-front panel is drawn at 1080×1920 and scaling it by width alone meant a
-  window opened at 1920×1000 set every figure at **1.78×**, drawing a 1153px
-  CAD stage into a 1000px window. That is not a clipped edge, it is a layout
-  collapsing through itself. `DESIGN_W`/`DESIGN_H` also drive `sizeHint()`, so
-  a portrait surface opens portrait — inheriting the landscape hint is what put
-  that window at 1920 wide in the first place.
-- **The background is cached** (`_ground`). The ambient light-fall drifts on a
-  34s cycle, so the widget repaints on a timer; rebuilding the plate gradient
-  and its cast shadow every tick would be pure waste.
-- **The light theme is a derivative, not a token swap.** The same depth logic
-  survives: the ambient wash becomes a cast shadow, rules go to N200, and the
-  one red thing stays red.
-- **`plate_tint()` fills the whole plate with one colour and turns every ink
-  white.** The Next Match board returns the alliance colour from it — a red
-  card or a blue card, legible from across the pit before a word is. The
-  gradient keeps the plate's own light-fall on the tint, the cache key
-  carries the tint, and the theme is ignored while tinted (a light red card
-  would be a different board). Anything drawn on a tinted plate in the
-  alliance colour must reverse — white fill, coloured type — or it vanishes.
-
-`PlatePanel` is the container variant — same plate, but the inside is a Qt
-layout instead of a `paint_stage()`. The pit-front panel needs it, because it
-hosts a live `QWebEngineView` and a finger-dragged scroll area.
-
-### Putting a screen on a monitor (`app/display.py`)
-
-**A window that is not filling a monitor is not showing the design.** Every
-audience surface is drawn at a fixed size and scaled by a contain fit against
-it, so a half-size window is a proportionally smaller copy of the design rather
-than the design. The power toggles used to call `show()` and nothing else, which
-left every screen at a size hint on whichever display the window manager chose.
-
-Two settings per screen, in `config`:
-
-| key | meaning |
-|---|---|
-| `display` | monitor index; an unplugged one falls back to the primary rather than stranding the window off-canvas |
-| `fullscreen` | fill that monitor, or float as a windowed 16:9 (portrait 3:4 for the pit-front panel) |
-
-Powering a screen **off destroys the window**, so `place()` is called on a
-freshly built one every time it comes back — there is no hidden window to
-restore. **The webcast changed where a window goes, not whether it exists**:
-`ControlScreen._reconcile()` still destroys on power-off, but a *published*
-screen is built with `WA_DontShowOnScreen` and `place()` is never called on
-it.
-
-**`default_fullscreen()` is `len(screens) > 1`** — and that is load bearing. On
-a single-display machine a full-screen audience window covers the control panel,
-and the control panel is the only way to turn it off again. One monitor means
-windowed, always.
-
-`place()` moves the window onto the target monitor **before** going full-screen;
-the other order makes Qt fill whichever monitor it was already on.
-
-**Never call `showFullScreen()` on an audience screen.** Qt's version ends with
-an unconditional `activateWindow()`, and those two windows carry
-`WindowDoesNotAcceptFocus` on purpose (see the touch section), so every power-on
-printed `requestActivate() called for QWidgetWindow(…) which has
-Qt::WindowDoesNotAcceptFocus set.` Both halves are right — a panel must never
-take the keyboard from the operator, and it must fill its monitor — so
-`display._show_fullscreen()` does the window-state change and leaves the
-activation out. `touch._focus_on_press` carries the same guard.
-
-### Three painting traps this codebase has already hit
-
-- **`R_PILL` is 999 — a sentinel, not a measurement.** `drawRoundedRect` clamps
-  the x and y radii *independently* to half the width and half the height, so
-  passing 999 for both turns a 200×56 chip into an **ellipse**. A pill is half
-  the *height* on both axes; `brand_widgets._radius()` is the clamp, and every
-  `RoundedFrame` / `RoundedButton` goes through it.
-- **A widget may not carry another size's geometry.** `ToggleSwitch` painted a
-  literal 52-wide track and a 24px thumb; the moment it was resized to fit the
-  220px sidebar it drew both larger than itself and Qt clipped them. Everything
-  is derived from `self.rect()` now.
-- **A resting visual state must be derived, not remembered.** The same switch
-  moved its thumb only from the `toggled` signal, and callers set it with
-  `blockSignals()` — so it drew a green "on" track with the thumb still on the
-  left. The animation is the *transition*; where the thumb sits is a function of
-  `isChecked()`, resolved in `paintEvent`.
-
-### Theming
-
-Both stylesheets are rendered from one QSS template in `app/theme.py`, fed by the `DARK` / `LIGHT` palette bundles in `app/brand.py` — change a token there and both themes update. `theme.dark_qss()` is set app-wide at startup; light theme is applied per-window via `app.theme.apply_theme(window, "light")`. Clearing the window stylesheet (setting `""`) falls back to the app-level dark QSS.
-
-Accent colors come from the active team's `primary_color` field and are applied inline via `setStyleSheet()` wherever the team color is needed dynamically.
-
-**Where the red is allowed to go.** The playbook's budget is one red thing per
-surface, and on a dark ground it is a *filled shape*, never a letterform — red
-on carbon is 2.8:1 and forbidden for type. Four rules follow from that, and all
-four were violations before:
-
-- `RoundedButton`'s **`secondary` variant is a neutral outline**, not a red one.
-  A panel with a dozen ordinary controls had a dozen red things. `primary` keeps
-  the accent and there is one of those per panel.
-- **Sliders, progress bars and list selection fill with white on dark / carbon
-  on light**, not red.
-- **`eyebrow()` and `QLabel#section_header` are muted**, not red.
-- On the control screen, **red means the installation is in an exceptional
-  state**: Judges or Lunch active. Standard active, the brand chip and the
-  selected sidebar row are all **white**.
-
-### Fonts
-
-`main.py:_load_fonts` globs `assets/fonts/*.ttf` at startup — dropping a TTF in
-is all that is needed. Bundled: **Chakra Petch** (display), **Roboto** (body),
-**JetBrains Mono** (data/numbers, added Aug 2026, OFL — license alongside it).
-
-Two things that will bite:
-- **`QFontDatabase.addApplicationFont()` silently returns `-1` for a relative
-  path.** `_load_fonts` builds an absolute path, so it works; ad-hoc scripts
-  using a relative path will appear to fail while the app is fine.
-- **Never name a font family Qt cannot resolve.** It triggers a full font-alias
-  sweep on every `QFont` construction (~40ms) plus a `qt.qpa.fonts` warning. For
-  the mono role use `brand_widgets.mono_font()`, which sets the whole
-  `brand.FONT_MONO_STACK` (JetBrains Mono → Menlo → Consolas → DejaVu → Courier)
-  so it degrades to a real monospace anywhere.
-
-Note Chakra Petch and Roboto also happen to be installed in `~/Library/Fonts/`
-on the dev Mac, so a missing bundled copy can go unnoticed there — check on the
-Windows pit machine.
-
-### Adding a team
-
-Edit `app/teams.py` — add an entry to the `TEAMS` dict. The control screen combo box picks it up automatically.
-
-### The audience rotation (`app/slides.py`, `app/widgets/slide_panel.py`)
-
-**One shell, four archetypes, chosen by the shape of the content** — never by
-slide number. `Slide` in `app/slides.py` carries the kind:
-
-| kind | what it is | where the one red goes |
-|---|---|---|
-| `statement` | authored headline + sentence | the **Trace** |
-| `figure` | a real number out of a robot log | the **FROM LOG** seal |
-| `roster` | a grid of sponsor marks | **nowhere** — the marks are the colour |
-| `board` | the live diagnostics board | a latched fault, or nothing |
-
-A surface is allowed zero red; it is never allowed two. That is why `roster`
-spends none: a sponsor mark brings its own colour and would be the second.
-
-**The stage is painted, not laid out.** The panel was a `QStackedWidget` of
-`QLabel`s, which is why it could only ever be one template and why the
-transition could only be an instant swap. Two things Qt's layout system cannot
-express are load bearing here: a 140px headline sized from the live widget
-height, and `line-height: 1.0` at that size — `QPainter.drawText()` spaces lines
-by the font's own leading, which is far looser, so the headline that fits in the
-design runs off the stage. Every multi-line block goes through
-`Chassis.draw_wrapped()`, which uses `QTextLayout` for exactly that reason.
-
-**The transition** is a `QVariantAnimation` over a painted opacity/offset pair:
-260ms out (opacity→0, y −22, InCubic), 80ms of empty stage, 420ms in
-(opacity→1, y +26→0, OutCubic). It runs 1240ms even though the slide has settled
-at 760ms, because the Trace is still drawing on behind it over 900ms OutExpo.
-
-**A and B share the chassis and differ by one thing:** the ledger reads
-`ROTATION A` / `ROTATION B` and the rail sits left on A, right on B.
-
-**The dwell rail reads `rotation.progress()`** — the live 45s timer — rather
-than counting for itself. Two clocks for one dwell is exactly the kind of thing
-that drifts apart and nobody notices.
-
-**The rail is a child widget (`chassis.SmoothRail`) on its own 50ms tick.**
-Repainting a full-screen painted stage — a 140px headline, its layout, the
-plate — fast enough for a rail to look smooth is absurd, so the panel keeps its
-slow tick and the rail keeps its own. At 45s across ~1500px the panel's 500ms
-tick stepped the fill **16px at a time**, which reads as a stutter rather than
-as time passing; 50ms makes it 1.7px. It has no background of its own, so it
-asks the chassis for the plate beneath it (`paint_ground_under`) — the ground is
-already a cached pixmap, and a flat fill would show a seam across the gradient.
-Its geometry is set from `resizeEvent`, never from inside a paint event.
-
-**`Slide.figure` is fitted, not fixed.** 260px is the design's *maximum*; a real
-log yields figures from `14.2` to `62,118,775`, and a ten-glyph numeral set at
-260 runs straight out of the plate. `_fit_figure()` scales the numeral and its
-unit together so their relationship survives.
-
-### Standard slide picker
-
-**Control Screen → Presentation A/B → Standard Slides** lists every slide in
-that screen's rotation (authored + fun facts), highlights the live one, and
-jumps on click. Prev / Next / First / Reload underneath. The live row carries a
-dwell rail reading the same `rotation.progress()` the audience screen shows, so
-the operator can see where the rotation is without looking up at the panel.
-
-Jumps travel through `config.set(screen_id, "slide_index", n)` — the control
-screen never holds a reference to a presentation window, same as every other
-cross-window command here.
-
-**The feedback loop is closed by two idempotence guards**, and both are load
-bearing: `config.set()` ignores an unchanged value, and `SlidePanel.set_slide()`
-ignores a re-select. The round trip (picker → config → screen → config) settles
-on the first pass. Verified: one click produces exactly one config write. If you
-add another writer of this key, keep that property.
-
-`PresentationScreen.rotation_slides()` is a **classmethod** so the picker can
-list slides without a live window.
+All cross-window communication is Qt signals; windows never call each other.
+The control screen never holds a presentation window.
+
+- `config.team_changed` → every screen re-brands; LEDs follow a colour look.
+- `config.mode_changed` → stacks swap, LED preset + EQ curve swap, judges ducks
+  audio. **Judges and lunch are LED overrides** (white / red) that ignore alerts.
+- `config.set(screen, "slide_index", n)` → that screen jumps; it writes the key
+  back as it rotates. **Two idempotence guards close the loop**:
+  `config.set()` ignores an unchanged value and `SlidePanel.set_slide()`
+  ignores a re-select. Keep both if you add a writer.
+- `config.set(screen, "content", …)` → the screen swaps face.
+- `config.logs_changed` → boards and fun-fact slides re-read after an import.
+- `checklist.items_changed` / `item_toggled`, `judges_slides.*`,
+  `cad_assets.subsystem_focused`, `admin.lock_state_changed`, `nexus.*` (see
+  NEXUS.md).
+- **Mode buttons follow `config.mode_changed`, not their own click.**
+
+## Qt traps already hit
+
+- **`addWidget(w, alignment=…)` lays out at `sizeHint()`**, ignoring
+  height-for-width and expanding policies: wrapped labels clip, and a custom
+  widget without `sizeHint()` gets zero width (the Trace silently never
+  painted). Centre with `addStretch / addWidget / addStretch`. Likewise
+  `layout.setAlignment(AlignCenter)` collapses a `QVBoxLayout`.
+- **`helpers.label()` does not word-wrap.** Call `setWordWrap(True)` on prose,
+  or one long label pushes the whole panel wider than the window.
+- **A `QWidget` ignores a stylesheet border unless `WA_StyledBackground` is set.**
+- **The app-wide `QPushButton` rule has 16px horizontal padding**; reset it in
+  tight places (`ScreenCard`).
+- **`R_PILL` is 999, a sentinel.** `drawRoundedRect` clamps x/y radii
+  independently, so 999 makes an ellipse. `brand_widgets._radius()` clamps to
+  half the height.
+- **Derive geometry from `self.rect()`**, never a literal size, and **derive a
+  resting visual state in `paintEvent`** from the model (`isChecked()`), never
+  remember it from a signal that callers can block.
+- **Never name a font family Qt can't resolve.** It costs a ~40 ms alias sweep
+  per `QFont`. Use `brand_widgets.mono_font()` (the whole mono stack).
+  `addApplicationFont()` silently returns -1 for a relative path.
+- **Never `showFullScreen()` an audience screen.** Its trailing
+  `activateWindow()` fights `WindowDoesNotAcceptFocus`;
+  `display._show_fullscreen()` does it without. Move to the monitor *before*
+  going full screen.
+- **`default_fullscreen()` is `len(screens) > 1`.** With one monitor a
+  full-screen audience window would bury the only way to turn it off.
+
+## Touch (`app/touch.py`)
+
+Two panels (control and project) take fingers at once. Qt's touch→mouse
+synthesis is one application-wide mouse state, so a second panel latches the
+first. `touch.install(app, control, project)` routes **each touch point** to its
+own target with its own press/move/release, keyed by `(device, point id)`.
+
+- **Only those two top-levels get `WA_AcceptTouchEvents`, never children.**
+  `QWebEngineView`'s render widget flags itself, so Chromium gets raw
+  multi-touch for pinch/pan. Presentation screens and dialogs keep Qt's
+  synthesis.
+- Propagate a press up the parent chain the way Qt does: events arrive
+  accepted and `QWidget`'s default handler calls `ignore()`.
+- **Past `_DRAG_SLOP` a drag is a scroll**: the router releases the pressed
+  widget *outside* its rect and drags the scroll area. Sliders are exempt.
+  **So activate on release-inside, never on `mousePressEvent`.**
+- **A synthesized press moves no focus.** `_focus_on_press` activates the
+  window and walks to the first `ClickFocus` widget. Presentation screens carry
+  `WindowDoesNotAcceptFocus`; the project screen doesn't.
+- **Touch sends no `leaveEvent`.** `touch.is_touch(event)` lets hover styling
+  (e.g. `_CardButton`) skip a tap.
+- CAD viewer: canvas `touch-action: none`; ignore a `touchend` that ended a
+  pinch and the compatibility click after a tap.
+
+## Painted surfaces
+
+### The chassis (`app/widgets/chassis.py`)
+
+Every full-screen audience surface subclasses `Chassis` (paints ground, plate,
+header band, footer ledger; subclasses fill `paint_stage()` / `paint_footer()`),
+or `PlatePanel` when it hosts a live layout. Two panels in one glance must not
+look like two apps.
+
+    ┌─ 40px inset ─────────────────────────────┐
+    │  BREAKAWAY 3937      SCREEN A / STANDARD │  header, top 56, h 94; 2px rule at 150
+    │  the stage                               │  216 → height−168
+    │  01 / 07  ▔▔▔▔▔▔▔▔▔▔▔▔▔       ROTATION A │  footer ledger
+    └──────────────────────────────────────────┘
+
+- **Every number is a design measurement through `s()`**, a **contain fit**
+  (`min(w/DESIGN_W, h/DESIGN_H)`), never one axis. `DESIGN_W/H` also drive
+  `sizeHint()`, so a portrait surface opens portrait.
+- The ground is cached (`_ground`); the 34 s ambient drift must not rebuild it.
+  A window that's never mapped (`WA_DontShowOnScreen`) stops its own timers
+  (`_stop_if_unseen()`).
+- Light theme is a derivative (cast shadow, N200 rules), not a token swap.
+- **`plate_tint()`** fills the plate with one colour and turns ink white (the
+  Next Match board's red/blue card). Anything in the alliance colour on a tinted
+  plate must reverse.
+- Multi-line type goes through `Chassis.draw_wrapped()` (`QTextLayout`):
+  `drawText()` uses the font's own loose leading and overflows at 140px.
+
+### The rotation (`app/slides.py`, `slide_panel.py`)
+
+Four archetypes chosen by content shape: `statement` (red = the Trace),
+`figure` (red = the FROM LOG seal; numeral fitted by `_fit_figure()`, 260px is
+a maximum), `roster` (no red, the marks bring colour), `board` (red only for a
+latched fault). **Zero red is allowed; two never is.**
+
+- The stage is painted, not laid out. Transition: 260 ms out, 80 ms empty,
+  420 ms in; the Trace draws over 900 ms.
+- **The dwell rail reads `rotation.progress()`**, never its own clock, and is a
+  child `SmoothRail` on a 50 ms tick so the panel can keep a slow one.
+- `rotation_entries()` is the single source for both the rotation and the
+  control screen's picker; `_BOARD_INDEX` places the live board last (only when
+  a log exists). `rotation_slides()` is a classmethod so the picker needs no
+  window.
+- The rotation timer is suppressed while a screen shows a pinned face
+  (`_standard_page()`).
+
+### Diagnostics boards (`diagnostics_overlay.py`, `robot_info_overlay.py`)
+
+A: *is anything wrong?* (glanceable). B: *what, on which motor?* (walk-up).
+Both on the chassis, in the rotation (last) or pinned.
+
+- **Neither computes anything**; every figure comes from `app/robot/diagnostics.py`.
+- **Status is the robot's own fault flags**, not an invented threshold (see
+  DATABASE.md). Red means a latched fault and marks only the fault and its
+  origin. Nothing flashes.
+- Sparklines read `samples.sample_1s`, never `sample`.
+- **Layout is banded** (`_budget(height)`), never measured after layout; lists
+  are sorted worst-first so a cap drops the healthy end.
 
 ### Checklists (`app/checklist.py`)
 
-The pit checklist as seen on an **overhead screen**, written and ticked from the
-control panel. Storage, columns and the query traps are in
-[`DATABASE.md`](DATABASE.md); this covers the code layout.
-
-| File | Role |
-|---|---|
-| `app/checklist.py` | `_ChecklistService` singleton — lists, items, ordering, ticks |
-| `app/widgets/checklist_overlay.py` | What the overhead screen shows |
-| `app/widgets/checklist_panel.py` | The operator's editor, in the screen's settings |
-
-**It is a per-screen content setting, not a fourth display mode.** Standard mode
-has five faces, chosen by `config.get(screen, "content")` — `"rotation"` (the
-default), `"next_match"`, `"checklist"`, `"diagnostics"` or `"robot_info"`. Per-screen because the useful arrangement in a pit is
-one overhead screen holding the checklist while the other keeps rotating for
-visitors, which a global mode cannot express. Judges and lunch still take over
-both screens; those are whole-pit states. A screen also carries a
-`checklist_id`, so the two can show different lists.
-
-**The rotation timer is suppressed behind the checklist.** `_on_rotation_advance`
-checks `_standard_page()` — without it the 45-second timer walks the hidden
-slide panel forward while the crew works, and flipping back lands somewhere
-random.
-
-**Ticking happens on the control screen, never on the display.** The overhead
-screens are audience-facing and out of reach — nobody walks over to a monitor
-above the workbench to tap an item. Every tick travels through the singleton's
-signals like every other cross-window command here.
-
-**Done is green, not the accent.** `STATUS_ONLINE`, because on Breakaway the
-team accent *is* red, and a red tick at ten feet reads "fault", not "finished".
-That also keeps the brand's one-focal-red budget: red is the header and the
-progress bar, green is status.
-
-**Everything is sized from the live widget height** (`_apply_scale`), including
-an explicit `setFixedHeight` per row — without that, six items huddle at the top
-of a 55" panel with half the screen empty. A long list stops growing at the
-floor and runs off the bottom: the fix is fewer items, not smaller type.
-
-**Only deletion is admin-gated.** Writing and ticking items is data entry, like
-naming a CAN id, and the crew needs it mid-match-cycle. Deleting a whole list
-destroys every item on it, which is the same line this app draws for deleting an
-imported log session.
-
-**Content is the team's to write.** `_v8` seeds one empty list; the overlay's
-empty state points at the control panel rather than showing an empty box to a
-pit full of visitors. Do not pre-fill it with invented items.
-
-### Robot diagnostics boards (`app/widgets/diagnostics_overlay.py`, `robot_info_overlay.py`)
-
-Two live overhead boards built from the imported logs. **`fun_facts.py` talks to
-visitors; these talk to the crew** — every tile is something you would act on in
-the six minutes before the next match.
-
-| File | Role |
-|---|---|
-| `app/robot/diagnostics.py` | Every query. No Qt, no widgets |
-| `app/widgets/diagnostics_overlay.py` | Screen A's board — *is anything wrong?* |
-| `app/widgets/robot_info_overlay.py` | Screen B's board — *what, on which motor?* |
-
-**Split by question, not by column count.** A is glanceable from ten feet: a
-150px status block, a 108px headline naming the mechanism, four vitals, a
-subsystem strip. B is the board you walk up to when A has gone amber: the fault
-list by name, the per-motor table with CAN ids, and which log it all came from.
-Both widgets exist on both screens; `BOARD_CONTENT` on each subclass says which
-one joins that screen's rotation, and either can still be pinned on either screen.
-
-**Both sit on the shared chassis**, same as the slide rotation — the plate, the
-header band, the footer ledger. Two overhead panels showing two different visual
-languages in the same glance is the failure the chassis exists to prevent.
-
-**Each vital carries its shape across the match**, bled to the tile edge
-(`diagnostics.shape()`). A sag that dipped once reads differently from one that
-sat low all match — that is the difference between "carry on" and "change the
-battery", and a single number cannot say it. It reads `samples.sample_1s`, never
-`sample`: the per-second rollup is what it is for, and a full-resolution read of
-a nine-minute log to draw a 52-point line would be several hundred thousand rows
-for something two centimetres wide. The aggregate matches the tile's own figure,
-so the number and the line always agree.
-
-**Three ways to get a board on screen**, all through the same widget:
-
-1. **In the rotation.** It is the last stop in the cycle, at index *n* past the
-   last slide, so visitors see it come round. It only joins when a log has been
-   imported — an empty "no log" board every 45 seconds is worse than no board.
-2. **Pinned.** `content = "diagnostics"` / `"robot_info"` parks it and the
-   45-second timer stops touching that screen. Control → (screen) →
-   Standard Content.
-3. **Jumped to.** The control screen's slide picker lists it as the last entry,
-   tagged `LIVE BOARD`, and clicking it writes the same `slide_index` key as any
-   other slide.
-
-`_BOARD_INDEX` is what makes the rotation and the picker agree. `rotation_entries()`
-is the single source of that list — the picker and the presentation screen both
-call it, and if they ever disagree a click lands on the wrong slide.
-
-**Status is the robot's own judgment, not a threshold invented here.** See
-[`DATABASE.md`](DATABASE.md) for the reasoning and the three published figures
-that *are* used. **Red on these boards means a latched fault and nothing else** —
-when the robot is clean there is no red on the board at all, which is where the
-brand's one-focal-red budget goes. When a fault does latch, red marks **the
-fault and its origin only**: the count block, the offending tile's dot and
-trace, and the offending subsystem. A second unrelated fault raises the count
-to `2`; it does not paint a second region.
-
-**Motion, almost none.** One 6s breathing dot in the header saying the feed is
-live. A fault arriving does *not* flash. Latched means latched — the board never
-animates to get attention twice.
-
-**Neither board computes anything.** If a figure is wrong, it is wrong in
-`diagnostics.py`.
-
-**Layout is banded, not measured.** An earlier version measured where a list had
-landed and hid whatever fell past the fold; it read geometry that had not
-settled and hid rows there was room for — silently, which is the worst way for a
-diagnostics screen to be wrong. Row counts now come from `_budget(height)` and
-column counts from the width, both checked against a render at each panel size.
-Lists are sorted worst-first upstream, so what a cap drops is always the healthy
-end.
-
-**They re-read on `config.logs_changed`**, emitted by the robot panel after an
-import or a delete. That signal is also what finally wires `reload_slides()`,
-which existed and was documented but had never been called — so importing a log
-now regenerates the fun-fact slides too, with no power-cycle.
+A per-screen content setting, not a mode. Each screen has its own
+`checklist_id`. **Ticking happens on the control screen**, never the display.
+Done is green (`STATUS_ONLINE`), because red is the team accent and reads as a
+fault. Rows are sized from the live height with an explicit `setFixedHeight`.
+Only deleting a list is admin-gated. Content is the team's: ship it empty.
 
 ### The pit-front panel (`app/widgets/interactive_board.py`)
 
-1080×1920 portrait, 32" at standing height, touched by strangers. **The tabs are
-gone.** Everything the board has to say is on one surface at one glance, stacked
-as an interpretive panel rather than paged as an app:
+1080×1920 portrait, touched by strangers. One scrolling surface:
+identity → CAD → Act 472 → reach → programs → sponsors (the footer, pinned).
 
-    identity  →  CAD  →  Act 472  →  reach  →  programs  →  sponsors
+- **There is one CAD viewer and it moves.** A `QWebEngineView` is a Chromium
+  process; `ProjectScreen` lends it to the board (`attach_cad`) and takes it
+  back for the full-screen face (`detach_cad`). Never build a second.
+- Detail rises (`_DetailSheet`, 340 ms) over the lower two-thirds; the CAD stays
+  visible. Every programme card stays reachable.
+- **Every colour is a role** (`"ink"`, `"body"`, `"muted"`, `"faint"`,
+  `self.tile`, `self.rule`) re-resolved by `apply_theme()`. The one red is the
+  Act 472 plate.
+- Type scales from the panel's width (`_apply_scale`).
 
-each on a 2px rule. **The order is the argument:** this is the robot, this is
-what the team changed, this is how far it reached. Tapping only ever *deepens*
-what is already visible; it never navigates away from it.
+## Theming and the red budget
 
-- **The CAD is not a page.** It is the top 648px of the same panel — always
-  live, always orbitable, subsystem chips on its own floor. Focusing a subsystem
-  changes the caption under it and the pit LEDs; nothing else on the board moves.
-- **There is one CAD viewer and it moves.** A `QWebEngineView` is a whole
-  Chromium render process, so `ProjectScreen` *lends* its viewer to the board
-  (`attach_cad`) and takes it back for the full-screen `content="cad"` face
-  (`detach_cad`). Never build a second one.
-- **The red, spent once:** the Act 472 plate, a filled field with white type.
-  Chips, stats and cards stay carbon and white.
-- **About, collapsed to a line.** The About tab was a paragraph nobody standing
-  up will read; the five E's are now one mono rail under the wordmark.
-- **Detail rises, never replaces.** A tapped card raises `_DetailSheet` over the
-  lower two thirds — 340ms OutCubic — and **the CAD stays visible above it**. A
-  visitor who tapped a card has not asked to stop looking at the robot.
-- **The whole plate scrolls, and the sponsors do not.** `PlatePanel` puts the
-  column on a content widget inside one transparent, scrollbar-less
-  `QScrollArea` that fills the plate, with a pinned `footer_layout()` under
-  it; the sponsor strip lives in the footer. It used to be that only the
-  programme grid scrolled, which read as a broken page with one working
-  widget. The CAD stage no longer "gives" height on a short window — it is
-  its design height and the page grows below it.
-- **Every colour on the panel is a role, never a literal.** `_disp` /
-  `_body_lbl` / `_mono` take `"ink"` / `"body"` / `"muted"` / `"faint"`,
-  resolved against the chassis inks and re-resolved by `apply_theme()`;
-  tiles and cards take `self.tile` / `self.rule`; the chips, the CAD well
-  and the detail sheet each carry a light variant. Before this, the light
-  theme was white type on a white plate. The one literal left is white on
-  the red Act plate, which is red on both themes.
-- **Every card is still reachable.** The comp shows four programmes at rest; the
-  grid holds all of them, because they are real programmes the team runs and a
-  kiosk that hides them is lying by omission.
-- **Type scales from the panel's own width** (`_apply_scale`), not from a fixed
-  px, and not from height — the design is drawn against the 1080 *width*.
+Both stylesheets render from one QSS template (`app/theme.py`) over the
+`DARK`/`LIGHT` bundles in `app/brand.py`. `dark_qss()` is app-wide; light is
+per-window via `apply_theme(window, "light")`. The team accent is
+`primary_color`, applied inline.
 
-### Control screen re-execution
+**One red thing per surface, and on a dark ground red is a filled shape,
+never a letterform** (2.8:1). So: `RoundedButton` `secondary` is a neutral
+outline and there's one `primary` per panel; sliders, progress and selection
+fill white/carbon; `eyebrow()` and section headers are muted;
+`SelectableChip` (white fill) is the shared "chosen" mark. **On the control
+screen red means an exceptional state**: Judges or Lunch active
+(`ModeButton`). A status colour goes in a `StatusDot`, never in type; a
+disabled `primary` still paints red, so drop it to `secondary`.
 
-Never seen by a visitor, so beauty here is **clarity under a six-minute clock**.
-The architecture was already right — top bar, 220px sidebar, settings column —
-so this is a re-execution, not a re-plan.
+**Fonts:** `main._load_fonts` loads `assets/fonts/*.ttf` (Chakra Petch,
+Roboto, JetBrains Mono). The dev Mac also has the first two installed, so a
+missing bundled copy only shows on Windows.
 
-- **Three kinds of interface, same tokens.** Settings are a **ruled list**
-  (`SettingRow`: label left, control right, 64px floor, 1px close). The EQ is an
-  **instrument**. The CAN table is a **form**. `divider()` is the 2px *section*
-  rule; a row closes with 1px. Two weights is what makes the grouping visible
-  without reading.
-- **`PanelHeader` opens every panel the same way** — eyebrow naming the kind,
-  the name at 30px, one muted line of orientation, then the section rule.
-- **The brand chip is the admin door and now says so**: a mono `HOLD` hairline
-  under it, enough for an operator who has been told and invisible to a visitor.
-- **Fingers, standing.** Mode buttons are 124×46, nav and setting rows 56–64px,
-  and nothing is smaller than a thumb.
-- **The body scrolls as one — sidebar and settings column together — under
-  a fixed top bar.** The sidebar alone is ten rows and two headers, taller
-  than a short laptop window, and it had no scroll of its own: its last
-  entries simply did not exist on the pit machine. One scroll area
-  (`_body_scroll`) holds both columns, so one finger-drag moves everything
-  and the touch router's `_scrollable_ancestor` finds it from anywhere.
-- **A `QWidget` ignores a stylesheet border unless `WA_StyledBackground` is
-  set** — the rule simply never appears, silently. `SettingRow` sets it.
-- **The app-wide `QPushButton` rule carries 16px of horizontal padding**, which
-  ate the end of every screen name in the 220px sidebar. `ScreenCard` resets it.
+**Teams:** add an entry to `app/teams.py`.
 
-### Judges slides
+## Control screen
 
-Drop numbered PNG/JPG files into `assets/judges_slides/` (e.g. `01_intro.png`, `02_robot.png`). Files are sorted alphabetically. Click "Reload" in the control screen to rescan.
+Clarity under a six-minute clock. Settings are a ruled list (`SettingRow`,
+64px floor), the EQ an instrument, the CAN table a form; `divider()` is the
+2px section rule, rows close with 1px. `PanelHeader` opens every panel.
+Touch targets ≥ 46px. **The body scrolls as one** (`_body_scroll`, sidebar and
+settings together) under a fixed top bar.
 
-### LED strips (`app/leds/`)
+**Pit Systems:** LED Strips, Music, **Telemetry** (sidebar id `network`), Event
+Feed, Software Updates.
 
-USB serial to an Arduino Uno/Nano driving **SK6812-class RGBW** strips.
-**The firmware owns the animation loop** — the app sends short commands, never
-pixel frames. This is not
-a style preference: on AVR, `FastLED.show()` disables interrupts for the whole
-strip write (~30µs/pixel, so ~9ms at 300 LEDs) and drops incoming serial bytes.
-Streaming corrupts, and worse the longer the strip. Commands also mean the pit
-stays lit if this app crashes.
+**Telemetry (`network_panel.py`) is the home of all telemetry.** It has the
+event relay (this machine's socket *and* the relay's own counters), which route
+each piece of event data came through, the overhead displays, the LED
+controller, recent drops, and robot logs (`RobotLogPanel`, embedded whole).
+It redraws on signals; a 5 s tick only keeps ages honest.
 
-| File | Role |
-|---|---|
-| `protocol.py` | COBS framing, CRC-8, opcodes, payload builders. Pure Python — no Qt, no I/O, so it is testable without hardware |
-| `link.py` | `SerialLink` QThread: VID/PID discovery, HELLO handshake, write queue, 1Hz heartbeat, reconnect w/ backoff. `MockLink` when `PIT_LEDS_FAKE=1` |
-| `effects.py` | Named presets; `MODE_PRESETS` maps display mode → preset |
-| `service.py` | `_LEDService` singleton — owns intent, replays it on reconnect |
-| `palette.py` | Brand hex → the saturated primary actually sent to the strips |
-| `firmware/pit_leds/pit_leds.ino` | The controller. Pins, per-unit pixel counts, strip placement and the switch pins are all in the config block at the top |
-| `firmware/pit_probe/pit_probe.ino` | Diagnostic sketch: finds which pin a run is on, how long it is, and its pixel format. Not the controller — flash `pit_leds` back afterwards |
-| `firmware/pit_switch_probe/pit_switch_probe.ino` | Diagnostic sketch: finds which pins the three-way switch is on. Plain-text serial monitor; `u`/`c`/`d`/`r` prints the config block. Flash `pit_leds` back afterwards |
-| `tools/led_probe.py` | Drives the probe. `id` / `ruler` / `solo` / `flood` / `rgbwraw` |
-| `tools/led_color_check.py` | Self-paced colour check against the real controller |
+**Screen placement (`app/display.py`):** per-screen `display` (monitor index,
+unplugged → primary) and `fullscreen`. `place()` runs on every freshly built
+window. A screen published to the network is built with
+`WA_DontShowOnScreen` and never placed.
 
-**The strips are RGBW — four bytes per pixel, channel order RGBW.** This was
-measured on the real pit (2026-09-03), and getting it wrong is the single
-nastiest failure mode in this whole subsystem: drive an RGBW strip with 3-byte
-pixels and your groups slide against its 4-byte ones, realigning only every 12
-bytes, so a **solid colour comes back as a 3-pixel repeating green/white/blue
-pattern**. Black still works perfectly (zero bytes are zero at any alignment),
-so it reads as "the strip is half broken", not "wrong pixel format".
+## Admin lock (`app/admin.py`, `admin_bar.py`)
 
-**FastLED's own `setRgbw()` cannot be used on AVR** — it allocates a 4/3-size
-buffer on every show and there is no room. `packAndShow()` packs the bytes by
-hand into a shared `wire` buffer instead: three RGBW pixels occupy exactly four
-CRGB slots, so the stream is exact with no padding. The controllers are declared
-`RGB` (not `GRB`) so those bytes are emitted verbatim, brightness is applied
-during packing, and `showLeds(255)` is deliberate — any scaling FastLED did
-would corrupt bytes it thinks are colours but the strip reads as pixel data.
-For the same reason `setCorrection()`, `setDither()` and
-`setMaxPowerInVoltsAndMilliamps()` are all off; budget power with
-`MAX_BRIGHTNESS` instead.
+The Breakaway mark is the door: an inline 46px `AdminBar` (Fixed size
+policies, or it eats the window). **Closing always re-locks; never remember
+the session.** Gated widgets are **hidden, not disabled**: put them in one
+container and toggle it on `admin.lock_state_changed`. The LED kill switch is
+never gated. PBKDF2-HMAC-SHA256, one row. **It's a UI lock, not a security
+boundary**; keep the docstring honest. Test with `w.isVisibleTo(panel)`, not
+`isVisible()`.
 
-**Colours are snapped to saturated primaries before they hit the wire**
-(`palette.snap`). RGBW pixels render a mixed brand hex washed out — the team red
-`#C82027` is only 13% green and 15% blue and came out visibly **pink**, while
-pure `(200,0,0)` came out correctly red. Per-channel gain correction was tried
-and abandoned; it needs re-tuning per strip, per batch, per colour. The brand
-value is unchanged everywhere else — `leds.color` still reports the true hex and
-every screen still uses it. **Do not send brand hexes straight to the wire.**
+## LED strips (`app/leds/`, `firmware/`)
 
-**Two channels, one axis.** The pit is three *units* but only **two electrical
-channels**, and that is a fact about the wiring, not a simplification: **pin 6
-feeds LEFT and RIGHT through a Y-split** (76 px each) and **pin 5 feeds CENTRE**
-(93 px). `LEFT_PIN 6` / `RIGHT_PIN 6` in the original sketch was never a typo —
-it described the splitter. Left and right therefore **always mirror and can
-never show different content**, which is what the centre-out animations want
-anyway: a left pixel and its mirrored right pixel are the same distance from the
-middle of the pit and should be the same colour. The sides are addressed by
-*distance* from centre (positive origin, `dir -1`) rather than a signed
-position, because one channel is at `+d` and `-d` at once.
+USB serial to an Arduino driving **SK6812 RGBW** strips. **The firmware owns
+the animation loop**; the app sends short COBS/CRC-8 commands, never pixel
+frames (on AVR, `show()` disables interrupts and drops serial bytes). Change
+`protocol.py` and the `.ino` together.
 
-Every animation is a function of a pixel's
-**distance from the true centre of the pit**, not from its own strip's
-pixel 0, so a breathe blooms outward from the middle and reaches both far ends
-together. Each strip declares `origin` (where its pixel 0 sits, in pixel-widths
-from true centre) and `dir` (+1/-1) in the `strips[]` table; gaps between units,
-unequal lengths and a backwards-wired strip are all just numbers there. Positions
-are held in **half-pixel units** internally — an even-length strip has no pixel on
-its own midpoint, and whole-pixel maths puts every "symmetric" effect half a pixel
-off on one side.
+**Measured facts, don't re-guess (2026-09-03 / 09-08):**
 
-**Measured orientation — do not re-guess these.** Both came out wrong on the
-first build and only a *chase* reveals either; a breathe or a solid looks
-identical either way, so "the breathe looks fine" proves nothing about them.
+- **RGBW, 4 bytes/pixel, order RGBW.** Wrong format shows a solid colour as a
+  3-pixel green/white/blue pattern while black still works. FastLED's
+  `setRgbw()` can't be used on AVR (RAM); `packAndShow()` packs by hand, the
+  controllers are declared `RGB`, `showLeds(255)`, with no correction, dither
+  or power limiting. Budget power with `MAX_BRIGHTNESS`.
+- **Two channels:** pin 6 → LEFT and RIGHT through a Y-split (76 px each,
+  always mirrored), pin 5 → CENTRE (93 px). `SET_COLOR` segment `0` = centre,
+  `1` = sides, `0xFF` = both; an optional 5th byte is the W die (fw ≥ 2.2).
+- Effects are functions of **distance from the pit's centre**, in half-pixels.
+  **Pixel 0 of CENTRE is the pit's centre** (`origin 0`), and
+  `SIDES_INDEX0_OUTER 0`. Only a *chase* reveals either being wrong.
+- **Snap colours to saturated primaries (`palette.snap`)** before the wire;
+  brand red came out pink. Never send brand hexes straight to the strips.
+- **White is the W die**, never R+G+B (tinted, 3× current).
+  `OVERRIDE_WHITE_BRIGHTNESS` is 160 (~2.1 A); raise only against a known
+  supply.
+- **Static frames must not re-clock the strips** (the `dirty` flag): with
+  unconditional shows the HELLO handshake failed and the board looked dead.
+- **Three-way switch: WHITE / app / RED**, hard overrides; serial keeps being
+  read in every position. Up is D7 (`SW_PIN_UP 7`), down is D2
+  (`SW_PIN_DOWN 2`); the input shield's labels are wrong. **Probe a pin
+  before condemning it** (`firmware/pit_switch_probe`). `SW_ACTIVE_LOW` wrong
+  reads as a jammed switch. A throw of `255` degrades to two positions.
+- **Resting look = white work light** (`MODE_PRESETS`, brightness 160). No
+  host → violet sparkle (fw 2.4). **No manual OFF position**, on purpose.
+- **SRAM:** 169 px ≈ 1560 B of 2 KB; ~250 px is the ceiling, then use an ESP32.
+- **Move `EEPROM_MAGIC` on any `State` change** (now `0xBE`).
+- Alerts are overlays (`leds.start_alert/clear_alert`); intent keeps updating
+  underneath; the flash is host-driven at 3 Hz.
+- **Known bug:** `SET_PIXELS` is overwritten by SOLID's next render; nothing
+  sends it.
 
-- **The pit's centre point is pixel 0 of the CENTRE run** (the back end), so
-  that run has `origin 0`, not `-(count/2)`. It runs *away* from the middle of
-  the pit rather than spanning it. With `-(count/2)` the chase started halfway
-  along the strip and expanded both ways.
-- **`SIDES_INDEX0_OUTER` is 0** — a side run's pixel 0 is at its *inner* end,
-  nearest the centre. With this wrong the sides swept outside-in while the
-  centre swept middle-out, and the two halves of the pit visibly disagreed.
+Tools: `firmware/pit_probe`, `tools/led_probe.py`, `tools/led_color_check.py`.
 
-`SET_COLOR`'s segment byte: `0` is CENTRE, `1` is SIDES, `0xFF` both. `INFO`
-reports **two** segments and 169 px; the app reads the count rather than
-assuming. **Since fw 2.2 `SET_COLOR` takes an optional fifth byte, W** — the
-white die, per segment. It is the only real white these strips have (RGB
-white is tinted and three times the current) and the queue alert uses it to
-hold the centre run white while the sides carry the alliance colour. Only
-SOLID mode carries the host's W; an older firmware ignores the byte and that
-segment shows the RGB part alone. `EEPROM_MAGIC` moved `0xBB → 0xBC` for the
-added `w[]` in `State`. `leds.supports_white` reads the version.
+## Music (`app/music/`, `eq_field.py`)
 
-**The three-way switch is WHITE / app / RED, and the middle is the normal
-position.** Up is a full-white work light, down is solid red with no host in the
-loop, and the centre hands the pit to the app. Both overrides are hard — they
-ignore the host, the saved state and the current mode — because the point of a
-physical switch is that it still works when the interesting failure has already
-happened. Serial keeps being read and ACKed in **every** position and commands
-still land in `state`, so flicking back to the middle resumes on what the app has
-been asking for, with no round trip. The truth table lives only in
-`switchPosition()`.
+Local-first. Spotify is out: internet for every call, a 5-user dev cap, no PCM
+so no EQ. **libVLC is the engine because it's the only one with an EQ.**
 
-**The resting look is the white work light, on the W die.** `MODE_PRESETS`
-maps standard *and* judges to the `white` preset (brightness 160, matching
-the firmware's WHITE switch — every pixel lit is the full-current state the
-supply was sized against; raise both together or neither). A hand-picked
-colour or animation turns the die off; the team colour is remembered for
-when a colour look is chosen but the work light does not follow the team.
+- **Windows bundles libVLC** (`tools/fetch_vlc.py` → `vlc/`, SHA-256 checked).
+  `engine._point_at_bundled_vlc()` runs **before `import vlc`** and sets
+  `PYTHON_VLC_LIB_PATH` / `PYTHON_VLC_MODULE_PATH` (a missing module path plays
+  silently with no error) plus `os.add_dll_directory`. `python-vlc` raises
+  `OSError`, not `ImportError`. Keep the licence files.
+- **The EQ is drawn as a response curve**: the sum of ten peaking filters,
+  ±20 dB. Press anywhere to move the nearest band, which stays locked for the
+  drag. Presets are chips in authored order (Flat first).
+- **The band display is a real measurement**: one band-pass biquad per band,
+  Q 1.41, on an **output-less shadow decoder** carrying the same EQ (libVLC
+  audio callbacks replace the output, so the pit's player is never touched).
+  Floor −48 dBFS; decay 90 dB/s; repaint 33 ms (the decoder delivers every
+  ~42 ms); resync at 2 s/350 ms. Colour is anchored to the field; red is the
+  top eighth only. The readout paints last. **Off by default**, with no timer
+  while off. `tools/eq_check.py` proves it.
+- No explicit-content filter (removed in `_v5_drop_explicit`); the team curates.
 
-**With no host the strips run a violet sparkle.** Compiled default since
-fw 2.4 — a moving pattern says the controller is alive and waiting, and
-violet is a colour nothing else in the pit uses, so it can never be read as
-an alliance, an alert, or the app having died mid-sequence. It shows at boot and five seconds after the app stops talking
-(the app blanks the strips on exit; the watchdog does the rest).
-`EEPROM_MAGIC` moved (`0xBD`, then `0xBE`) so a saved default was discarded.
+## Robot logs (`app/robot/`)
 
-**There is deliberately no manual OFF.** Dark is what a pit looks like when
-something is broken, and a switch position indistinguishable from a dead board
-costs an hour at an event. The app's kill switch still turns the strips off on
-purpose.
+`.hoot` (owlet → `.wpilog` in scratch space), `.wpilog`, and Phoenix `.txt`
+are each a `_Source` yielding `(t_ms, device_type, can_id, signal, num, label)`;
+storage can't tell them apart. **Add a format by writing a `_Source`.** Schema,
+queries and the four invariants that give plausible wrong answers are in
+DATABASE.md; read them before writing a query.
 
-**White comes from the W die, not from R+G+B.** `packAndShow()` takes a `wByte`
-for exactly this: the override fills `leds[]` black and passes 255. Mixing white
-from the three colour channels is tinted *and* three times the current for the
-same apparent brightness, and full white is the one state where every pixel is
-lit at once — which is why `OVERRIDE_WHITE_BRIGHTNESS` is 160 (~2.1 A at 169 px)
-rather than matching red's 200. Raise it only against a known supply.
+- `wpilog.entry_identity()` scans right to left for `<Type>-<digits>`, so hoot
+  and text land on the same `device` rows and CAN names carry over.
+- Application signals go to pseudo-device `Robot`, CAN id −1, hidden from the
+  CAN map. `classify()` is the Phoenix catalogue only; anything with `/` is
+  telemetry.
+- Unstorable types are counted in `ImportResult.skipped`; numeric arrays
+  expand up to `MAX_ARRAY_WIDTH` 32 (the PDH has 24 channels).
+- Scratch goes to `$PIT_LOG_SCRATCH` → temp → beside the source, never a log
+  archive. **The duplicate check runs before owlet.**
+- `owlet.describe()` names OS, CPU and binary; `_PATTERNS` picks by platform.
+- **Fun-fact slides: every number is real**, and jokes are at our own expense.
+- CAN naming is data entry (not gated); deleting a session is gated.
 
-**The switch is on an input shield, and the shield's labels lie.** Measured
-2026-09-08 with `firmware/pit_switch_probe`: the blue throw sits in the socket
-marked **3** and reads on **Arduino D2**. Never type a pin number off that
-shield into the firmware — probe it. The offset is why the original wiring
-notes looked plausible and were unusable.
+## Pit LAN screens (`app/webcast/`)
 
-**D7 was written off as unusable and that was wrong — re-probe before you
-believe a dead pin.** Measured 2026-09-08 it sat at 0V in *every* switch
-position, beating the internal pull-up, so the green throw landed there was
-invisible all day and the pin was condemned in these notes. Re-probed after
-rewiring: D7 floats HIGH when open and pulls cleanly LOW on the throw, in all
-three positions. It now carries the green throw (`SW_PIN_UP 7`). The pin was
-never the fault; the connection into it was, and a note saying "that pin is
-dead" outlived the wiring it described. **A throw that does not respond is a
-measurement to take, never a pin to condemn from documentation** — including
-this documentation. D5/D6 are the LED data lines and D0/D1 the serial port;
-those three exclusions are real. Every other probed pin floats clean.
-
-**`SW_ACTIVE_LOW` is the bias, and it is the setting that fails silently.** 1 is
-a GND common read against internal pull-ups (closed = LOW); 0 is a +5V common
-read against the shield's pull-downs (closed = HIGH), with the internal pull-ups
-off so they cannot fight it. Set it wrong and the switch does not error — it
-reads as jammed in whichever position the wrong bias implies, which is
-indistinguishable from a switch nobody wired.
-
-**A throw of `255` is supported, not broken.** `SW_PIN_UP` / `SW_PIN_DOWN` are
-named for what they *do*; if white and red come out swapped, swap the two
-numbers, because which throw is physically up is a mounting fact no probe can
-reveal. 255 means that throw is not on a readable pin yet, and the build simply
-degrades to two positions — that throw, and everything else — so the pit stays
-usable while somebody finds a socket for the other wire. Filling in the number
-is the only change needed to get the third position back.
-
-**SRAM ceiling:** the ATmega328P has 2KB. RGBW costs a pixel buffer (3B/px) *and*
-a wire buffer (4B/px for the longest channel), so the current 169 px build sits
-at ~1560B with 488B free (~428B once `HAS_MANUAL_SWITCH` is 1 — the switch's
-log strings). Roughly 250 px total is the practical limit here;
-past that, move to an ESP32. If you change the counts, nothing in the app needs
-editing — `HELLO` reports the geometry and the app adapts.
-
-**A static frame must not keep re-clocking the strips.** Each `show()` holds
-interrupts off for milliseconds and the AVR's UART keeps only *two* bytes
-without its ISR, so any frame arriving mid-write is destroyed. At ~7ms of
-blackout per 16ms frame the HELLO handshake failed on almost every attempt —
-the board looked dead, exactly like the no-firmware case. The `dirty` flag
-fixes it: static modes (SOLID, OFF) draw once and then stop touching the
-strips, and `showAll()` drains the port between the two channel writes. **Keep
-that property** — anything that shows unconditionally every frame breaks the
-link, silently and intermittently.
-
-**`State` changed shape** three times — per-strip colour (`0xB9` → `0xBA`),
-three strips down to two (`0xBA` → `0xBB`), and the per-segment W channel
-(`0xBB` → `0xBC`) — and the magic moved twice more (`0xBD`, `0xBE`) to force a new
-no-host default over a saved one. Move `EEPROM_MAGIC` again on any further change: an old saved struct read into a new layout garbles every field
-after it rather than failing.
-
-**Known bug, not yet fixed:** `SET_PIXELS` writes into `leds[]` and then
-`render()` overwrites it on the very next frame, because the op sets
-`state.mode = MODE_SOLID` and SOLID repaints every pixel from `state`. The op
-has therefore never worked. Nothing in the app sends it.
-
-Develop without hardware: `PIT_LEDS_FAKE=1 uv run main.py`.
-
-If you edit the protocol, **change both sides** — `protocol.py` and the `.ino`
-share the opcode table, the CRC and the COBS implementation.
-
-### Music (`app/music/`)
-
-Local-first media hub. Spotify is deliberately *not* the foundation: it needs
-internet for every call (this app exists for venues without it), Dev Mode caps
-at 5 users and requires the owner to hold Premium, and there is no PCM access so
-it can never be equalised. `sources.py` has the full reasoning and a stub.
+The overhead screens can be published to Raspberry Pis over Ethernet. **The
+browser draws; the pit machine sends state.** Rasterising frames cost 22–40% of
+a core; state costs 0.1%.
 
 | File | Role |
 |---|---|
-| `engine.py` | `MusicEngine` protocol; `VLCEngine` (real) and `NullEngine` (no VLC runtime) |
-| `library.py` | Folder scan, mutagen tags, SQLite index. Re-scan is idempotent; vanished files are flagged `missing`, not deleted |
-| `eq.py` | Ten bands, pit-tuned presets, persistence |
-| `sources.py` | `LocalSource` (the product) and `SpotifySource` (stub) |
-| `service.py` | `_MusicService` singleton — transport, queue, volume cap, duck, EQ |
-
-**libVLC is chosen for the EQ.** Qt Multimedia has no DSP hooks at all, so an
-equaliser is impossible through it. `python-vlc` raises **`OSError`, not
-`ImportError`**, when the native runtime is missing — catch both; without it the
-app still boots and the panel explains why.
-
-**Windows ships no libVLC, so the bundle carries one.** `tools/fetch_vlc.py`
-pulls the official VideoLAN zip (SHA-256 checked against their own published
-digest), keeps `libvlc.dll`, `libvlccore.dll`, `plugins/` and the licence
-files in `vlc/`, and `pit_display.spec` includes that tree on Windows only —
-optional, so a build without it still succeeds and simply has no audio. CI
-runs the fetch before every build. macOS and Linux resolve libvlc through the
-system and get nothing.
-
-Three things about it are load bearing:
-
-- **`engine._point_at_bundled_vlc()` runs before `import vlc`**, because
-  python-vlc resolves the native runtime *at import time* and there is no
-  second chance once that import has failed. It sets `PYTHON_VLC_LIB_PATH`
-  and `PYTHON_VLC_MODULE_PATH` with `setdefault`, so a machine where somebody
-  set them deliberately is left alone.
-- **`PYTHON_VLC_MODULE_PATH` is the one that fails silently.** libVLC with no
-  plugin directory loads, returns an `Instance`, and plays *nothing* — no
-  codec, no audio sink, and no error. `--self-check` counts the plugins rather
-  than assuming them, and `fetch_vlc.py` refuses to finish with zero.
-- **`os.add_dll_directory` is needed on top of both.** `libvlc.dll` links
-  against `libvlccore.dll` beside it, and since 3.8 Windows no longer searches
-  a DLL's own folder for its dependencies.
-
-Licensing: these are unmodified upstream binaries, libvlc/libvlccore LGPLv2.1+
-with several plugins GPLv2+. The `COPYING*` files and a `SOURCE.txt` naming the
-version and origin ship beside them. Do not strip those to save space.
-
-Swapping to a sounddevice+numpy pipeline later (for beat-to-LED sync) means
-implementing `MusicEngine` — nothing above it changes.
-
-### Admin lock (`app/admin.py`)
-
-Gates the advanced LED controls and the whole equaliser. Operator guide:
-[`ADMIN_GUIDE.md`](ADMIN_GUIDE.md).
-
-**The Breakaway mark in the control screen's top-left is the door** — its
-`mousePressEvent` is bound to `ControlScreen._on_brand_clicked`, which toggles
-the inline `AdminBar` (`app/widgets/admin_bar.py`) that sits between the top bar
-and the body. Not a separate screen and not a modal, deliberately: the operator
-needs to watch the gated controls appear as they unlock.
-
-**The bar is a 46px strip and must stay one.** It appears over the operator's
-actual work, so it hugs its content: `QSizePolicy.Fixed` vertically on the bar
-*and* the `QStackedWidget`, a pinned `_ROW_H` on the stack, and compact 30px
-controls. Without the Fixed policies it expands to fill whatever vertical space
-the parent layout has spare — which was most of the window. The status message
-shares the row (replacing the hint text) rather than taking a second line; only
-the change-password form grows it, to 85px, and only while open.
-
-**The lock is session-only and re-locks on close.** `_close_admin()` calls
-`admin.lock()` unconditionally, so hiding the bar always drops the unlock and
-re-opening demands the password again. There is no persistence and no
-stay-unlocked option — the display runs unattended for hours. Do not "improve"
-this by remembering the session.
-
-**What is gated:** LED brightness/speed/looks/colour/follow/save (but *never*
-the on-off kill switch, which any operator may need), and the entire EQ block.
-Gated widgets are **hidden, not disabled** — a greyed-out control invites
-someone to go looking for the password.
-
-To gate something new: subscribe to `admin.lock_state_changed(bool)` and call
-`setVisible()`, following `LEDPanel._apply_lock` / `MusicPanel._apply_lock`. Put
-the gated widgets in **one container** and toggle that, rather than tracking a
-list of individual widgets.
-
-Credential: PBKDF2-HMAC-SHA256, one row in `admin_credential` — see
-[`DATABASE.md`](DATABASE.md). Default password is `Password`; the bar nags until it is changed.
-**It is a UI lock, not a security boundary** — the DB is a local file. The
-docstring in `app/admin.py` says so at length; keep that framing honest.
-
-**Testing gated widgets:** use `w.isVisibleTo(panel)`, **not** `w.isVisible()`.
-The latter is False whenever any ancestor is hidden (e.g. a non-selected settings
-panel), which tells you nothing about the gate.
-
-### The equaliser (`app/widgets/eq_field.py`)
-
-**Ten sliders in a row is a list of ten numbers, and nobody tuning a room
-thinks in ten numbers.** They think in a shape — bottom pulled down, mud
-scooped, presence lifted — so the ten bands are drawn as the response curve
-they describe: a dashed 0 dB rule, a rail per band, one continuous white line
-through ten hollow handles, then the gain readout and the Hz row. The numbers
-are unchanged; only how they are shown is.
-
-- **±20 dB spans the full field**, so 0 dB is the centre and the dashed rule is
-  what the curve is read against.
-- **Press anywhere and the nearest band's handle goes there**, then follows the
-  finger and *stays on that band* — re-picking the band from x on every move
-  smears a drag across its neighbours. This panel is touched, so the whole
-  field is the target rather than ten 13px handles.
-- **Presets are chips, not a combo**: there are five, they are what an operator
-  reaches for, and a dropdown hides four of them behind a click mid-cycle.
-  `eq.all_presets()` returns the built-ins in **authored** order — Flat to judge
-  the room, then Pit Default, then the three exceptions — because sorting them
-  by name put "Crowded" first, which is nobody's starting point.
-- The preamp control lives **in the card header with its readout**, not in a row
-  of its own; two "Preamp −2" labels is the same value said twice.
-
-`SelectableChip` (`brand_widgets`) is the shared "one of many is chosen" mark —
-white fill, carbon type. Mode buttons, CAD subsystem chips and EQ presets are
-all the same object, and selected-is-red would put four red things on a panel
-allowed one. `ModeButton` is the single exception: Judges and Lunch active *are*
-red, because those are the exceptional states the budget exists for.
-
-**Mode buttons follow `config.mode_changed`, not the click.** They used to be
-updated only by the handler that set the mode, so anything else that moved it
-left the top bar claiming a mode that was no longer live.
-
-### Media
-
-No explicit-content filter — the team pre-curates the music folder. Do not
-re-add per-track filtering; it was removed in migration `_v5_drop_explicit`
-(see [`DATABASE.md`](DATABASE.md)).
-Operator instructions for every media type: [`MEDIA_GUIDE.md`](MEDIA_GUIDE.md).
-
-### Robot logs (`app/robot/`)
-
-The data pipeline: a raw file off the robot becomes rows the pit screens can
-query. **Schema, queries and the traps are in [`DATABASE.md`](DATABASE.md)** —
-this section covers only the code layout.
-
-```
-robot.hoot   ──owlet -f wpilog──▶  .wpilog ──┐
-robot.wpilog ───────────────────────────────┼──▶ (t_ms, device, can id, signal, value)
-…_detailed.txt ──parser.parse_line──────────┘                    │
-                                                                 ▼
-                     device · signal · series · sample · session_constant · fault_event
-```
-
-| File | Role |
-|---|---|
-| `owlet.py` | Runs CTRE's extractor to turn a `.hoot` into a `.wpilog` |
-| `datalog.py` | WPILib's `.wpilog` reader, vendored — see its docstring for the three changes |
-| `wpilog.py` | `.wpilog` → records, and entry name → `(device, can id, signal)` |
-| `parser.py` | Text-export line grammar, filename grammar, `classify()`. Pure, no I/O |
-| `ingest.py` | The pipeline. One streaming pass; own connection, own thread |
-| `repository.py` | Every query the screens use |
-| `distance.py` | Wheel odometry |
-| `fun_facts.py` | Silly-but-true slides for the standard rotation |
-| `app/widgets/robot_panel.py` | Import button + the CAN-id name table |
-
-**Three input formats, one storage path.** Each is a `_Source` in `ingest.py`
-yielding `(t_ms, device_type, can_id, signal, num, label)`, and the storage code
-below them cannot tell which produced a row. Add a fourth format by writing a
-`_Source`, never by touching the loop.
-
-- **`.hoot`** — what the controller writes, and the one to reach for. It is the
-  only source carrying the controller serial. `.hoot` is a closed CTRE format,
-  so the first stage shells out to `owlet` (`tools/owlet/`, see its README) to
-  extract it to a `.wpilog` in a scratch directory that is deleted afterwards.
-  The scratch copy is the size of the hoot, so it goes **beside the source
-  file**, not in the system temp dir.
-- **`.wpilog`** — the roboRIO's own DataLogManager file. This is where the
-  team's application signals live (robot states, PDH currents, shooter
-  setpoints); none of them exist in a hoot.
-- **`.txt`** — a Phoenix "detailed" export somebody converted by hand. Kept
-  working because a season of them exists.
-
-**A hoot-derived wpilog lands on the same `device` rows as the text export.**
-`/Phoenix6/TalonFX-2/MotorVoltage` resolves to `("TalonFX", 2, "MotorVoltage")`,
-which is exactly what the text grammar reads from
-`('TalonFX', '2', 'MotorVoltage')` — so the CAN-id names the crew already typed
-still apply, whichever way the log came in. `wpilog.entry_identity()` scans the
-path **right to left** for a `<Type>-<digits>` segment, because a bus or
-namespace above the device can itself contain a hyphen and digits.
-
-**Application signals go to one pseudo-device: `Robot` at CAN id −1.** They have
-no CAN address, and the signal name is the whole path
-(`RealOutputs/Shooter/Setpoint`). It is created already named, and
-`repository.devices()` filters it out with `can_id >= 0` — the CAN map answers
-"which motor is CAN 11", and a row claiming CAN −1 is a lie in it. Every other
-query joins `device` normally and sees it.
-
-**`classify()` is the Phoenix catalogue and only that.** A signal name
-containing `/` is application data written by the team's own robot code, and
-CTRE's naming says nothing about it — a robot-code `Faults` bitfield folded into
-intervals would throw the value away. Those are always `telemetry`; a constant
-one still reaches `session_constant`, because the importer decides that from the
-data rather than the name.
-
-**Not everything in a wpilog is storable.** `sample.v` is a REAL, so string
-arrays, msgpack and raw bytes are dropped and counted in `ImportResult.skipped`;
-a string signal past `MAX_ENUM_LABELS` distinct values is abandoned rather than
-allowed to grow an unbounded dictionary table. Numeric arrays are *not* dropped
-— a `double[]` pose becomes `Pose[0]`, `Pose[1]`, `Pose[2]`. The import panel
-reports both, because a log that is a third unstorable is one somebody needs to
-look at, and silence would read as a clean import.
-
-**`MAX_ARRAY_WIDTH` is 32 because the PDH has 24 channels.**
-`/PowerDistribution/ChannelCurrent` arrives as one 24-wide `double[]`, and
-per-channel current is something the pit actually looks at. It was 16 first, and
-that silently dropped channels 16–23.
-
-**A wpilog compresses ~1.1×, a hoot ~19×, and both are right.** WPILib's DataLog
-already writes only on change, so the importer's change-only pass has nothing
-left to remove. Read the ratio against `source_kind`; on its own it looks like a
-broken import.
-
-**`owlet.describe()` names the OS, the CPU and the binary chosen**, and the
-panel shows it. `_PATTERNS` maps `platform.system()` × `platform.machine()` to
-an ordered list of filename globs, so a Windows-on-ARM machine falls back to the
-x86-64 build under emulation and Linux picks by architecture. "No owlet for your
-platform" is the one import failure an operator can neither diagnose nor fix
-from the error text alone — and the pit machine is Windows while nothing this is
-developed on is.
-
-**The conversion scratch directory does not go next to the log.** Order is
-`$PIT_LOG_SCRATCH`, then the system temp dir, then — only if temp lacks the
-space — beside the source. Logs arrive on USB sticks, shared drives and
-read-only export folders; a crash mid-import must not strand a multi-gigabyte
-`.pit_owlet_*` directory in somebody's log archive.
-
-**The duplicate check runs before the source is opened.** Opening a `.hoot`
-means running owlet, and spending four minutes extracting a log only to be told
-it was already imported is the kind of thing that happens in a six-minute pit
-cycle.
-
-Measured on the real 3.85 GB export: 62,118,775 raw rows → 3,263,543 stored in
-75 s; 83 MB of telemetry, main DB still ~270 KB. Summary queries under 0.5 ms.
-
-**Before writing any query over this data**, read the Invariants section of
-[`DATABASE.md`](DATABASE.md). Four of them produce plausible wrong answers
-rather than errors: the non-unique `(series_id, t_ms)` key, millisecond (not
-microsecond) timestamps, change-only samples needing zero-order-hold
-integration, and motor-shaft (not wheel) units on the drive motors.
-
-**Fun-fact slides.** `fun_facts.slides()` turns the imported log into `Slide`
-objects that `PresentationScreen.rotation_slides()` appends to each screen's
-authored `SLIDES`. Every one is the **Figure** archetype, carrying `figure` and
-`unit` separately from its title rather than leaving the panel to parse a number
-back out of a string, plus an eyebrow naming what was measured — a visitor
-reading "187" needs "peak current draw" before the joke lands. Two rules: **every number is real** (nothing invented
-or rounded for effect — a visitor who asks "is that true?" gets a yes), and the
-jokes are at our own expense. Returns `[]` with no import, so the rotation just
-omits them. Facts are read at construction; `reload_slides()` picks up a new
-import without a restart.
-
-**The CAN-id name map is the manual step.** `device` rows appear automatically
-on import with `label` NULL; names are typed in **Control Screen → Pit Systems →
-Robot Logs** and persist across imports. Naming is intentionally **not**
-admin-gated (it is data entry); deleting a session is, because it destroys
-samples.
-
-### The Nexus event feed (`app/nexus/`)
-
-**[`NEXUS.md`](NEXUS.md) is the reference** — setup, every endpoint, every
-field and what it means at the pit, the signals, and the freshness rule. Read
-it before drawing a match on any screen.
-
-```
-frc.nexus ──GET /event/{key} every 30s──▶ EventStatus ─┐
-          ──POST webhook (optional)──────▶             ├─▶ `nexus` signals ─▶ boards
-          ──pits · map · inspection · teams · alliances ┘   every 5 min
-```
-
-| File | Role |
-|---|---|
-| `app/credentials.py` | **The secret folder** — `secrets/`, one file per credential, gitignored |
-| `app/provision.py` | **The pit setup file** — keys + event as one JSON, applied by drop-in at launch, the panel, or `--provision` |
-| `app/nexus/api.py` | Every endpoint and schema as typed models; `FakeClient`. No Qt |
-| `app/nexus/settings.py` | `nexus.json` — event key, cadences, webhook switch |
-| `app/nexus/webhook.py` | The receiving server for the two push webhooks |
-| `app/nexus/service.py` | `_NexusService` — polling, freshness, "our match" |
-| `app/nexus/alerts.py` | `_AlertService` — first/second queue and inspection → strips + banner |
-| `app/widgets/queue_banner.py` | The alliance-colour band along the bottom of both overhead screens |
-| `app/widgets/next_match_overlay.py` | The **Next Match** board — `content="next_match"` on either overhead screen: our next match, a live countdown to the next queue call, the four estimates, who with, who against |
-| `app/widgets/nexus_panel.py` | Control → Pit Systems → Event Feed |
-| `tools/nexus_probe.py` | The CLI: `events` / `status` / `team` / `all` / `--raw` / `--fake` |
-| `tools/pit_setup.py` | `make` / `show` / `apply` a setup file for a pit machine |
-
-Five things are load bearing:
-
-- **Keys live in `secrets/`, never anywhere else.** `credentials.read(name)`
-  is the only way to get one; `PIT_SECRET_<NAME>` overrides the file. The
-  database gets copied to sticks and attached to bug reports, `nexus.json` is
-  something an operator opens in Notepad, and `app/` is git. The update token
-  predates the folder and stays where it was — moving a credential that pit
-  machines already carry silently turns updates off on every machine that
-  misses the migration.
-- **Newest `dataAsOfTime` wins, poll or push.** `_offer_status()` is the one
-  door every snapshot goes through, and it drops anything not newer than what
-  is held. The spec says pushes repeat and arrive out of order; a poll can
-  land between two pushes. A match push is folded into the held snapshot the
-  same way — one match replaced, the clock moved.
-- **"Our" match is derived at call time from `config.active_team`**, never
-  stored, so the team selector switches every board without a refetch.
-  `match_changed` compares label, status *and* times — a start that moved
-  four minutes is news to a crew.
-- **A 404 on a sub-resource is "nothing published", not "no such event".**
-  Demo events 404 on `/pits` and `/map` while `/event` works; alliances 404
-  until selection. `_on_failed` turns those into the empty value and never
-  cancels the other fetches — only the event's own 401/403/404 does. The
-  first build read every 404 as a bad key and silently dropped inspection,
-  teams and alliances for every demo event.
-- **Team numbers are strings** (`"3937"`) and **timestamps are Unix
-  milliseconds**, because that is what the API keys on. `api.team_str()` and
-  `api.when()` are the conversions; do not scatter `str(...)` and `/1000`.
-- **A setup file only ever writes, and the drop-in is applied once.**
-  `provision.apply()` never clears a key the file does not mention, so one
-  file serves all season with a new event key each time; `auto_import()`
-  renames `pit-setup.json` to `.imported` so a launch never overwrites an
-  event the operator changed on the panel the day before.
-- **Alerts are about the state, not the transition, and they are brief.**
-  First queue is `Now queuing`, second is `On deck`; a match that skips
-  straight to `On deck` still fires the second. Strips: sides flash the
-  alliance colour 2 s at 1.5 Hz, steady 1 s, then the resting look returns;
-  the centre stays white throughout. Inspection: sides green 5 s, only on a
-  transition — the first read is the baseline. Every banner is 10 s. The
-  banner (`QueueBanner`) is a child of the presentation *window*, not a
-  page, so every face gets it.
-- **The Next Match board is centred on the stage's axis and spans its
-  width** — eyebrow, label + seal, numeral and "at" on the centre line, the
-  timeline's four stops at the centres of four equal columns, WITH / VS in
-  two halves. A left-ranged layout on a 55" panel left half the plate empty.
-- **The Next Match board counts down to the *next* step, never a past
-  one.** `_NEXT_STEP` picks the estimate from the match's own status —
-  `Queuing soon` counts to the queue call, `Now queuing` to on-deck, and so
-  on — and a passed estimate reads `NOW`, not a negative. Its 1 s repaint
-  timer runs only while the page is showing (`showEvent` / `hideEvent`);
-  a hidden face repainting a whole chassis every second is waste.
-- **An LED alert is an overlay, never a change of intent.**
-  `leds.start_alert()` / `clear_alert()` sit over the resting look; every
-  setter keeps updating intent underneath and nothing is pushed to the wire
-  until the alert clears. A reconnect mid-alert replays the alert. The flash
-  is host-driven at 3 Hz in SOLID mode, because the firmware's ALERT mode
-  flashes every segment and the queue alert wants the centre steady.
-- **The webhook always answers 200 to a body it could parse**, stale or not.
-  Any other status is treated by Nexus as a failure, not retried, and a
-  webhook that keeps failing is disabled with no notice. Freshness is the
-  service's call, not the server's. It is off by default: the pit laptop is
-  behind event wifi and needs a tunnel in front of it, and polling already
-  brings everything — a push is only sooner.
-- **The webhook binds loopback, not `0.0.0.0`.** The tunnel is a process on
-  the same laptop and connects to 127.0.0.1, so a wildcard bind buys no
-  reachability and costs two things: on Windows the first bind raises a
-  Defender Firewall prompt whose wrong answer blocks the port with no error
-  anywhere, and a pit laptop on event wifi with an open port is reachable by
-  every other laptop in the venue. `webhook_bind` in `nexus.json` is the
-  override and is only right for a real port-forward; `settings.BINDS` is the
-  whitelist, because a typo in a bind address surfaces as an `OSError` at
-  `start()` that no operator can read.
-- **The tunnel worth setting up is a Cloudflare *named* tunnel**, not a quick
-  one. A quick tunnel's URL is random per restart, so somebody re-registers it
-  at frc.nexus every morning of an event — more steps than the push saves.
-  A named tunnel against a domain the team owns is a stable URL registered
-  once, and `cloudflared service install <token>` makes it a Windows service
-  that reconnects itself. See [`NEXUS.md`](NEXUS.md), "Giving Nexus a route
-  in".
-
-`PIT_NEXUS_FAKE=1` serves the spec's example payloads (`assets/nexus/`) and
-steps through a whole event, one snapshot per poll; the example teams are
-`100`–`3600`. `PIT_NEXUS_QUIET=1` builds the service with no timers and no
-socket — what `--self-check` sets, since it runs beside the live app.
-**Attribution is a condition of use**: any surface showing this data carries
-`api.ATTRIBUTION`.
-
-### Self-updating (`app/update/`)
-
-**A tag on the Mac becomes the app on the Windows pit machine, with nobody
-copying a folder.** Operator side and the token setup: [`DEPLOYMENT.md`](DEPLOYMENT.md).
-
-```
-git tag v1.4.2 ─▶ Actions: stamp, build ×2, --self-check ×2 ─▶ Release + manifest.json
-                                                                       │
-                              pit machine, six-hour timer  ◀────────────┘
-                                                                       │
-                    download ─▶ sha256 ─▶ unpack ─▶ --self-check ─▶ repoint `current`
-```
-
-| File | Role |
-|---|---|
-| `app/version.py` | What this build is. Stamped by CI; a sentinel from a checkout |
-| `app/update/release.py` | The GitHub feed. Token, manifest, verified download. No Qt |
-| `app/update/install.py` | Versioned folders behind a link: stage, verify, activate, roll back, prune |
-| `app/update/settings.py` | Channel and auto-check, in a JSON file rather than the DB |
-| `app/update/service.py` | `_UpdateService` singleton — the state machine the panel draws |
-| `app/widgets/update_panel.py` | Control → Pit Systems → Software Updates |
-| `tools/stamp_version.py`, `tools/make_manifest.py` | What CI runs |
-| `packaging/installer.iss` | The Inno Setup script — the one file a person is given |
-| `tools/check_installer.py` | Lints that script, because nothing else can before CI |
-
-**Windows only.** The Mac this is developed on runs from a checkout and never
-installs a build, and a macOS CI job bills at *ten times* the Linux rate against
-a private repo's monthly minutes — ~150 of the ~180 a two-platform release cost,
-for an artefact nobody installed. The app's own code is still cross-platform
-(`platform_key()`, symlinks instead of junctions on POSIX) because that costs
-nothing and keeps the dev loop honest; only CI is single-platform.
-
-**One build, two assets, two readers.** `…-Setup.exe` is the single file a
-person downloads and double-clicks — Inno Setup wrapping exactly the `dist/`
-tree PyInstaller just produced and CI just self-checked. `…-windows.zip` is what
-the *app* fetches when it updates itself. Same bytes either way, so what a human
-installs and what a machine updates to can never drift apart.
-
-**Still one-folder, never one-file.** A PyInstaller `--onefile` build re-extracts
-the whole 850 MB bundle to a temp directory on *every* launch — 30–60s of blank
-screen before a pit display appears — and QtWebEngine is fragile in that mode.
-"One file" is satisfied by the *installer* being one file, which is what an
-application off the internet actually is.
-
-**Windows will not overwrite a running `.exe`, so nothing ever tries to.** The
-install is versioned folders behind a **directory junction** — every shortcut
-points at `current\`, Windows resolves it at launch, so the running process
-holds handles on `versions\1.4.2\` while the junction itself is locked by
-nothing. Repointing it mid-session is safe and the new version is what the next
-launch gets. Five things about that are load bearing:
-
-- **A junction, not a symlink.** Junctions need no privilege on Windows;
-  symlinks need Developer Mode. POSIX gets a symlink swapped with `os.replace`.
-- **Never `shutil.rmtree` the link** — on a junction that descends into the
-  target and deletes the version you are running. `os.rmdir` removes the
-  reparse point and fails loudly on a real directory, which is also how an
-  unmanaged install is refused rather than damaged.
-- **The staged build is `--self-check`ed before the pointer moves**, with
-  `PIT_DISPLAY_DATA` (a scratch tree, so the new build's migrations do not
-  touch the live database before it is in charge), `PIT_CAD_PORT` (so it does
-  not take :8765 from the CAD viewer a visitor is looking at) and
-  `PIT_LEDS_FAKE` (so it does not open the controller's serial port). A build
-  that fails there is deleted and never becomes the running app.
-- **Old versions are pruned at startup, not at swap time.** The folder being
-  replaced is still open by the running process; Windows will not delete it
-  until that process is gone.
-- **An install that is not this shape is left completely alone.**
-  `install_root()` recognises the layout by structure, and `is_managed()` False
-  means every write path here refuses.
-- **The installer removes the junction with `rmdir` too**, in
-  `CurUninstallStepChanged`, *before* Inno's own file deletion runs — the same
-  trap, in Pascal.
-
-**`installer.iss` cannot be compiled anywhere but Windows**, so a typo in it
-costs a full CI run to discover — and discovers it at the *last* step, after
-ten minutes of packaging. `tools/check_installer.py` runs in `build_app.py`'s
-preflight and enforces the two rules that have actually bitten:
-
-- **`[Code]` comments are `//`, never `{ }`.** Inno's Pascal uses braces for
-  comments, so a brace comment that mentions `{app}` **ends at that constant's
-  own brace** and the rest of the sentence is compiled as code. That is how the
-  first build of this file failed: "Syntax error", fifty columns into a comment
-  explaining why the code below it was careful.
-- **The file is pure ASCII.** Inno 6 reads a script with no UTF-8 BOM as ANSI,
-  which turns an em-dash in a wizard message into mojibake on a screen a
-  visitor is looking at.
-
-**Checking is automatic; downloading never is.** A release is ~400 MB and a
-download that starts itself is one that starts during a match cycle on event
-wifi. The timer only ever asks, and says so on the control screen.
-
-**Private repo, and it shapes `release.py`.** Assets are fetched by **id**
-through `/releases/assets/{id}` — `browser_download_url` is a web-session URL
-and 404s to a token — and **the `Authorization` header must be dropped on the
-redirect** to object storage, which signs its own URL and rejects a request
-carrying a bearer token as well. `_Redirect` strips it whenever the host
-changes; without that, downloads 400 for no visible reason.
-
-**A release with no `manifest.json` is skipped, not trusted.** The SHA-256 in
-it is the only thing between a 400 MB download and the install folder, and "the
-asset had the right name" is not a check.
-
-**Update preferences are a JSON file, not the database** — the states worth
-updating out of are the ones where the database will not open, and a preference
-stored inside the broken thing is not reachable then.
-
-**`_STATE_COLOR` puts the status colour in a dot, never in the type.** Red on
-carbon is 2.8:1 and forbidden for letterforms, and a failed update next to a
-red primary button would be two red things. The action button drops to
-`secondary` when the machine cannot update at all — a *disabled* `primary`
-still paints a full red block.
-
-### Windows console encoding (`app/console.py`)
-
-**Windows Python opens a redirected stdout as cp1252, not UTF-8.** Every arrow,
-em-dash, ellipsis and `✗` this codebase prints is unencodable there, and one of
-them raises `UnicodeEncodeError` and kills the process. It killed the first
-Windows CI build outright — in `build_app.py`'s "here is the command I am
-running" line, so a *progress message* took down the build.
-
-`console.use_utf8()` is called first thing by every entry point that prints:
-`main.py` (so `--self-check`, `--version` and `--rollback` are covered),
-`tools/build_app.py` and `tools/stamp_version.py`. `tools/make_manifest.py`
-carries the same two lines inline, because CI runs it with a bare `python3`
-outside the venv and it cannot import `app`. The workflow also sets
-`PYTHONUTF8=1` on both jobs, which covers everything they shell out to.
-
-`errors="replace"` is deliberate: a console that cannot *render* a character
-gets a `?`. This is diagnostic output, and diagnostics must never be the thing
-that fails.
-
-Do not "fix" a future occurrence by replacing the character. There are nine
-distinct ones in the printed strings already and the next contributor will add
-a tenth; the encoding assumption is the bug.
-
-### Empty stubs
-
-`app/db/repositories/` and `app/db/sync/` are empty stubs for the future
+| `state.py` | a screen as JSON |
+| `sockets.py` | `QWebSocketServer` on the Qt loop, :3939 |
+| `server.py` | page, CSS/JS, fonts, judges artwork, :3938 |
+| `service.py` | subscriptions and lifetime |
+| `assets/webcast/` | the page |
+
+- Protocol after Cheesy Arena: `{"type","data"}`, full state on connect, every
+  `screen` message complete.
+- **The dwell rail is never sent**, only its deadline plus `server_now_ms`;
+  `screen.js` animates it.
+- The headless window stays as the state engine (it owns the rotation).
+- **`screen.css` ports `chassis.py` number for number**: `--u` is one design
+  pixel. Use the plate's ink roles (`state.palette()`), not the control bundle.
+- No `animation-fill-mode: both`: the resting state must be the visible one.
+- **Two switches:** power (the sidebar) and Monitor/Network. `_reconcile()`
+  resolves both; power has no signal, so `_on_power_toggled` calls
+  `webcast.screen_power_changed()`. `_is_on()` reads window existence.
+- **Off and unreachable show the same branded card.** Nothing on an audience
+  screen names a port, socket, setting or the control panel; operator detail
+  goes to the console. `webcast_check.py` enforces both.
+- Assets are fetched by content hash (`asset_version()`), never cached stale.
+- The pointer is never hidden on a networked display.
+- **Own every socket:** `setParent(self)` on accept (PyQt hands them back
+  unparented); disconnect by handle, never wildcard, inside `disconnected`;
+  `stop()` aborts, then drains deferred deletes.
+- `app/qt_log.py` writes Qt's warnings to `qt_warnings.log` (the app has no
+  console).
+
+## Nexus event feed (`app/nexus/`, `nexus-relay/`)
+
+**NEXUS.md is the reference.** In short: frc.nexus → webhooks (all events) →
+**the relay at `nexus.bh-stack.com`** (Cloudflare Worker + one Durable Object
+per event) → `wss` push → `RelayLink` → `_offer_status()`. The relay also
+pulls Nexus while a pit listens and mirrors `/api/v1/…` holding the API key.
+A pit machine needs only `secrets/nexus_relay_token`. **No local webhook
+server and no cloudflared, by design.**
+
+- **Credentials live in `secrets/`, read only through `credentials.read()`**
+  (`PIT_SECRET_<NAME>` overrides). Never in the DB, `nexus.json` or `app/`.
+  The update token predates this and stays as `update_token`.
+- **Newest `dataAsOfTime` wins, on both ends**: the relay's `offer()`, then
+  `_offer_status()`.
+- **`_tiered()`: relay first, direct second**, resolved on the event loop. A
+  404 is an answer and stops there. **The live poll runs only while the socket
+  has been down for `fallback_after_s`.**
+- A 404 on a sub-resource means "nothing published"; only the event's own
+  401/403/404 cancels other fetches.
+- "Our" match is derived at call time from `config.active_team`;
+  `match_changed` compares label, status *and* times.
+- Team numbers are strings, timestamps are Unix ms (`api.team_str()`,
+  `api.when()`).
+- `provision.apply()` only writes; `auto_import()` applies `pit-setup.json`
+  once and renames it. Retired keys are skipped with a note.
+- Alerts are about state, brief (2 s flash + 1 s steady; banner 10 s);
+  inspection fires only on a transition. `QueueBanner` is a child of the
+  window, not a page.
+- The Next Match board counts to the *next* step (`_NEXT_STEP`) and ticks only
+  while shown.
+- **Relay rules:** every webhook POST gets 200 (Nexus silently disables
+  failing hooks); one storage key per room (the free plan allows 100k row
+  writes a day across all events); broadcast before save; no state in DO class
+  fields; no `setInterval` in the DO; `RelayLink.stop()` sets `off` *before*
+  `abort()`.
+- `PIT_NEXUS_FAKE=1` serves `assets/nexus/examples.json`; `PIT_NEXUS_QUIET=1`
+  (set by `--self-check`) opens no socket and no timers. **Every surface
+  showing this data carries `api.ATTRIBUTION`.**
+
+## Self-update (`app/update/`)
+
+Tag → CI → private Release → pit machines. Operator side is in DEPLOYMENT.md.
+Windows-only CI (macOS bills 10×).
+
+- **Versioned folders behind a directory junction** (`current\`). Never
+  overwrite a running exe; never `shutil.rmtree` a junction (it deletes the
+  target), use `os.rmdir`. The installer does the same in Pascal.
+- **The staged build self-checks** with `PIT_DISPLAY_DATA`, `PIT_CAD_PORT` and
+  `PIT_LEDS_FAKE` set, so it can't touch the live DB, port or serial.
+- Prune at startup, not at swap. An install not of this shape is left alone.
+- **Checking is automatic; downloading never is.**
+- Private repo: fetch assets by id; **drop `Authorization` on the redirect to
+  object storage** (`_Redirect`). A release without `manifest.json` is skipped.
+- Preferences are JSON, not DB (reachable when the DB is broken).
+- `installer.iss`: `[Code]` comments are `//`, never `{ }` (a brace comment
+  ends at `{app}`), and the file is pure ASCII. `tools/check_installer.py`
+  enforces both.
+
+## Empty stubs
+
+`app/db/repositories/` and `app/db/sync/` are placeholders for a future
 on-prem SQL Server sync.

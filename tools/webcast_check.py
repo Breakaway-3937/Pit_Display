@@ -31,6 +31,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import pathlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -44,6 +45,18 @@ from app.console import use_utf8  # noqa: E402
 PORT = 3993
 RESULTS: list[tuple[str, bool, str]] = []
 _APP = None
+
+# Every warning Qt emits during the run, captured rather than left to scroll
+# past in a terminal. The ones that matter here are the lifetime complaints —
+#
+#   QObject::disconnect: wildcard call disconnects from destroyed signal of
+#   QWebSocketDataProcessor::unnamed
+#
+# — which mean a QWebSocket was destroyed while its own internals were still
+# tearing down. They are harmless-looking, intermittent, and a real symptom:
+# `nextPendingConnection()` hands back an *unparented* socket, so anything we
+# do not hold a reference to dies whenever a collection happens to run.
+QT_WARNINGS: list[str] = []
 
 
 def check(name: str, ok: bool, detail: str = "") -> bool:
@@ -71,7 +84,15 @@ def main() -> int:
     os.environ["PIT_DISPLAY_DATA"] = str(scratch)
 
     from PyQt6 import QtWebEngineWidgets  # noqa: F401  (before QApplication)
+    from PyQt6.QtCore import QtMsgType, qInstallMessageHandler
     from PyQt6.QtWidgets import QApplication
+
+    def _capture(mode, _context, message):
+        if mode in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg,
+                    QtMsgType.QtFatalMsg):
+            QT_WARNINGS.append(message)
+
+    qInstallMessageHandler(_capture)
     from PyQt6.QtCore import QEventLoop, QTimer, QUrl
     from PyQt6.QtWebSockets import QWebSocket
 
@@ -105,10 +126,13 @@ def main() -> int:
     wset.save(enabled=False, screens=list(wset.PUBLISHABLE),
               port=PORT, bind="127.0.0.1")
 
+    # Before the control screen, exactly as main() does it: the Pit Network
+    # panel subscribes to this service while it is being built.
+    webcast = init_webcast()
+
     control = ControlScreen()
     control.set_window_factories({"presentation_a": PresentationScreenA,
                                   "presentation_b": PresentationScreenB})
-    webcast = init_webcast()
     webcast.set_window_provider(control.managed_window)
     control.set_webcast(webcast)
 
@@ -198,6 +222,34 @@ def main() -> int:
           and f'data-ws-port="{webcast.socket_port}"'.encode() in page)
     check("no unsubstituted template holes left in the page",
           b"{{" not in page)
+    # **A display must pick up a changed page, and once it did not.** The
+    # stylesheet and script were served `max-age=86400`, so a browser that had
+    # fetched them once kept using them for a day — a fresh page against a
+    # stale design, with nothing anywhere reporting an error. Their URL now
+    # carries a hash of their contents, so a change to either is a new URL.
+    import re as _re
+    versions = _re.findall(rb"/static/screen\.(?:css|js)\?v=([a-f0-9]+)", page)
+    check("the page asks for its assets by content hash", len(versions) == 2,
+          f"{len(versions)} versioned references")
+    if versions:
+        from app.webcast.server import asset_version
+        live_version = asset_version()
+        check("that hash is the one the server computes now",
+              all(v.decode() == live_version for v in versions),
+              live_version)
+        css_path = pathlib.Path(__file__).resolve().parent.parent / \
+            "assets" / "webcast" / "screen.css"
+        original = css_path.read_text(encoding="utf-8")
+        try:
+            css_path.write_text(original + "\n/* check */\n", encoding="utf-8")
+            changed = asset_version()
+        finally:
+            css_path.write_text(original, encoding="utf-8")
+        check("editing the stylesheet changes the hash",
+              changed != live_version, f"{live_version} -> {changed}")
+        check("reverting it changes the hash back",
+              asset_version() == live_version)
+
     for asset, kind in (("/static/screen.css", b"--u:"),
                         ("/static/screen.js", b"WebSocket"),
                         ("/fonts/ChakraPetch-Bold.ttf", b"\x00\x01\x00\x00")):
@@ -303,6 +355,102 @@ def main() -> int:
     status, _ = get("/screen/presentation_b")
     check("republishing serves it again", status == 200, f"status {status}")
 
+    print("\n── The sidebar switch turns a networked screen off ────────", flush=True)
+    # The reported bug: a screen published to the network carried on rotating
+    # after its own power switch was turned off, because power is not a
+    # `config` key and so emitted nothing for the service to push on.
+    before = len(listener.messages)
+    control._on_power_toggled("presentation_a", False)
+    pump(800)
+    off = listener.latest() or {}
+    check("turning the switch off pushes to the display",
+          len(listener.messages) > before,
+          f"{len(listener.messages) - before} messages")
+    check("the display is told the screen is off",
+          off.get("on") is False and off.get("face") == "off",
+          f"on={off.get('on')} face={off.get('face')}")
+    check("an off screen carries no face payload",
+          "rotation" not in off and "checklist" not in off,
+          ", ".join(k for k in ("rotation", "checklist") if k in off))
+    check("the state engine is gone while it is off",
+          control.managed_window("presentation_a") is None)
+
+    # The page must treat "switched off" exactly like "the pit machine is
+    # off" — one overlay, one message. A second, bespoke off design is the
+    # thing this check exists to prevent coming back.
+    _, off_js = get("/static/screen.js")
+    off_src = off_js.decode("utf-8", "replace")
+    branch = off_src.split("if (s.on === false) {", 1)
+    # Comments stripped before looking: the explanation of *why* this branch
+    # exists is longer than the branch, and a window measured in characters
+    # would otherwise be measuring the prose.
+    body = "\n".join(line for line in branch[1].splitlines()
+                     if not line.strip().startswith("//"))[:300] \
+        if len(branch) == 2 else ""
+    routed = "showTrouble()" in body
+    check("an off screen is routed to the same overlay as a lost connection",
+          routed and "faceOff" not in off_src,
+          "" if routed else "the off branch does not call showTrouble()")
+
+    before = len(listener.messages)
+    control._on_power_toggled("presentation_a", True)
+    pump(900)
+    back = listener.latest() or {}
+    check("turning it back on pushes again",
+          len(listener.messages) > before)
+    check("the display is drawing the rotation again",
+          back.get("on") is True and back.get("face") == "rotation"
+          and "rotation" in back,
+          f"on={back.get('on')} face={back.get('face')}")
+
+    print("\n── What a visitor sees ────────────────────────────────────", flush=True)
+    # These panels face a public pit. Nothing drawn on them may name a port,
+    # a socket, a setting or the control panel — a stranger cannot act on any
+    # of it, and asking them to is worse than saying the team is on it.
+    _, js = get("/static/screen.js")
+    _, page = get("/screen/presentation_a")
+    text = js.decode("utf-8", "replace")
+    # Only the *rendered* strings matter; the comments explain the rule.
+    rendered = "\n".join(
+        line.split("//")[0] for line in text.splitlines()
+        if not line.strip().startswith("//"))
+    leaks = [w for w in ("control panel", "Not published", "No judges slides",
+                         "No match scheduled", "No robot log",
+                         "Nothing to show", "Reconnecting to the pit")
+             if w in rendered]
+    check("no operator language is drawn on an audience screen",
+          not leaks, ", ".join(leaks) or "")
+    check("the welcome line is the one shown on every failure",
+          "Breakaway welcomes you to our pit" in rendered
+          and "technical difficulties" in rendered)
+    check("the page ships that message even before any script runs",
+          b"Breakaway welcomes you to our pit" in page
+          and b"technical difficulties" in page)
+
+    _, css = get("/static/screen.css")
+    style = css.decode("utf-8", "replace")
+    check("the pointer is never hidden on a networked display",
+          "cursor: none" not in style and "cursor:none" not in style)
+    check("the pointer is stated, not inherited",
+          "body.screen * { cursor: default; }" in style)
+
+    print("\n── Telemetry ──────────────────────────────────────────────", flush=True)
+    live = webcast.telemetry().get("live", [])
+    check("a connected display is reported", len(live) >= 1,
+          f"{len(live)} connected")
+    if live:
+        row = live[0]
+        check("telemetry names the screen, the address and the traffic",
+              row.get("screen") == "presentation_a"
+              and bool(row.get("address"))
+              and row.get("messages", 0) > 0,
+              f"{row.get('screen')} {row.get('address')} "
+              f"{row.get('messages')} updates, {row.get('bytes')} bytes")
+    hist = webcast.telemetry().get("recent", [])
+    check("a display that was refused is recorded",
+          any(r.get("refused") for r in hist),
+          f"{len(hist)} recent entries")
+
     print("\n── Cost ───────────────────────────────────────────────────", flush=True)
     # The whole point of the rewrite. With a viewer attached and a slide
     # dwelling, the pit machine should be doing essentially nothing: no
@@ -328,10 +476,38 @@ def main() -> int:
     check("two published screens with a viewer stay under 2% of a core",
           load < 2.0, f"{load:.1f}%")
 
+    print("\n── Socket lifetimes ───────────────────────────────────────", flush=True)
+    # A display pointed at a screen that is not published is refused and
+    # retries — screen.js reconnects every two seconds. Each attempt used to
+    # leave an unparented socket for the garbage collector to destroy at some
+    # later moment, mid-handshake.
+    before = len(QT_WARNINGS)
+    strays = []
+    for _ in range(6):
+        s2 = Listener("presentation_c")     # never a real screen
+        strays.append(s2)
+        pump(150)
+    for s2 in strays:
+        s2.close()
+    pump(800)
+    check("refusing a display repeatedly emits no Qt lifetime warnings",
+          len(QT_WARNINGS) == before,
+          "; ".join(QT_WARNINGS[before:])[:160])
+
     listener.close()
-    pump(200)
+    pump(300)
     webcast.stop()
+    pump(300)
     check("servers stop cleanly", not webcast.listening)
+
+    lifetime = [w for w in QT_WARNINGS
+                if "QObject::" in w or "QWebSocket" in w or "QTcpSocket" in w
+                or "QNativeSocketEngine" in w]
+    check("no Qt object-lifetime warnings during the whole run",
+          not lifetime, "; ".join(lifetime)[:200])
+    if QT_WARNINGS and not lifetime:
+        print(f"  (note) {len(QT_WARNINGS)} unrelated Qt warnings: "
+              f"{QT_WARNINGS[0][:90]}", flush=True)
     return _report()
 
 

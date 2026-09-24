@@ -19,9 +19,14 @@ meaning in its comment. `NEXUS.md` is the human copy of the same thing.
     Client.teams(key)               GET /event/{key}/teams
     Client.alliances(key)           GET /event/{key}/alliances
 
-The two *push* webhooks (live event status, match status) carry the same
-`EventStatus` / `MatchStatus` shapes; `parse_event_status()` and
-`parse_match_status()` are what `webhook.py` calls on a body.
+**Two ways in, one client.** `Client` talks to frc.nexus with the team's
+`Nexus-Api-Key`. `RelayClient` talks to the team's relay
+(`nexus-relay/`, `https://nexus.bh-stack.com`), which mirrors these exact
+paths under its own `/api/v1/` and holds the Nexus key itself — so a pit
+machine with only a relay token reaches every endpoint above. The two push
+webhooks (`EventStatus`, `MatchStatus`) land on the relay, never here;
+`classify_push()` is the shape rule the relay applies, kept here so
+`--self-check` can hold the bundled examples to it.
 
 Three facts about the data that shape everything downstream:
 
@@ -57,7 +62,7 @@ from app import credentials, paths
 
 BASE_URL = os.environ.get("PIT_NEXUS_API", "https://frc.nexus/api/v1")
 API_KEY_SECRET = "nexus_api_key"
-WEBHOOK_TOKEN_SECRET = "nexus_webhook_token"
+RELAY_TOKEN_SECRET = "nexus_relay_token"
 ATTRIBUTION = "Event data from frc.nexus"
 ATTRIBUTION_URL = "https://frc.nexus"
 
@@ -616,12 +621,12 @@ def set_api_key(value: str) -> None:
     credentials.write(API_KEY_SECRET, value)
 
 
-def webhook_token() -> str:
-    return credentials.read(WEBHOOK_TOKEN_SECRET)
+def relay_token() -> str:
+    return credentials.read(RELAY_TOKEN_SECRET)
 
 
-def set_webhook_token(value: str) -> None:
-    credentials.write(WEBHOOK_TOKEN_SECRET, value)
+def set_relay_token(value: str) -> None:
+    credentials.write(RELAY_TOKEN_SECRET, value)
 
 
 def fake_enabled() -> bool:
@@ -634,6 +639,9 @@ class Client:
     a 200 with a JSON body, with the message the spec gives for that code.
     """
 
+    # How this client names where it is fetching from, in every error.
+    WHERE = "frc.nexus"
+
     def __init__(self, key: str | None = None, base_url: str = BASE_URL):
         self._key = key
         self._base = base_url.rstrip("/")
@@ -644,16 +652,19 @@ class Client:
 
     # ── HTTP ─────────────────────────────────────────────────────────────
 
-    def _get(self, path: str) -> Any:
+    def _auth(self) -> dict[str, str]:
         key = self.key
         if not key:
             raise NexusError(
                 "No Nexus API key on this machine. Get one at frc.nexus/api "
                 "and paste it into Control → Event Feed, or put it in "
                 "secrets/nexus_api_key.", 401)
+        return {"Nexus-Api-Key": key}
+
+    def _get(self, path: str) -> Any:
         url = f"{self._base}{path}"
         req = urllib.request.Request(url, headers={
-            "Nexus-Api-Key": key,
+            **self._auth(),
             "Accept": "application/json",
             "User-Agent": _USER_AGENT,
         })
@@ -663,14 +674,14 @@ class Client:
         except urllib.error.HTTPError as e:
             raise NexusError(self._explain(e.code, path), e.code) from e
         except urllib.error.URLError as e:
-            raise NexusError(f"Could not reach frc.nexus: {e.reason}. "
+            raise NexusError(f"Could not reach {self.WHERE}: {e.reason}. "
                              "This machine may have no internet.") from e
         except OSError as e:
-            raise NexusError(f"Could not reach frc.nexus: {e}") from e
+            raise NexusError(f"Could not reach {self.WHERE}: {e}") from e
         try:
             return json.loads(body)
         except ValueError as e:
-            raise NexusError("frc.nexus returned something that is not JSON.") from e
+            raise NexusError(f"{self.WHERE} returned something that is not JSON.") from e
 
     @staticmethod
     def _explain(code: int, path: str) -> str:
@@ -766,6 +777,54 @@ class Client:
 
 def _seg(value: str) -> str:
     return urllib.parse.quote(str(value).strip(), safe="")
+
+
+class RelayClient(Client):
+    """
+    The same endpoints, through the team's relay.
+
+    The relay mirrors Nexus's paths under `{relay}/api/v1`, answers with the
+    same bodies and passes Nexus's own 404s through, so every method above
+    works unchanged — only the header and the error wording differ. It adds
+    one path of its own, `relay_stats()`, which is how the pit sees whether
+    webhooks are reaching the relay at all.
+    """
+
+    WHERE = "the Nexus relay"
+
+    def __init__(self, relay_url: str, token: str | None = None):
+        super().__init__(key="", base_url=relay_url.rstrip("/") + "/api/v1")
+        self._token = token
+
+    @property
+    def token(self) -> str:
+        return self._token if self._token is not None else relay_token()
+
+    def _auth(self) -> dict[str, str]:
+        token = self.token
+        if not token:
+            raise NexusError("No relay token on this machine. Paste it into "
+                             "Control → Event Feed (admin), or put it in "
+                             "secrets/nexus_relay_token.", 401)
+        return {"Authorization": f"Bearer {token}"}
+
+    def _explain(self, code: int, path: str) -> str:
+        if code == 401:
+            return ("The relay refused this machine's token. It must match the "
+                    "relay's CLIENT_TOKEN exactly.")
+        if code == 502:
+            return "The relay could not reach frc.nexus. Nexus may be down."
+        if code == 503:
+            return ("The relay has no Nexus API key of its own — run "
+                    "`npx wrangler secret put NEXUS_API_KEY` in nexus-relay/.")
+        return super()._explain(code, path)
+
+    def relay_stats(self, event_key: str) -> dict[str, Any]:
+        """`GET /event/{key}/relay` — the relay's own counters for this event."""
+        raw = self._get(f"/event/{_seg(event_key)}/relay")
+        if not isinstance(raw, dict):
+            raise NexusError("The relay returned something that is not a stats object.")
+        return raw
 
 
 @dataclass

@@ -10,8 +10,8 @@ up with a typo in it. So the whole setup travels as **one JSON file**:
       "pit_setup": 1,
       "made": "2026-09-15T20:11:03Z",
       "secrets": {
-        "nexus_api_key": "…",
-        "nexus_webhook_token": "…"
+        "nexus_relay_token": "…",             the one key a pit machine needs
+        "nexus_api_key": "…"                  optional — direct fallback
       },
       "update_token": "…",                     optional — the GitHub PAT
       "nexus": {"event_key": "2026casf"}       optional — any nexus.json key
@@ -56,7 +56,10 @@ SUFFIX = ".pitsetup.json"
 
 # What may travel in a setup file, so a typo in a hand-edited one is refused
 # rather than silently written as a credential nobody reads.
-KNOWN_SECRETS = ("nexus_api_key", "nexus_webhook_token")
+KNOWN_SECRETS = ("nexus_relay_token", "nexus_api_key")
+# Secrets an older build carried. Skipped with a note, never refused: a setup
+# file made last month should still deliver its event key and API key.
+RETIRED_SECRETS = ("nexus_webhook_token",)
 
 
 class ProvisionError(Exception):
@@ -69,6 +72,8 @@ class Setup:
     update_token: str = ""
     nexus: dict[str, Any] = field(default_factory=dict)
     made: str = ""
+    # What was in the file and deliberately skipped — reported, not applied.
+    notes: list[str] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
@@ -119,6 +124,10 @@ def parse(raw: Any, name: str = "setup file") -> Setup:
     if not isinstance(secrets, dict):
         raise ProvisionError(f"{name}: \"secrets\" must be an object.")
     for key, value in secrets.items():
+        if key in RETIRED_SECRETS:
+            setup.notes.append(f"skipped secret {key} — no longer used "
+                               "(the relay holds the webhook token now)")
+            continue
         if key not in KNOWN_SECRETS:
             raise ProvisionError(
                 f"{name}: unknown secret \"{key}\". Known: {', '.join(KNOWN_SECRETS)}.")
@@ -140,6 +149,9 @@ def parse(raw: Any, name: str = "setup file") -> Setup:
         raise ProvisionError(f"{name}: \"nexus\" must be an object.")
     from app.nexus import settings as nexus_settings
     for key, value in nexus.items():
+        if key in nexus_settings.RETIRED:
+            setup.notes.append(f"skipped nexus.{key} — no longer used")
+            continue
         if key not in nexus_settings.DEFAULTS:
             raise ProvisionError(
                 f"{name}: unknown nexus setting \"{key}\". Known: "
@@ -157,7 +169,7 @@ def apply(setup: Setup) -> list[str]:
     Only writes. A key absent from the file is left as it is on the machine,
     so a file carrying just an event key never clears a credential.
     """
-    done: list[str] = []
+    done: list[str] = list(setup.notes)
     for name, value in setup.secrets.items():
         before = credentials.read(name)
         credentials.write(name, value)
@@ -178,7 +190,7 @@ def apply(setup: Setup) -> list[str]:
                 done.append(f"nexus.{key}: {before.get(key)!r} → {after.get(key)!r}")
             else:
                 done.append(f"nexus.{key} already {after.get(key)!r}")
-    if not done:
+    if len(done) == len(setup.notes):
         done.append("nothing to apply — the file carries no keys or settings")
     return done
 
@@ -241,8 +253,8 @@ def current(include_update_token: bool = True,
             "event_key": prefs["event_key"],
             "auto_poll": prefs["auto_poll"],
             "poll_interval_s": prefs["poll_interval_s"],
-            "webhook_enabled": prefs["webhook_enabled"],
-            "webhook_port": prefs["webhook_port"],
+            "relay_enabled": prefs["relay_enabled"],
+            "relay_url": prefs["relay_url"],
         }
     return setup
 

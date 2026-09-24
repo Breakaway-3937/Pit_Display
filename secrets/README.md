@@ -1,29 +1,18 @@
 # secrets/
 
-One file per credential, no extension, the value on the first line. Everything
-in this folder except this README is ignored by git. Read through
-`app/credentials.py` — never open these files from anywhere else.
+One file per credential, no extension, value on the first line. Everything here
+except this README is gitignored. Read only through `app/credentials.py`; a
+`PIT_SECRET_<NAME>` environment variable overrides the file.
 
-| File | What it is | Where to get it |
+| File | What it is | Where it comes from |
 |---|---|---|
-| `nexus_api_key` | The `Nexus-Api-Key` header the app sends to `https://frc.nexus/api/v1` | [frc.nexus/api](https://frc.nexus/api), signed in as the team |
-| `nexus_webhook_token` | The `Nexus-Token` Nexus sends **to us** when it calls our webhook; the app refuses any push that does not carry it | Same page, after registering a webhook URL |
+| `nexus_relay_token` | Bearer token for the relay at `nexus.bh-stack.com`. **The one a pit machine needs** | The relay's `CLIENT_TOKEN`. The copy of record is this file on the dev Mac; lost means regenerate ([relay README](../nexus-relay/README.md#changing-it)) |
+| `nexus_api_key` | `Nexus-Api-Key`, for polling frc.nexus directly if the relay is unreachable. Optional | [frc.nexus/api](https://frc.nexus/api) |
 
-Either can be supplied as an environment variable instead —
-`PIT_SECRET_NEXUS_API_KEY`, `PIT_SECRET_NEXUS_WEBHOOK_TOKEN` — which wins over
-the file. That is how a script or a CI job gets a key without writing it down.
+On a pit machine this folder is in the data directory
+(`%LOCALAPPDATA%\Breakaway Pit Display\secrets\`), so updates never touch it.
+The Event Feed panel writes the same files. To move them without retyping, use
+a setup file ([`DEPLOYMENT.md`](../DEPLOYMENT.md#b--install-on-a-new-pit-machine)).
 
-On an installed pit machine this folder is not in the app's install directory;
-it is beside the database in the per-user data directory
-(`%LOCALAPPDATA%\Breakaway Pit Display\secrets\` on Windows), so an upgrade
-never loses it. The Event Feed panel on the control screen writes the same
-files when an admin pastes a key there.
-
-**To get these onto a pit machine**, don't retype them: with the files
-filled in here, `uv run python tools/pit_setup.py make ~/Desktop/pit-setup.json
---event 2026casf` writes one file carrying both keys and the event, and the
-pit machine takes it as `pit-setup.json` in its data directory, from Control →
-Event Feed → Import setup file…, or with `--provision`. See `NEXUS.md`.
-
-The GitHub update token is the one credential *not* here — see
-`app/update/release.py` for why it stays as `update_token`.
+Not here: the Nexus webhook token (a Worker secret on the relay) and the
+GitHub `update_token` (predates this folder; see `app/update/release.py`).

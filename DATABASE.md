@@ -10,6 +10,35 @@ Contents: [Files](#the-two-files) · [Conventions](#conventions) ·
 
 ---
 
+## Does an update keep my data?
+
+Yes, and it is checked rather than promised:
+
+    uv run tools/upgrade_check.py
+
+It fills every table a person writes to — checklists and their items, the
+CAN-id names on `device`, EQ and LED presets, the music index — then runs a
+version change at it: the seed database a build carries, plus a newly
+registered migration. Then it reopens and looks for every row. 16 checks,
+exit 0/1.
+
+The reason it exists is `paths.seed_user_data()`. Every build ships
+`data/pit_display.db` so a *fresh* install has a schema; if that ever landed
+on top of an existing one, a season of imported logs and every CAN-id name
+would go with it. Its rule is "what you get when you have nothing, not a
+factory reset", and the tool proves it by breaking it: made to overwrite, it
+reports nine failures with every planted row gone.
+
+**Not in the database, and behaving differently:**
+
+| | |
+|---|---|
+| `nexus.json`, `webcast.json`, `update.json` | Files in the data directory. Survive an update |
+| `secrets/` | Same. Never in the database, never in the install |
+| `data/pit_display_samples.db` | Disposable by design. Delete it and the schema is rebuilt; the main database is untouched |
+| Per-screen settings | **In memory only** — theme, screen content, slide index, `checklist_id` reset on every launch, not just on a version change |
+
+
 ## The two files
 
 | File | Holds | Typical size |
@@ -175,7 +204,7 @@ salt, 200k iterations. `is_default = 1` while the shipped password is unchanged,
 which drives the nag in the admin bar.
 
 **A UI lock, not a security boundary** — the file sits on the pit machine's disk.
-See [`ADMIN_GUIDE.md`](ADMIN_GUIDE.md).
+See [`OPERATOR_GUIDE.md`](OPERATOR_GUIDE.md#the-admin-lock).
 
 ---
 
@@ -281,7 +310,7 @@ One row per imported file.
 Rows are created automatically on import with `label` NULL. Because the key is
 `(device_type, can_id)` and carries **no session reference**, names persist
 across every future import and survive deleting the session that created them.
-Edited in **Control Screen → Pit Systems → Robot Logs**.
+Edited in **Control Screen → Pit Systems → Telemetry → Robot telemetry**.
 
 `repository.DeviceRow.display` falls back to `"TalonFX 11"` when unnamed —
 **never render a raw CAN id if a label exists.**

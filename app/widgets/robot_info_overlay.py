@@ -30,7 +30,7 @@ robot puts no red on this surface either.
 
 **The motor table shows the operator's names, not CAN ids** — `MotorRow.label`
 falls back to `TalonFX 11` only where nobody has typed one. Naming motors in
-Control → Pit Systems → Robot Logs is what turns this screen from a list of
+Control → Pit Systems → Telemetry → Robot telemetry is what turns this screen from a list of
 addresses into a list of mechanisms.
 
 Both boards read `app.robot.diagnostics`; neither computes anything.
@@ -130,7 +130,7 @@ class RobotInfoOverlay(Chassis):
                               self.ink, 1.0)
         self.draw_wrapped(
             p, rect.x(), y + self.s(24), min(self.s(1200), rect.width()),
-            "Import a log from Control → Pit Systems → Robot Logs. Name the CAN "
+            "Import a log from Control → Pit Systems → Telemetry → Robot telemetry. Name the CAN "
             "ids there too, and this table lists mechanisms instead of addresses.",
             self.body(32), self.body_ink, 1.4)
 

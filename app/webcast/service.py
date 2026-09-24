@@ -64,15 +64,18 @@ class _WebcastService(QObject):
     viewers_changed = pyqtSignal(int)
     # screen id, published? — the control screen reconciles window lifetime
     published_changed = pyqtSignal(str, bool)
+    # A display connected, dropped, or was refused — the telemetry panel.
+    telemetry_changed = pyqtSignal()
     log = pyqtSignal(str)
 
     def __init__(self) -> None:
         super().__init__()
         self._prefs = settings.load()
         self._provider = None
-        self._sockets = ScreenSocketServer(self)
+        self._sockets = ScreenSocketServer(self, is_on=self._is_on)
         self._server = WebcastServer(socket_port=self._socket_port)
         self._sockets.viewers_changed.connect(self._on_viewers_changed)
+        self._sockets.telemetry_changed.connect(self.telemetry_changed.emit)
         self._sockets.log.connect(self.log.emit)
         self._subscribed = False
 
@@ -87,6 +90,30 @@ class _WebcastService(QObject):
         what decides whether it exists.
         """
         self._provider = provider
+
+    def _is_on(self, screen_id: str) -> bool:
+        """
+        Is this screen's sidebar switch on?
+
+        A screen that is on has a state engine; one that is off does not, and
+        `ControlScreen._reconcile()` is what makes that true. So the window's
+        existence *is* the power switch, and there is no second copy of the
+        answer to drift out of step with it.
+        """
+        if self._provider is None:
+            return False
+        return self._provider(screen_id) is not None
+
+    def screen_power_changed(self, screen_id: str) -> None:
+        """
+        The sidebar switch moved — tell that screen's displays at once.
+
+        Called by the control screen, because power emits no signal of its
+        own: it is not a `config` key. Without this a networked screen simply
+        ignored its own switch, holding the last state it was sent.
+        """
+        if screen_id in settings.PUBLISHABLE:
+            self._sockets.push_state(screen_id)
 
     def _socket_port(self) -> int:
         return settings.socket_port(self._prefs["port"])
@@ -131,6 +158,10 @@ class _WebcastService(QObject):
     @property
     def viewers(self) -> int:
         return self._sockets.viewers()
+
+    def telemetry(self) -> dict:
+        """Connected displays and how each one is doing — for the panel."""
+        return self._sockets.telemetry()
 
     def published(self) -> list[str]:
         return list(self._prefs["screens"]) if self._prefs["enabled"] else []

@@ -1,0 +1,5 @@
+# Copy to .dev.vars for `npm run dev`. Production values are set with
+# `npx wrangler secret put <NAME>` and never written to a file in this repo.
+CLIENT_TOKEN=dev-client-token
+NEXUS_WEBHOOK_TOKEN=dev-webhook-token
+NEXUS_API_KEY=

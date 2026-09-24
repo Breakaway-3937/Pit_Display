@@ -377,6 +377,26 @@ def _check_updates() -> Result:
     return Result("updates", True, "\n".join(lines))
 
 
+def _check_qt_warnings() -> Result:
+    """
+    Anything Qt complained about, and where the record of it lives.
+
+    The point is the *file*, not this line: an operator who sees a screen
+    misbehave can be asked for `qt_warnings.log` and it will have a timestamp
+    and a count, rather than a memory of some red text.
+    """
+    from app import paths, qt_log
+    path = paths.data("qt_warnings.log")
+    lines = [f"log         {path}"]
+    seen = qt_log.summary()
+    if seen:
+        lines.extend(seen[:4])
+        return Result("qt", True, "\n".join(lines),
+                      warnings=[f"{len(seen)} distinct Qt warning(s) this run"])
+    lines.append("none this run")
+    return Result("qt", True, "\n".join(lines))
+
+
 def _check_webcast() -> Result:
     """
     Are the overhead screens published to the pit LAN, and on what address?
@@ -421,6 +441,49 @@ def _check_webcast() -> Result:
     return Result("webcast", True, "\n".join(lines), warnings=warnings)
 
 
+def _check_network() -> Result:
+    """
+    Can this build speak TLS — both ways the app does?
+
+    The relay socket (`wss://nexus.bh-stack.com`) goes through **Qt's** TLS,
+    which is a plugin (`plugins/tls/`: schannel on Windows, securetransport on
+    macOS, openssl elsewhere) that PyInstaller has to find and copy. Every
+    HTTPS fetch — the relay's HTTP mirror, frc.nexus direct, GitHub updates —
+    goes through **Python's** `ssl`, a separate extension with its own DLLs.
+    Lose either and the app starts perfectly: the relay just never connects
+    ("TLS initialization failed"), or updates and polling fail with an error
+    nobody reads. This is the WebEngine helper's failure mode again, and it
+    is caught the same way — here, by name, before the update gate lets the
+    build anywhere near a pit. Never touches the network.
+    """
+    lines: list[str] = []
+    problems: list[str] = []
+    try:
+        from PyQt6.QtNetwork import QSslSocket
+        from PyQt6.QtWebSockets import QWebSocket  # noqa: F401 — present is the check
+        backends = QSslSocket.availableBackends()
+        active = QSslSocket.activeBackend()
+        lines.append(f"qt tls      {active or 'none'} (available: "
+                     f"{', '.join(backends) or 'none'})")
+        # "cert-only" can parse certificates but cannot make a connection.
+        if not QSslSocket.supportsSsl() or active in ("", "cert-only"):
+            problems.append("Qt has no TLS backend — the relay socket cannot "
+                            "connect. plugins/tls is missing from this build")
+        lines.append(f"websockets  QtWebSockets {'ok' if not problems else 'loaded'}")
+    except Exception as exc:
+        problems.append(f"QtNetwork/QtWebSockets would not load: {exc}")
+    try:
+        import ssl
+        ctx = ssl.create_default_context()
+        lines.append(f"python ssl  {ssl.OPENSSL_VERSION}, "
+                     f"{len(ctx.get_ca_certs()) or 'system'} CA certs")
+    except Exception as exc:
+        problems.append(f"Python's ssl module is broken: {exc}")
+    if problems:
+        return Result("network", False, "\n".join(lines + problems))
+    return Result("network", True, "\n".join(lines))
+
+
 def _check_nexus() -> Result:
     """
     Is the event feed set up, and do the models still fit the API?
@@ -439,12 +502,10 @@ def _check_nexus() -> Result:
              f"poll        {'on' if prefs['auto_poll'] else 'off'}, "
              f"every {prefs['poll_interval_s']}s / "
              f"{prefs['slow_poll_interval_s']}s",
-             f"webhook     {'on' if prefs['webhook_enabled'] else 'off'}, "
-             f"{prefs['webhook_bind']}:{prefs['webhook_port']}"
-             + ("  (tunnel on this machine)"
-                if prefs['webhook_bind'] == '127.0.0.1' else "  (open to the network)"),
-             f"api key     {credentials.source(api.API_KEY_SECRET)}",
-             f"push token  {credentials.source(api.WEBHOOK_TOKEN_SECRET)}",
+             f"relay       {prefs['relay_url'] if prefs['relay_enabled'] else 'off'}",
+             f"relay token {credentials.source(api.RELAY_TOKEN_SECRET)}",
+             f"api key     {credentials.source(api.API_KEY_SECRET)}"
+             + ("  (direct fallback)" if credentials.present(api.API_KEY_SECRET) else ""),
              f"secrets     {credentials.folder()}"]
 
     try:
@@ -476,10 +537,13 @@ def _check_nexus() -> Result:
     warnings = []
     if not prefs["event_key"]:
         warnings.append("no event key — the feed is off until one is set")
-    if not credentials.present(api.API_KEY_SECRET):
-        warnings.append("no Nexus API key in the secret folder")
-    if prefs["webhook_enabled"] and not credentials.present(api.WEBHOOK_TOKEN_SECRET):
-        warnings.append("webhook is on but there is no token to verify pushes with")
+    relay = prefs["relay_enabled"] and credentials.present(api.RELAY_TOKEN_SECRET)
+    if not relay and not credentials.present(api.API_KEY_SECRET):
+        warnings.append("no relay token and no Nexus API key — nothing can "
+                        "reach Nexus")
+    elif not relay:
+        warnings.append("no relay token — polling frc.nexus directly, "
+                        "with no pushes")
     if warnings:
         return Result("nexus", True, "\n".join(lines),
                       critical=False, warnings=warnings)
@@ -544,16 +608,23 @@ def run() -> int:
         init_judges_slides()
         results.append(_check_webengine())
         results.append(_check_cad(app))
+        from app import qt_log
+        qt_log.install()
         init_leds()
         init_music()
         init_alerts()
+        # The control screen's Pit Network panel reads this while it builds.
+        from app.webcast import init_webcast
+        init_webcast()
         app.setStyleSheet(dark_qss())
         results.append(_check_fonts())
         results.append(_check_owlet())
         results.append(_check_audio())
         results.append(_check_updates())
+        results.append(_check_network())
         results.append(_check_nexus())
         results.append(_check_webcast())
+        results.append(_check_qt_warnings())
         results.append(_check_windows(app))
 
     return _report(results)

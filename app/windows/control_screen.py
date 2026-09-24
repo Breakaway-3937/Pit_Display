@@ -39,6 +39,7 @@ from app.widgets.admin_bar import AdminBar
 from app.widgets.helpers import clear_layout, divider, label
 from app.widgets.led_panel import LEDPanel
 from app.widgets.music_panel import MusicPanel
+from app.widgets.network_panel import NetworkPanel
 from app.widgets.robot_panel import RobotLogPanel
 from app.widgets.update_panel import UpdatePanel
 from app.widgets.nexus_panel import NexusPanel
@@ -49,14 +50,17 @@ from app.webcast import settings as webcast_settings
 
 # Pit-wide subsystems. Unlike SCREENS these are not windows — they are hardware
 # the pit owns, so they get their own sidebar group and their own panels.
-SYSTEMS = ["leds", "music", "robot", "nexus", "updates"]
+# Robot Logs is not its own entry any more: it is a section of Telemetry,
+# which is the home of every kind of telemetry the pit has — robot and link.
+SYSTEMS = ["leds", "music", "network", "nexus", "updates"]
 
 # A window kept alive only for the pit network is laid out and painted but
 # never mapped to a display. Measured: a presentation screen renders its whole
 # chassis correctly this way with no monitor attached, which is the entire
 # basis of publishing a screen from a machine that has no spare video output.
 _NO_SCREEN = Qt.WidgetAttribute.WA_DontShowOnScreen
-SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music", "robot": "Robot Logs",
+SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music",
+                 "network": "Telemetry", "robot": "Robot Logs",
                  "nexus": "Event Feed", "updates": "Software Updates"}
 
 # One muted line under each panel's title — where the thing physically is and
@@ -1051,20 +1055,21 @@ class ScreenSettingsPanel(QWidget):
             # and because the window is then laid out without ever being
             # mapped to a display, this machine needs no video output for it.
             if screen_id in webcast_settings.PUBLISHABLE:
+                published = webcast_settings.is_published(screen_id)
                 self._web_toggle, self._web_label, web_row = \
                     self._labeled_toggle(
-                        checked=webcast_settings.is_published(screen_id),
-                        text="On" if webcast_settings.is_published(screen_id)
-                             else "Off")
+                        checked=published,
+                        text="Network" if published else "Monitor")
                 self._web_toggle.toggled.connect(self._on_web_toggled)
                 outer.addWidget(SettingRow(
-                    label_text="Show on the pit network",
-                    description="Publish this screen to the pit LAN so a Pi "
-                                "on the Ethernet switch can show it in a "
-                                "browser instead of a monitor. The power "
-                                "switch still turns the screen on and off — "
-                                "it just stops opening a window here. "
-                                "Pit-local only; never put this port on "
+                    label_text="Where this screen appears",
+                    description="Monitor sends it to a display plugged into "
+                                "this machine. Network sends it to a display "
+                                "on the pit switch instead, over one Ethernet "
+                                "cable. This setting only chooses which — the "
+                                "screen's own switch in the sidebar still "
+                                "turns it on and off either way. Keep the pit "
+                                "network on its own switch; it is not for "
                                 "event wifi.",
                     control=web_row,
                 ))
@@ -1241,7 +1246,7 @@ class ScreenSettingsPanel(QWidget):
         if on and not webcast.listening:
             self._web_label.setText("Failed")
         else:
-            self._web_label.setText("On" if on else "Off")
+            self._web_label.setText("Network" if on else "Monitor")
         self._refresh_web_url()
 
     def _refresh_web_url(self):
@@ -1253,8 +1258,8 @@ class ScreenSettingsPanel(QWidget):
         if not published:
             self._web_address = ""
             self._web_url.setText(
-                "Not published. Turn this on to show the screen in a browser "
-                "on the pit switch instead of on a monitor.")
+                "This screen goes to a monitor plugged into this machine. "
+                "Switch it to Network to send it across the pit instead.")
             return
         host = lan_address()
         port = webcast_settings.get("port")
@@ -1264,12 +1269,14 @@ class ScreenSettingsPanel(QWidget):
         self._web_address = f"http://{host}:{port}/screen/{self._screen_id}"
         powered = self._screen_id in getattr(self.window(), "_powered", set())
         state = ("" if powered else
-                 "  This screen is switched off — turn its power on to start "
-                 "it; it will not open a window here.")
+                 "  This screen is switched off. Turn it on with its switch "
+                 "in the sidebar; it will not open a window on this machine.")
         self._web_url.setText(
             f"{self._web_address}\n"
-            f"Open that on the pit switch and put the browser full screen. "
-            f"http://{host}:{port}/ lists every published screen.{state}")
+            f"Open that address on the display and put its browser in full "
+            f"screen. http://{host}:{port}/ lists every screen on the "
+            f"network. Pit Systems \u2192 Telemetry shows what is "
+            f"connected.{state}")
 
     def _copy_web_url(self):
         """Put the bare address on the clipboard — no sentence, no trailing dot."""
@@ -1308,6 +1315,9 @@ class SystemSettingsPanel(QWidget):
                 "running its animation if this app closes.",
         "music": "Local music for the overhead speakers, with a ten-band "
                  "equaliser for tuning the pit.",
+        "network": "Every link the pit depends on — the event relay, the "
+                   "overhead displays, the LED controller — and the robot's "
+                   "own logs. Where to look first when a screen is wrong.",
         "robot": "Import telemetry exported off the robot, and name the CAN "
                  "ids so every screen can say “Front-Left Drive” instead of "
                  "“TalonFX 11”.",
@@ -1332,8 +1342,8 @@ class SystemSettingsPanel(QWidget):
         outer.addSpacing(16)
 
         self.body = {"leds": LEDPanel, "music": MusicPanel,
-                     "robot": RobotLogPanel, "nexus": NexusPanel,
-                     "updates": UpdatePanel}[system_id]()
+                     "network": NetworkPanel, "robot": RobotLogPanel,
+                     "nexus": NexusPanel, "updates": UpdatePanel}[system_id]()
         outer.addWidget(self.body)
         outer.addStretch()
 
@@ -1757,6 +1767,12 @@ class ControlScreen(QMainWindow):
         else:
             self._powered.discard(screen_id)
         self._reconcile(screen_id)
+        # **Tell the pit network, or a screen on it ignores its own switch.**
+        # Power is not a `config` key, so nothing else emits anything here;
+        # without this the displays hold the last state they were sent and
+        # keep rotating a screen the operator has just turned off.
+        if self._webcast is not None:
+            self._webcast.screen_power_changed(screen_id)
         # The panel's address line says whether the screen is running, so it
         # goes stale the moment the power switch moves without it.
         panel = self._settings_panels.get(screen_id)

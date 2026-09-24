@@ -54,6 +54,14 @@
 
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 
+  // **Every string below is read by a stranger standing in the pit.** None of
+  // them may name a port, a socket, a setting or the control panel: a visitor
+  // cannot act on any of that, and a panel that asks them to is worse than a
+  // panel that simply says the team is on it. Operator-facing wording lives on
+  // the picker page, which only the crew ever opens.
+  var WELCOME = "Breakaway welcomes you to our pit";
+  var TROUBLE = "We\u2019re having technical difficulties \u2014 back shortly.";
+
   var TRACE =
     '<svg class="trace" viewBox="0 0 300 62" aria-hidden="true">' +
     '<path d="M10,54 L52,14 L252,14"/><circle cx="264" cy="14" r="9"/></svg>';
@@ -134,8 +142,7 @@
     bar.appendChild(fill);
     box.appendChild(bar);
     if (!data.items.length) {
-      box.appendChild(h("div", "subline",
-        "No items yet. Add them from the control panel."));
+      box.appendChild(h("div", "subline", "Nothing on the list right now."));
       return box;
     }
     var rows = h("div", "check-rows");
@@ -170,9 +177,11 @@
   function faceBoard(data) {
     var box = h("div", "face");
     if (data.empty) {
-      box.appendChild(h("div", "check-title", "No robot log imported"));
+      // A board with nothing behind it is not an error and must not read like
+      // one to a visitor; it just has not been given this match's data yet.
+      box.appendChild(h("div", "check-title", WELCOME));
       box.appendChild(h("div", "subline",
-        "Import one from the control panel and this board fills in."));
+        "Robot data for this match is not loaded yet."));
       return box;
     }
     if (data.which === "robot_info") {
@@ -221,7 +230,9 @@
   function faceNextMatch(data) {
     var box = h("div", "face stack");
     if (data.empty) {
-      box.appendChild(h("div", "check-title", "No match scheduled"));
+      box.appendChild(h("div", "check-title", WELCOME));
+      box.appendChild(h("div", "subline",
+        "Our next match has not been posted yet."));
       return box;
     }
     box.appendChild(h("div", "eyebrow", "Next match"));
@@ -234,7 +245,7 @@
     var box = h("div", "face");
     var src = data.images && data.images[data.index];
     if (!src) {
-      box.appendChild(h("div", "check-title", "No judges slides"));
+      box.appendChild(h("div", "check-title", WELCOME));
       return box;
     }
     var img = document.createElement("img");
@@ -244,10 +255,13 @@
     return box;
   }
 
-  function faceUnknown(name) {
+  function faceUnknown() {
+    // Reached only if a future face ships without a drawing routine here.
+    // The visitor gets the welcome card; the console line is for whoever is
+    // debugging it, and never reaches the panel.
     var box = h("div", "face stack");
-    box.appendChild(h("div", "check-title", "Nothing to show"));
-    box.appendChild(h("div", "subline", "This screen is on '" + name + "'."));
+    box.appendChild(h("div", "check-title", WELCOME));
+    box.appendChild(h("div", "subline", "Thanks for stopping by."));
     return box;
   }
 
@@ -280,6 +294,18 @@
       "SCREEN " + letter + "  /  " + String(s.mode).toUpperCase();
 
     var node;
+    if (s.on === false) {
+      // **The screen's own switch is off, and that looks exactly like the pit
+      // machine being off.** One overlay covers both, because from where a
+      // visitor is standing they are the same event: this screen is not
+      // showing them anything, and the team is aware. The last picture stays
+      // underneath, dimmed, precisely as it does on a dropped connection —
+      // the page is never simply blank, and never passes stale content off as
+      // live either.
+      showTrouble();
+      el.railFill.style.width = "0%";
+      return;
+    }
     if (s.face === "rotation" && s.rotation) {
       if (s.rotation.board) {
         node = faceBoard(s.board || { which: s.rotation.board, empty: true });
@@ -308,7 +334,7 @@
       node = faceNextMatch(s.next_match || { empty: true });
       el.ledgerLeft.textContent = "NEXT MATCH";
     } else {
-      node = faceUnknown(s.face);
+      node = faceUnknown();
       el.ledgerLeft.textContent = "";
     }
 
@@ -321,7 +347,7 @@
 
   function tickRail() {
     requestAnimationFrame(tickRail);
-    if (!state || !state.dwell || !state.dwell.running) {
+    if (!state || state.on === false || !state.dwell || !state.dwell.running) {
       el.railFill.style.width = "0%";
       return;
     }
@@ -336,9 +362,12 @@
 
   // ── The socket ─────────────────────────────────────────────────────────
 
-  function showOffline(title, note) {
-    el.offlineTitle.textContent = title;
-    el.offlineBody.textContent = note || "";
+  function showTrouble(note) {
+    // One message for every failure, deliberately. A visitor cannot tell a
+    // dropped socket from an unpublished screen from a restarted pit machine,
+    // and does not need to: all three mean "the team is dealing with it".
+    el.offlineTitle.textContent = WELCOME;
+    el.offlineBody.textContent = note || TROUBLE;
     el.offline.hidden = false;
   }
 
@@ -368,16 +397,19 @@
         el.offline.hidden = true;
         render(msg.data);
       } else if (msg.type === "refused") {
-        showOffline("Not published",
-          (msg.data && msg.data.reason) || "This screen is not being published.");
+        // The reason is an operator's sentence about configuration. It goes
+        // to the console for whoever is setting the display up, never onto
+        // the glass.
+        if (msg.data && msg.data.reason) console.info(msg.data.reason);
+        showTrouble();
       }
     };
 
     ws.onclose = function () {
-      // The last good picture stays on screen underneath, dimmed. A panel
-      // across the pit must never be ambiguous about "this is old".
-      showOffline("Reconnecting to the pit machine",
-                  "The picture below is the last one received.");
+      // The last good picture stays on screen underneath, dimmed, so the
+      // panel is never simply blank — but it is plainly marked as stale
+      // rather than passing for live.
+      showTrouble();
       setTimeout(connect, backoff);
       backoff = Math.min(backoff * 2, 5000);
     };

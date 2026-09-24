@@ -20,6 +20,8 @@ actually sent.
 
     --raw     print the JSON as received instead of the parsed models
     --fake    use the bundled example payloads (no key, no network)
+    --relay   go through the team's relay (secrets/nexus_relay_token)
+              instead of straight to frc.nexus with the API key
 
 Every request goes through `app.nexus.api.Client`, so this exercises the
 same code the display runs — a probe that works here works in the app.
@@ -119,6 +121,7 @@ def main(argv: list[str]) -> int:
     use_utf8()
     raw = "--raw" in argv
     fake = "--fake" in argv
+    relay = "--relay" in argv
     args = [a for a in argv if not a.startswith("--")]
     if not args or args[0] not in COMMANDS:
         print(__doc__)
@@ -131,8 +134,17 @@ def main(argv: list[str]) -> int:
 
     if fake:
         os.environ["PIT_NEXUS_FAKE"] = "1"
-    client = api.make_client()
-    if not fake:
+    if relay:
+        from app.nexus import settings
+        url = settings.load()["relay_url"]
+        client = api.RelayClient(url)
+        print(f"relay: {url}, token "
+              f"{'present' if api.relay_token() else 'MISSING'}")
+        if not api.relay_token():
+            return 1
+    else:
+        client = api.make_client()
+    if not fake and not relay:
         print(f"key: {'present' if api.configured() else 'MISSING — put it in '
               + str(api.credentials.path(api.API_KEY_SECRET))}")
         if not api.configured():

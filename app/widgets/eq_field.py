@@ -31,13 +31,45 @@ touched, and the design's floor is a 44px target.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+import math
+
+from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import (QColor, QFont, QLinearGradient, QPainter,
+                         QPainterPath, QPen)
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
 from app import brand
 from app.brand import FONT_MONO_STACK
 from app.music import eq as eq_module
+from app.music.analyser import normalise as analyser_normalise
+
+# The level ramp, bottom to top: quiet and cool to hot. Every stop is a brand
+# colour from the chart span (`breakaway_branding.md` §03), so a meter that has
+# to be rainbow-ish to be readable still cannot introduce a colour the system
+# does not own. Red is the last eighth only — it means a band is running out of
+# headroom, which is the exceptional state the brand reserves red for.
+_LEVEL_RAMP = (
+    (0.00, brand.HARBOR),        # #2B3A67 deep blue — barely there
+    (0.22, brand.SKY),           # #3F6FB5
+    (0.42, brand.SPRUCE),        # #2E8B7F teal
+    (0.60, "#7FB98F"),           # Sprout — the light end of the green ramp
+    (0.74, "#C9A227"),           # Ochre
+    (0.87, brand.STATUS_PENDING),  # #E08A1E amber
+    (1.00, brand.STATUS_FAULT),  # #BA141A — out of headroom
+)
+
+
+def _level_colour(frac: float) -> str:
+    """The ramp colour at a height, for a tick or a readout to match its bar."""
+    frac = max(0.0, min(1.0, frac))
+    previous = _LEVEL_RAMP[0]
+    for stop in _LEVEL_RAMP:
+        if frac <= stop[0]:
+            return stop[1] if stop[0] == previous[0] else (
+                previous[1] if frac - previous[0] < stop[0] - frac else stop[1])
+        previous = stop
+    return _LEVEL_RAMP[-1][1]
+
 
 # The design's own geometry, in its 760×200 field. Everything is a ratio of the
 # live widget, so the instrument keeps its proportions at any panel width.
@@ -79,6 +111,19 @@ class EQField(QWidget):
         self._gains = [0.0] * eq_module.N_BANDS
         self._dragging: int | None = None
         self._theme_dark = True
+        # The live analyser, or None. Attached by the music panel when the
+        # operator turns the display on; the field draws bars behind the curve
+        # only while it is there, and is exactly what it always was without it.
+        self._analyser = None
+        self._tick = QTimer(self)
+        # **33 ms, chosen against the data rate rather than picked.** The
+        # shadow decoder delivers a 50 ms block roughly every 42 ms, so a
+        # 50 ms repaint was slower than the thing it was drawing and a block
+        # could sit unshown. 30 fps clears that with room to spare; 60 would
+        # cost 9.3% of a core (measured, at 1.54 ms a repaint) to show 24 Hz
+        # of data, which is paying double for nothing.
+        self._tick.setInterval(33)
+        self._tick.timeout.connect(self.update)
         self.setMinimumHeight(self._FIELD_MIN_H + self._LABELS_H)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
                            QSizePolicy.Policy.Expanding)
@@ -96,6 +141,21 @@ class EQField(QWidget):
 
     def gains(self) -> list[float]:
         return list(self._gains)
+
+    def set_analyser(self, analyser) -> None:
+        """
+        Show live band levels behind the curve, or pass None to stop.
+
+        The repaint timer runs **only while an analyser is attached**. A
+        response curve does not move on its own, so an EQ with the display off
+        repaints when a finger moves it and at no other time.
+        """
+        self._analyser = analyser
+        if analyser is None:
+            self._tick.stop()
+        else:
+            self._tick.start()
+        self.update()
 
     # ── Geometry ──────────────────────────────────────────────────────────
 
@@ -189,12 +249,34 @@ class EQField(QWidget):
         curve_w = max(1.5, h * _CURVE_W)
         rule_w = max(1.0, h * _RULE_W)
 
+        # ── The graticule ────────────────────────────────────────────────
+        # Horizontal rules every 10 dB, the way a console's EQ screen is read.
+        # Without them a curve is a shape; with them it is a set of values.
+        # ±10 only. ±20 *is* the field's own edge, so ruling it draws a line
+        # on the border and labelling it puts type outside the widget.
+        p.setFont(_mono(10))
+        for db in (10, -10):
+            y = self._gain_y(db, field)
+            p.setPen(QPen(QColor(brand.DIVIDER_DARK), rule_w))
+            p.drawLine(QPointF(field.x(), y), QPointF(field.right(), y))
+            p.setPen(QColor(brand.N600 if self._theme_dark else brand.N400))
+            p.drawText(QRectF(field.x() + 3, y - 13, 34, 12),
+                       int(Qt.AlignmentFlag.AlignLeft
+                           | Qt.AlignmentFlag.AlignBottom), f"{db:+d}")
+
         # 0 dB, dashed — the line the whole curve is read against.
         pen = QPen(QColor(brand.CARBON_LINE), rule_w)
         pen.setDashPattern([3.0, 4.0])
         p.setPen(pen)
         p.drawLine(QPointF(field.x(), field.center().y()),
                    QPointF(field.right(), field.center().y()))
+
+        # ── The live analyser, behind everything ─────────────────────────
+        # **Only ever real measurements.** A spectrum display is the easiest
+        # thing in this app to fake convincingly, and one that invents a
+        # dancing graph is lying to everyone who looks at it. No analyser
+        # attached means no bars, not idle animation.
+        self._paint_analyser(p, field)
 
         # One rail per band.
         p.setPen(QPen(QColor(brand.DIVIDER_DARK), rule_w,
@@ -207,11 +289,19 @@ class EQField(QWidget):
         points = [QPointF(self._band_x(i, field), self._gain_y(g, field))
                   for i, g in enumerate(self._gains)]
 
-        # The response curve.
+        # The response curve. **The sum of ten peaking filters, sampled across
+        # the field** — not straight lines between the handles. A graphic EQ's
+        # bands overlap by an octave, so two neighbours both lifted by 6 dB
+        # produce more than 6 dB between them, and a join-the-dots curve draws
+        # a flat shelf where the audio has a bump. This is what the pit
+        # actually hears, and it is why the handles can sit off the line.
         path = QPainterPath()
-        path.moveTo(points[0])
-        for pt in points[1:]:
-            path.lineTo(pt)
+        span = max(2, int(field.width() / 2))
+        for step_i in range(span + 1):
+            t = step_i / span
+            x = field.x() + field.width() * t
+            y = self._gain_y(self._response_at(t), field)
+            path.moveTo(x, y) if step_i == 0 else path.lineTo(x, y)
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(QColor(self._ink), curve_w, Qt.PenStyle.SolidLine,
                       Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
@@ -224,8 +314,128 @@ class EQField(QWidget):
             rr = r * (1.25 if i == self._dragging else 1.0)
             p.drawEllipse(pt, rr, rr)
 
+        self._paint_analyser_values(p, field)
         self._paint_labels(p, field)
         p.end()
+
+    def _response_at(self, t: float) -> float:
+        """
+        Combined gain in dB at position `t` (0..1) across the band span.
+
+        Each band contributes a peaking bell one octave wide, which is the
+        spacing of the bands themselves — the same assumption the analyser's
+        filters make, so the curve and the bars describe one system.
+        """
+        # Band centres sit at the same x the handles do, in band units.
+        pos = t * eq_module.N_BANDS - 0.5
+        total = 0.0
+        for i, gain in enumerate(self._gains):
+            if gain == 0.0:
+                continue
+            d = pos - i
+            # A bell in octave units: unity at the centre, ~a quarter one
+            # octave away, negligible by two.
+            total += gain * math.exp(-(d * d) / 0.72)
+        return total
+
+    def _paint_analyser(self, p: QPainter, field: QRectF):
+        """Live band levels as bars behind the curve, with peak ticks."""
+        analyser = self._analyser
+        if analyser is None:
+            return
+        try:
+            levels = analyser.levels()
+            peaks = analyser.peaks()
+        except Exception:
+            return
+
+        step = field.width() / eq_module.N_BANDS
+        width = step * 0.44
+        floor_y = field.bottom()
+        p.setPen(Qt.PenStyle.NoPen)
+        # **Colour encodes level, so it is anchored to the field and not to
+        # the bar.** A gradient painted across each bar's own height would
+        # make every band end in the same colour no matter how loud it is,
+        # which is exactly backwards: the whole reason to colour a meter is
+        # that a glance tells you *how hot* a band is without reading the
+        # scale. Anchored here, a given height is always the same colour, so
+        # two bands at the same level match and a hot one stands out.
+        #
+        # Every stop is a brand colour. It is the console ramp — cool and
+        # quiet at the bottom, hot at the top — built out of the chart span
+        # rather than an invented rainbow, and the red at the very top is the
+        # brand's own fault colour doing the job it is defined for.
+        ramp = QLinearGradient(0.0, floor_y, 0.0, field.y())
+        for stop, colour in _LEVEL_RAMP:
+            ramp.setColorAt(stop, QColor(colour))
+        # **Readable first, behind second.** An earlier version was a 30%
+        # wash, on the argument that the curve is the subject — but the whole
+        # point of this element is telling an operator what each band is
+        # doing, and a bar you have to squint at does not do that. It is still
+        # behind the curve and still unsaturated, so the white line reads over
+        # it; it is simply no longer apologetic.
+        for i, db in enumerate(levels[:eq_module.N_BANDS]):
+            frac = analyser_normalise(db)
+            if frac <= 0.001:
+                continue
+            x = self._band_x(i, field)
+            top = floor_y - field.height() * frac
+            p.setBrush(ramp)
+            p.drawRoundedRect(QRectF(x - width / 2, top, width, floor_y - top),
+                              width * 0.22, width * 0.22)
+
+        # Peak hold: a tick, not a filled bar. It marks where the band has
+        # just been, which is the thing a bar cannot show.
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for i, db in enumerate(peaks[:eq_module.N_BANDS]):
+            frac = analyser_normalise(db)
+            if frac <= 0.001:
+                continue
+            x = self._band_x(i, field)
+            y = floor_y - field.height() * frac
+            # The tick spans its own bar and no more. Wider reads as a cap on
+            # the bar rather than as a mark on the scale, and it collided with
+            # the readout above.
+            tick = QColor(_level_colour(frac))
+            p.setPen(QPen(tick, max(1.5, field.height() * 0.010)))
+            p.drawLine(QPointF(x - width / 2, y), QPointF(x + width / 2, y))
+
+
+    def _paint_analyser_values(self, p: QPainter, field: QRectF):
+        """
+        The live level per band, in decibels. **Drawn last, over everything.**
+
+        A bar says "louder than that one"; an operator reaching for a band
+        wants to know by how much, and the graticule cannot be read to a
+        decibel. It has to be the last thing painted because two other
+        elements sit exactly where it does: the band rail runs vertically
+        through the centre of each bar — which turned "−15" into "−.5", worse
+        than no number at all because it is wrong rather than absent — and the
+        peak tick lands on the same height whenever a band is steady.
+        """
+        analyser = self._analyser
+        if analyser is None:
+            return
+        try:
+            levels = analyser.levels()
+            peaks = analyser.peaks()
+        except Exception:
+            return
+
+        step = field.width() / eq_module.N_BANDS
+        floor_y = field.bottom()
+        p.setFont(_mono(10))
+        for i, db in enumerate(levels[:eq_module.N_BANDS]):
+            frac = analyser_normalise(db)
+            if frac <= 0.02:
+                continue
+            top = max(frac, analyser_normalise(peaks[i])
+                      if i < len(peaks) else frac)
+            x = self._band_x(i, field)
+            y = floor_y - field.height() * top
+            p.setPen(QColor(_level_colour(frac)))
+            p.drawText(QRectF(x - step / 2, y - 17, step, 13),
+                       int(Qt.AlignmentFlag.AlignCenter), f"{db:.0f}")
 
     def _paint_labels(self, p: QPainter, field: QRectF):
         step = field.width() / eq_module.N_BANDS

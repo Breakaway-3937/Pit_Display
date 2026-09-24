@@ -1,0 +1,72 @@
+name: Deploy relay
+
+# The Nexus relay (nexus-relay/) deploys itself when it changes on main — the
+# same idea as a tag building the app, on its own cycle. Nothing else in the
+# repo triggers it: an app release never touches the relay, and a relay change
+# never costs a Windows build.
+#
+# Checks run before anything goes live: the typecheck, then a dry-run bundle.
+# After the deploy, /healthz must answer with both secrets present, or the run
+# goes red — so "it deployed" always means "it is up and configured".
+#
+# Needs one repository secret: CLOUDFLARE_API_TOKEN (the "Edit Cloudflare
+# Workers" template, scoped to this account and bh-stack.com). The account id
+# is in wrangler.jsonc. The relay's own secrets (CLIENT_TOKEN, NEXUS_API_KEY,
+# NEXUS_WEBHOOK_TOKEN) live in Cloudflare and are never touched by a deploy.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "nexus-relay/**"
+      - ".github/workflows/relay.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never two deploys at once; a newer push waits for the running one.
+concurrency:
+  group: relay-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: nexus-relay
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: nexus-relay/package-lock.json
+
+      - name: Install (exact versions from the lockfile)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run check
+
+      - name: Bundle (dry run)
+        run: npx wrangler deploy --dry-run --outdir dist
+
+      - name: Deploy
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+      - name: Smoke test
+        run: |
+          for i in 1 2 3 4 5 6; do
+            body=$(curl -fsS https://nexus.bh-stack.com/healthz) && break
+            sleep 5
+          done
+          echo "$body"
+          echo "$body" | grep -q '"ok":true'          || { echo "::error::relay not answering"; exit 1; }
+          echo "$body" | grep -q '"apiKey":true'      || { echo "::error::relay has no NEXUS_API_KEY"; exit 1; }
+          echo "$body" | grep -q '"webhookToken":true' || { echo "::error::relay has no NEXUS_WEBHOOK_TOKEN"; exit 1; }

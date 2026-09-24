@@ -2,24 +2,32 @@
 `_NexusService` — the singleton every screen reads the event through.
 
 It owns one event key, one live `EventStatus` snapshot and the five slower
-per-event fetches (pits, map, inspection, teams, alliances), polls them on two
-cadences, accepts the push webhooks as an accelerator, and turns all of that
+per-event fetches (pits, map, inspection, teams, alliances), and turns them
 into the Qt signals the rest of the app is built on. Nothing else in the app
 talks HTTP to Nexus.
 
-    ┌ poll timer (30s) ──▶ GET /event/{key} ──────┐
-    │                                             ▼
-    │ webhook (push) ──▶ EventStatus / MatchStatus ─▶ newer dataAsOfTime? ─▶ snapshot
-    │                                                                          │
-    └ slow timer (5m) ──▶ pits · map · inspection · teams · alliances          │
-                                                                               ▼
+    relay socket (push, ~instant) ─────────────────────┐
+    live timer (30s, only while the socket is down) ──┤─▶ newer dataAsOfTime? ─▶ snapshot
+    slow timer (5m) ─▶ pits · map · inspection · teams · alliances       │
+                                                                          ▼
                        status_changed · match_changed · now_queuing_changed · …
 
-**Newest `dataAsOfTime` wins, whichever way it arrived.** The spec says pushes
-repeat and arrive out of order, and a poll can land between two pushes; every
-snapshot goes through `_offer_status()`, which drops anything not newer than
-what is held. A match push is folded into the held snapshot the same way —
-one match replaced, the snapshot's clock moved to the push's.
+**The relay is the front door; direct Nexus is the back one.** Every fetch
+goes through `_tiered()`: the relay's mirrored API first
+(`https://nexus.bh-stack.com/api/v1/…`, needing only the relay token), then
+frc.nexus itself if this machine also has an API key. A 404 is an answer and
+stops there; anything else — no route, a refused token, a relay with no key —
+falls through to the next door.
+
+**The live timer only runs while the relay socket is not delivering.** The
+relay pushes each snapshot as it lands and pulls Nexus itself every 30s while
+anyone is subscribed, so polling on top of that is the same request twice. When
+the socket has been down for `fallback_after_s` the timer starts; the moment
+it reconnects the timer stops.
+
+**Newest `dataAsOfTime` wins, whichever way it arrived.** A push can land
+between two polls and a poll between two pushes; every snapshot goes through
+`_offer_status()`, which drops anything not newer than what is held.
 
 **"Our" match is derived, never stored.** `next_match()` and `current_match()`
 read `config.active_team` at call time, so switching the team on the control
@@ -53,7 +61,7 @@ from app.nexus.api import (
     Alliances, EventStatus, EventSummary, InspectionStatus, Match, MatchStatus,
     NexusError, PitMap,
 )
-from app.nexus.webhook import WebhookServer
+from app.nexus.relay import RelayLink
 
 # The first poll after startup. The control screen builds, the audience screens
 # come up, and only then does the machine go and ask the internet anything.
@@ -105,7 +113,7 @@ class _NexusService(QObject):
     teams_changed = pyqtSignal(list)            # list[str]
     alliances_changed = pyqtSignal(object)      # Alliances | None
     events_changed = pyqtSignal(dict)           # {key: EventSummary}
-    pushed = pyqtSignal(str, object)            # raw webhook relay
+    relay_changed = pyqtSignal()                # socket state or relay counters moved
     log = pyqtSignal(str)                       # one line for the panel
 
     def __init__(self):
@@ -125,15 +133,26 @@ class _NexusService(QObject):
 
         self._worker: _Fetch | None = None
         self._queue: list[tuple[str, Callable[[], Any]]] = []
+        # Which door the last answer to each job came through — "relay",
+        # "direct" or "fake". The Telemetry panel's question, not the boards'.
+        self._source: dict[str, str] = {}
+        self._status_source = ""
 
         self._live_timer = QTimer(self)
         self._live_timer.timeout.connect(self.poll)
         self._slow_timer = QTimer(self)
         self._slow_timer.timeout.connect(self.poll_slow)
+        # Armed when the relay socket drops; if it has not come back when
+        # this fires, the live snapshot is polled instead.
+        self._fallback_timer = QTimer(self)
+        self._fallback_timer.setSingleShot(True)
+        self._fallback_timer.timeout.connect(self._on_fallback_due)
 
-        self._webhook = WebhookServer(self)
-        self._webhook.received.connect(self._on_push)
-        self._webhook.rejected.connect(self.log.emit)
+        self._relay = RelayLink(self)
+        self._relay.status_received.connect(self._on_relay_status)
+        self._relay.connection_changed.connect(self._on_relay_connection)
+        self._relay.stats_received.connect(self._on_relay_stats)
+        self._relay.telemetry_changed.connect(self.relay_changed)
 
         config.team_changed.connect(self._on_team_changed)
 
@@ -141,15 +160,12 @@ class _NexusService(QObject):
         self._event_key: str = prefs["event_key"]
         # `PIT_NEXUS_QUIET=1` builds the service without touching a timer or a
         # socket — what --self-check wants, since it runs beside the live app
-        # on the same machine and must not take its webhook port or its poll.
-        quiet = os.environ.get("PIT_NEXUS_QUIET", "") not in ("", "0")
-        if not quiet and self.configured:
-            if prefs["auto_poll"]:
-                self._start_timers()
+        # on the same machine and must not open a second relay socket or poll.
+        self._quiet = os.environ.get("PIT_NEXUS_QUIET", "") not in ("", "0")
+        if not self._quiet and self.configured:
+            self._start_feed()
             QTimer.singleShot(_FIRST_POLL_MS, self.refresh)
         self._sync_state()
-        if not quiet and prefs["webhook_enabled"]:
-            self._start_webhook()
 
     # ── What is configured ───────────────────────────────────────────────
 
@@ -162,8 +178,18 @@ class _NexusService(QObject):
         return self._event_key
 
     @property
+    def relay_configured(self) -> bool:
+        """The relay is switched on, has an address, and this machine has its token."""
+        if self.fake:
+            return False
+        prefs = settings.load()
+        return bool(prefs["relay_enabled"] and prefs["relay_url"]
+                    and api.relay_token())
+
+    @property
     def has_key(self) -> bool:
-        return self.fake or api.configured()
+        """Some door to Nexus is open: the relay, a direct key, or the fake."""
+        return self.fake or self.relay_configured or api.configured()
 
     @property
     def configured(self) -> bool:
@@ -172,9 +198,9 @@ class _NexusService(QObject):
     @property
     def blocked_reason(self) -> str:
         if not self.has_key:
-            return ("No Nexus API key on this machine. Get one at frc.nexus/api "
-                    "and paste it below — it is stored in the secret folder, "
-                    "never in the database.")
+            return ("No way to reach Nexus from this machine. Paste the relay "
+                    "token below (admin) — that is all a pit machine needs. A "
+                    "Nexus API key works too, as a direct fallback.")
         if not self._event_key:
             return "No event selected. Enter the event key, or pick one from the list."
         return ""
@@ -226,8 +252,17 @@ class _NexusService(QObject):
         return self._events
 
     @property
-    def webhook(self) -> WebhookServer:
-        return self._webhook
+    def relay(self) -> RelayLink:
+        return self._relay
+
+    @property
+    def status_source(self) -> str:
+        """How the held snapshot arrived: `relay push`, `relay`, `direct`, `fake`."""
+        return self._status_source
+
+    def sources(self) -> dict[str, str]:
+        """The door each job's last answer came through."""
+        return dict(self._source)
 
     def age_s(self) -> float | None:
         """Seconds since Nexus built the held snapshot, or None without one."""
@@ -274,31 +309,33 @@ class _NexusService(QObject):
         self._queue.clear()
         self._clear_event_data()
         self.event_key_changed.emit(key)
-        if self.configured and settings.get("auto_poll"):
-            self._start_timers()
-        else:
-            self._stop_timers()
-        self._sync_state()
-        if self.configured:
-            self.refresh()
+        self._reconfigure()
 
     def set_api_key(self, value: str) -> None:
         api.set_api_key(value)
-        if self.configured and settings.get("auto_poll"):
-            self._start_timers()
-        else:
-            self._stop_timers()
-        self._sync_state()
-        if self.configured:
-            self.refresh()
+        self._reconfigure()
+
+    def set_relay_token(self, value: str) -> None:
+        api.set_relay_token(value)
+        self._reconfigure()
+
+    def set_relay(self, *, enabled: bool | None = None,
+                  url: str | None = None) -> None:
+        changes: dict[str, Any] = {}
+        if enabled is not None:
+            changes["relay_enabled"] = bool(enabled)
+        if url is not None:
+            changes["relay_url"] = url
+        settings.save(**changes)
+        self._reconfigure()
 
     def set_auto_poll(self, on: bool) -> None:
         settings.save(auto_poll=bool(on))
-        if on and self.configured:
-            self._start_timers()
-            self.poll()
-        else:
-            self._stop_timers()
+        self._stop_timers()
+        if self.configured and not self._quiet:
+            self._start_feed()
+            if on:
+                self.poll()
         self._sync_state()
 
     def set_poll_interval(self, seconds: int) -> None:
@@ -306,22 +343,15 @@ class _NexusService(QObject):
         if self._live_timer.isActive():
             self._live_timer.start(prefs["poll_interval_s"] * 1000)
 
-    def set_webhook_enabled(self, on: bool) -> None:
-        settings.save(webhook_enabled=bool(on))
-        if on:
-            self._start_webhook()
-        else:
-            self._webhook.stop()
-
-    def set_webhook_port(self, port: int) -> int:
-        prefs = settings.save(webhook_port=int(port))
-        if self._webhook.listening:
-            self._webhook.stop()
-            self._start_webhook()
-        return prefs["webhook_port"]
-
-    def set_webhook_token(self, value: str) -> None:
-        api.set_webhook_token(value)
+    def _reconfigure(self) -> None:
+        """Keys, event or relay changed: tear the feed down and bring it up again."""
+        self._relay.stop()
+        self._stop_timers()
+        if self.configured and not self._quiet:
+            self._start_feed()
+        self._sync_state()
+        if self.configured:
+            self.refresh()
 
     # ── Actions ──────────────────────────────────────────────────────────
 
@@ -330,19 +360,18 @@ class _NexusService(QObject):
         if not self.configured:
             return
         key = self._event_key
-        self._enqueue("status", lambda: self._client.event_status(key))
+        self._enqueue("status", self._tiered(lambda c: c.event_status(key)))
 
     def poll_slow(self) -> None:
         """The five slower per-event endpoints."""
         if not self.configured:
             return
         key = self._event_key
-        c = self._client
-        self._enqueue("pits", lambda: c.pit_addresses(key))
-        self._enqueue("map", lambda: c.pit_map(key))
-        self._enqueue("inspection", lambda: c.inspection(key))
-        self._enqueue("teams", lambda: c.teams(key))
-        self._enqueue("alliances", lambda: c.alliances(key))
+        self._enqueue("pits", self._tiered(lambda c: c.pit_addresses(key)))
+        self._enqueue("map", self._tiered(lambda c: c.pit_map(key)))
+        self._enqueue("inspection", self._tiered(lambda c: c.inspection(key)))
+        self._enqueue("teams", self._tiered(lambda c: c.teams(key)))
+        self._enqueue("alliances", self._tiered(lambda c: c.alliances(key)))
 
     def refresh(self) -> None:
         """Everything, now — what the panel's Refresh button does."""
@@ -350,29 +379,80 @@ class _NexusService(QObject):
             self._sync_state()
             return
         if self._status is None:
-            self._set_state("polling", "Fetching the event from frc.nexus…")
-        self.poll()
+            where = "the relay" if self.relay_configured else "frc.nexus"
+            self._set_state("polling", f"Fetching the event from {where}…")
+        # With the socket up, the relay pulls Nexus and pushes the answer
+        # down it; otherwise ask over HTTP, through whichever door is open.
+        if not self._relay.refresh():
+            self.poll()
         self.poll_slow()
 
     def refresh_events(self) -> None:
-        """`GET /events` — the picker's list. Needs a key, not an event."""
+        """`GET /events` — the picker's list. Needs a door, not an event."""
         if not self.has_key:
             self._set_state("off", self.blocked_reason)
             return
-        self._enqueue("events", self._client.events)
+        self._enqueue("events", self._tiered(lambda c: c.events()))
+
+    def relay_stats(self) -> None:
+        """Fetch the relay's counters over HTTP — for when the socket is down."""
+        if not (self.relay_configured and self._event_key):
+            return
+        key = self._event_key
+        client = self._relay_client()
+        self._enqueue("relay", lambda: ("relay", client.relay_stats(key)))
 
     def shutdown(self) -> None:
         self._stop_timers()
+        self._relay.stop()
         self._queue.clear()
-        self._webhook.stop()
         if self._worker is not None:
             self._worker.wait(3_000)
+
+    # ── The doors ────────────────────────────────────────────────────────
+
+    def _relay_client(self) -> api.RelayClient:
+        return api.RelayClient(str(settings.get("relay_url")))
+
+    def _doors(self) -> list[tuple[str, api.Client]]:
+        """Every way to Nexus this machine has, front door first."""
+        if self.fake:
+            return [("fake", self._client)]
+        doors: list[tuple[str, api.Client]] = []
+        if self.relay_configured:
+            doors.append(("relay", self._relay_client()))
+        if api.configured():
+            doors.append(("direct", self._client))
+        return doors
+
+    def _tiered(self, fetch: Callable[[api.Client], Any]) -> Callable[[], Any]:
+        """
+        A job that tries each door in turn and returns `(door, result)`.
+
+        Resolved *now*, on the event loop, so the worker thread never reads
+        settings or the secret folder. A 404 is Nexus's answer, whichever
+        door carried it, and is not retried; anything else falls through.
+        """
+        doors = self._doors()
+
+        def run():
+            last: NexusError | None = None
+            for name, client in doors:
+                try:
+                    return name, fetch(client)
+                except NexusError as exc:
+                    if exc.code == 404:
+                        raise
+                    last = exc
+            raise last or NexusError("No way to reach Nexus from this machine.")
+        return run
 
     # ── Applying data ────────────────────────────────────────────────────
 
     def _offer_status(self, status: EventStatus, source: str) -> bool:
         """Adopt `status` if it is newer than what is held. Returns whether it was."""
-        if status.event_key and self._event_key and status.event_key != self._event_key:
+        if (status.event_key and self._event_key
+                and status.event_key.lower() != self._event_key.lower()):
             self.log.emit(f"Ignored a {source} snapshot for {status.event_key}; "
                           f"this pit is at {self._event_key}.")
             return False
@@ -391,35 +471,42 @@ class _NexusService(QObject):
         self._set_state("live", self._live_message(source))
         return True
 
-    def _on_push(self, kind: str, payload) -> None:
-        self.pushed.emit(kind, payload)
-        if kind == "event":
-            if self._offer_status(payload, "push"):
-                self.log.emit("Live event status received by webhook.")
+    # ── The relay socket ─────────────────────────────────────────────────
+
+    def _on_relay_status(self, status: EventStatus) -> None:
+        if self._offer_status(status, "relay push"):
+            self._status_source = "relay push"
+
+    def _on_relay_stats(self, _stats: dict) -> None:
+        self.relay_changed.emit()
+
+    def _on_relay_connection(self, up: bool) -> None:
+        if up:
+            self._fallback_timer.stop()
+            if self._live_timer.isActive():
+                self._live_timer.stop()
+                self.log.emit("Relay connected — live updates are pushed; "
+                              "direct polling stopped.")
+            else:
+                self.log.emit("Relay connected — live updates are pushed.")
+        elif self.configured and not self._quiet:
+            secs = int(settings.get("fallback_after_s"))
+            self._fallback_timer.start(secs * 1000)
+            self.log.emit(f"Relay link dropped — reconnecting; polling "
+                          f"takes over in {secs}s if it stays down.")
+        self.relay_changed.emit()
+
+    def _on_fallback_due(self) -> None:
+        if self._relay.connected or not self.configured:
             return
-        ms: MatchStatus = payload
-        if ms.event_key and self._event_key and ms.event_key != self._event_key:
-            self.log.emit(f"Ignored a match push for {ms.event_key}.")
-            return
-        held = self._status
-        if held is None:
-            # Nothing to fold it into; a poll will bring the whole schedule.
-            self.log.emit(f"Match push for {ms.match.label} before any "
-                          "snapshot — polling.")
+        if settings.get("auto_poll"):
+            self.log.emit("Relay unreachable — polling for the live snapshot "
+                          "until it is back.")
+            self._start_live_timer()
             self.poll()
-            return
-        if ms.data_as_of <= held.data_as_of:
-            return
-        matches = [ms.match if m.label == ms.match.label else m
-                   for m in held.matches]
-        if all(m.label != ms.match.label for m in held.matches):
-            matches.append(ms.match)
-        merged = EventStatus(event_key=held.event_key, data_as_of=ms.data_as_of,
-                             now_queuing=held.now_queuing, matches=matches,
-                             announcements=held.announcements,
-                             parts_requests=held.parts_requests)
-        if self._offer_status(merged, "push"):
-            self.log.emit(f"{ms.match.label}: {ms.match.status} (webhook).")
+        else:
+            self.log.emit("Relay unreachable and automatic polling is off — "
+                          "the live snapshot will not update.")
 
     def _emit_match_if_changed(self) -> None:
         m = self.next_match() or self.current_match()
@@ -485,13 +572,21 @@ class _NexusService(QObject):
 
     def _on_done(self, job: str, result) -> None:
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        door, result = result if isinstance(result, tuple) else ("", result)
+        if door:
+            self._source[job] = door
+        if job == "relay":
+            self.relay_changed.emit()
+            return
         if job == "status":
-            fresh = self._offer_status(result, "poll")
+            fresh = self._offer_status(result, f"poll via {door or 'nexus'}")
+            if fresh:
+                self._status_source = door
             settings.save(last_poll=stamp,
                           last_result="ok" if fresh else "ok (no newer data)")
             if not fresh and self._status is not None:
                 # Same snapshot as held, but the status line's clock moves.
-                self._set_state("live", self._live_message("poll"))
+                self._set_state("live", self._live_message(self._status_source or "poll"))
         elif job == "pits":
             self._pits = result
             self.pits_changed.emit(dict(result))
@@ -542,34 +637,38 @@ class _NexusService(QObject):
         self.busy_changed.emit(False)
         self._pump()
 
-    # ── Timers, webhook, state ───────────────────────────────────────────
+    # ── Timers and state ────────────────────────────────────────────────
 
-    def _start_timers(self) -> None:
+    def _start_feed(self) -> None:
+        """
+        Bring the feed up for the current event: the relay socket if there is
+        one, the slow timer always, the live timer only when nothing pushes.
+        """
         prefs = settings.load()
-        self._live_timer.start(prefs["poll_interval_s"] * 1000)
         self._slow_timer.start(prefs["slow_poll_interval_s"] * 1000)
+        if self.relay_configured:
+            self._relay.start(prefs["relay_url"], self._event_key, api.relay_token())
+            # If the socket never comes up, polling takes over after this.
+            self._fallback_timer.start(int(prefs["fallback_after_s"]) * 1000)
+        elif prefs["auto_poll"]:
+            self._start_live_timer()
+
+    def _start_live_timer(self) -> None:
+        self._live_timer.start(int(settings.get("poll_interval_s")) * 1000)
 
     def _stop_timers(self) -> None:
         self._live_timer.stop()
         self._slow_timer.stop()
+        self._fallback_timer.stop()
 
     @property
     def polling(self) -> bool:
         return self._live_timer.isActive()
 
-    def _start_webhook(self) -> None:
-        port = int(settings.get("webhook_port"))
-        host = str(settings.get("webhook_bind"))
-        problem = self._webhook.start(port, host)
-        if problem:
-            self.log.emit(problem)
-        elif host == "127.0.0.1":
-            self.log.emit(f"Webhook listening on 127.0.0.1:{port} — reachable "
-                          "through the tunnel on this machine, and from "
-                          "nowhere else.")
-        else:
-            self.log.emit(f"Webhook listening on {host}:{port} — open to the "
-                          "whole network.")
+    @property
+    def pushed_live(self) -> bool:
+        """The relay socket is up and delivering."""
+        return self._relay.connected
 
     def _live_message(self, source: str) -> str:
         s = self._status
@@ -586,10 +685,11 @@ class _NexusService(QObject):
         if not self.configured:
             self._set_state("off", self.blocked_reason)
         elif self._status is not None:
-            self._set_state("live", self._live_message("poll"))
+            self._set_state("live", self._live_message(self._status_source or "poll"))
         elif self._state not in ("polling", "error"):
-            self._set_state("idle", "Ready. Polling is off." if not self.polling
-                            else "Waiting for the first snapshot…")
+            waiting = self.polling or self._relay.state != "off"
+            self._set_state("idle", "Waiting for the first snapshot…" if waiting
+                            else "Ready. Polling is off.")
 
     def _set_state(self, state: str, message: str) -> None:
         self._state = state

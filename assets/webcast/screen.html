@@ -1,56 +1,54 @@
 <!doctype html>
 <!--
-  One overhead screen, drawn by the browser.
+  One overhead pit screen. The page draws itself from state pushed over a
+  websocket; the pit machine sends nothing between slide changes.
 
-  The server substitutes {{SCREEN_ID}}, {{SCREEN_LABEL}} and {{WS_PORT}} when
-  it serves this file — the page never works out its own endpoint, because the
-  socket is on a different port and a page that derives one from `location` is
-  a page that breaks the day somebody moves the other.
-
-  Everything visible is built by screen.js from the state that arrives on the
-  socket. There is no polling and no image: the dwell rail animates locally
-  against a deadline, so a still slide costs the pit machine nothing at all.
+  {{SCREEN_ID}}, {{SCREEN_LABEL}}, {{WS_PORT}} and {{VERSION}} are filled in
+  by the pit machine when it serves this file, so the page never has to work
+  out its own address. {{VERSION}} is a hash of the stylesheet and script, so
+  a display picks up a change the next time it loads rather than holding a
+  cached copy for a day. To point a display at a screen, open the pit machine's address in a
+  browser and pick one from the list.
 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>{{SCREEN_LABEL}}</title>
-<link rel="stylesheet" href="/static/screen.css">
+<link rel="stylesheet" href="/static/screen.css?v={{VERSION}}">
 
 <body class="screen" data-screen="{{SCREEN_ID}}" data-ws-port="{{WS_PORT}}">
 
-<!-- The ground. The plate floats on it, inset 40 design px. -->
 <div class="ground" id="ground">
   <div class="plate" id="plate">
 
     <header class="band">
       <div class="wordmark"><b id="teamName">BREAKAWAY</b> <span id="teamNumber">3937</span></div>
-      <div class="mono" id="headerRight">SCREEN A / STANDARD</div>
+      <div class="mono" id="headerRight"></div>
     </header>
     <div class="rule" id="ruleTop"></div>
 
-    <!-- Every face renders into here. One at a time, swapped by screen.js. -->
+    <!-- Every face is drawn into here, one at a time. -->
     <main class="stage" id="stage"></main>
 
     <div class="rule" id="ruleBottom"></div>
     <footer class="ledger">
-      <span class="mono" id="ledgerLeft">01 / 07</span>
+      <span class="mono" id="ledgerLeft"></span>
       <span class="rail" id="rail"><i id="railFill"></i></span>
-      <span class="mono" id="ledgerRight">ROTATION A</span>
+      <span class="mono" id="ledgerRight"></span>
     </footer>
 
   </div>
 </div>
 
 <!--
-  Connection state, over the top of whatever was last drawn. A panel across
-  the pit must never be ambiguous about "the picture is old": it keeps showing
-  the last good state, dimmed, and says why.
+  Shown over the last good picture whenever this display cannot reach the pit
+  machine. One branded message covers every cause: a visitor cannot tell them
+  apart and does not need to.
 -->
-<div class="offline" id="offline" hidden>
+<div class="offline" id="offline">
   <div class="offline-card">
-    <div class="offline-title" id="offlineTitle">Reconnecting to the pit machine</div>
-    <div class="offline-body" id="offlineBody"></div>
+    <div class="offline-title" id="offlineTitle">Breakaway welcomes you to our pit</div>
+    <div class="offline-body" id="offlineBody">We’re having technical difficulties — back shortly.</div>
   </div>
 </div>
 
-<script src="/static/screen.js"></script>
+<script src="/static/screen.js?v={{VERSION}}"></script>

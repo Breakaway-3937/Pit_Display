@@ -3,8 +3,9 @@ Event Feed panel — the operator's side of `app/nexus/`.
 
 The questions, in the order somebody at the pit laptop asks them: **is the
 feed live**, **which event**, **where is our next match**, **what is being
-said**, and then the plumbing — how often it polls, whether pushes are on, and
-(admin) the keys.
+said**, and then the plumbing — the relay, the fallback polling, and (admin)
+the keys. How the links are *behaving* — counts, ages, drops — is on
+Pit Systems → Telemetry, not here.
 
 Drawn the way the Software Updates panel is: the feed state is a `StatusDot`
 and white type, one `primary` button (Refresh) that drops to an outline when
@@ -119,7 +120,7 @@ class NexusPanel(QWidget):
         nexus.log.connect(self._on_log)
         alerts.log.connect(self._on_log)
         alerts.banner_changed.connect(lambda _b: self._refresh_alerts())
-        nexus.webhook.state_changed.connect(lambda _on: self._refresh_webhook())
+        nexus.relay_changed.connect(self._refresh_relay)
         admin.lock_state_changed.connect(self._apply_lock)
         config.team_changed.connect(self._on_team_changed)
         self._apply_lock(admin.unlocked)
@@ -267,12 +268,49 @@ class NexusPanel(QWidget):
         root.addWidget(divider())
         root.addSpacing(16)
 
+        # ── Relay ─────────────────────────────────────────────────────────
+        root.addWidget(eyebrow("Relay"))
+        root.addSpacing(10)
+        rl = QHBoxLayout()
+        rl.setSpacing(12)
+        rl_text = label("Live updates pushed through the relay", "stat_value")
+        rl_text.setStyleSheet("font-size: 15px;")
+        rl.addWidget(rl_text, stretch=1)
+        self._relay_toggle = ToggleSwitch()
+        self._relay_toggle.toggled.connect(self._set_relay_enabled)
+        rl.addWidget(self._relay_toggle, alignment=Qt.AlignmentFlag.AlignVCenter)
+        root.addLayout(rl)
+        root.addSpacing(8)
+        url_row = QHBoxLayout()
+        url_row.setSpacing(8)
+        self._relay_url_edit = QLineEdit()
+        self._relay_url_edit.setPlaceholderText(settings.DEFAULT_RELAY_URL)
+        self._relay_url_edit.returnPressed.connect(self._save_relay_url)
+        url_row.addWidget(self._relay_url_edit, stretch=1)
+        url_btn = RoundedButton("Save", variant="secondary")
+        url_btn.setFixedWidth(90)
+        url_btn.clicked.connect(self._save_relay_url)
+        url_row.addWidget(url_btn)
+        root.addLayout(url_row)
+        root.addSpacing(6)
+        relay_row = QHBoxLayout()
+        relay_row.setSpacing(10)
+        self._relay_dot = StatusDot()
+        relay_row.addWidget(self._relay_dot, alignment=Qt.AlignmentFlag.AlignTop)
+        self._relay_lbl = label("", "stat_label")
+        self._relay_lbl.setWordWrap(True)
+        relay_row.addWidget(self._relay_lbl, stretch=1)
+        root.addLayout(relay_row)
+        root.addSpacing(16)
+        root.addWidget(divider())
+        root.addSpacing(16)
+
         # ── Polling ───────────────────────────────────────────────────────
-        root.addWidget(eyebrow("Polling"))
+        root.addWidget(eyebrow("Fallback polling"))
         root.addSpacing(10)
         auto = QHBoxLayout()
         auto.setSpacing(12)
-        auto_text = label("Poll frc.nexus automatically", "stat_value")
+        auto_text = label("Poll when the relay is not pushing", "stat_value")
         auto_text.setStyleSheet("font-size: 15px;")
         auto.addWidget(auto_text, stretch=1)
         self._auto = ToggleSwitch()
@@ -299,31 +337,6 @@ class NexusPanel(QWidget):
         root.addWidget(divider())
         root.addSpacing(16)
 
-        # ── Webhook ───────────────────────────────────────────────────────
-        root.addWidget(eyebrow("Push webhook"))
-        root.addSpacing(10)
-        wh = QHBoxLayout()
-        wh.setSpacing(12)
-        wh_text = label("Accept pushes from Nexus", "stat_value")
-        wh_text.setStyleSheet("font-size: 15px;")
-        wh.addWidget(wh_text, stretch=1)
-        self._port_edit = QLineEdit()
-        self._port_edit.setFixedWidth(80)
-        self._port_edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-        self._port_edit.editingFinished.connect(self._set_port)
-        wh.addWidget(self._port_edit)
-        self._webhook_toggle = ToggleSwitch()
-        self._webhook_toggle.toggled.connect(nexus.set_webhook_enabled)
-        wh.addWidget(self._webhook_toggle, alignment=Qt.AlignmentFlag.AlignVCenter)
-        root.addLayout(wh)
-        root.addSpacing(6)
-        self._webhook_lbl = label("", "stat_label")
-        self._webhook_lbl.setWordWrap(True)
-        root.addWidget(self._webhook_lbl)
-        root.addSpacing(16)
-        root.addWidget(divider())
-        root.addSpacing(16)
-
         # ── Access (admin) ────────────────────────────────────────────────
         self._keys_block = QWidget()
         kb = QVBoxLayout(self._keys_block)
@@ -332,21 +345,24 @@ class NexusPanel(QWidget):
         kb.addWidget(eyebrow("Nexus access"))
         kb.addSpacing(8)
         keys_help = label(
-            "Both come from frc.nexus/api. They are written to the secret "
-            "folder beside the database — never the database itself — so an "
-            "upgrade keeps them and a copied database does not carry them.",
+            "The relay token is all a pit machine needs — it is the relay's "
+            "CLIENT_TOKEN, and the relay holds the Nexus key itself. An API "
+            "key from frc.nexus/api is optional: with one, this machine can "
+            "still poll Nexus directly if the relay is ever unreachable. Both "
+            "go to the secret folder beside the database, never the database.",
             "stat_label")
         keys_help.setWordWrap(True)
         kb.addWidget(keys_help)
         kb.addSpacing(10)
-        self._api_key_edit, self._api_key_state = self._secret_row(
-            kb, "API key (Nexus-Api-Key)", self._save_api_key, self._clear_api_key)
-        kb.addSpacing(10)
         self._token_edit, self._token_state = self._secret_row(
-            kb, "Webhook token (Nexus-Token)", self._save_token, self._clear_token)
+            kb, "Relay token", self._save_token, self._clear_token)
+        kb.addSpacing(10)
+        self._api_key_edit, self._api_key_state = self._secret_row(
+            kb, "Nexus API key (optional, direct fallback)",
+            self._save_api_key, self._clear_api_key)
         kb.addSpacing(14)
         setup_help = label(
-            "Or move the whole setup as one file — keys, event, polling — "
+            "Or move the whole setup as one file — token, event, relay — "
             "made on the machine that has them. A pit-setup.json dropped "
             "beside the database is also picked up at the next launch.",
             "stat_label")
@@ -414,7 +430,7 @@ class NexusPanel(QWidget):
         self._refresh_live()
         self._refresh_alerts()
         self._refresh_polling()
-        self._refresh_webhook()
+        self._refresh_relay()
         self._refresh_keys()
         self._on_state(nexus.state)
 
@@ -591,47 +607,58 @@ class NexusPanel(QWidget):
             f"{cadence} Last poll {last} UTC — {prefs['last_result']}."
             if last else f"{cadence} Not polled yet.")
 
-    def _refresh_webhook(self):
+    def _refresh_relay(self):
         prefs = settings.load()
-        self._webhook_toggle.blockSignals(True)
-        self._webhook_toggle.setChecked(bool(prefs["webhook_enabled"]))
-        self._webhook_toggle.blockSignals(False)
-        if not self._port_edit.hasFocus():
-            self._port_edit.setText(str(prefs["webhook_port"]))
-        wh = nexus.webhook
-        if wh.listening:
-            bind = str(prefs["webhook_bind"])
-            where = ("127.0.0.1 — reachable only through a tunnel running on "
-                     "this machine" if bind == "127.0.0.1"
-                     else f"{bind} — open to the whole network")
-            self._webhook_lbl.setText(
-                f"Listening on {where}, port {wh.port}. {wh.count} push"
-                f"{'' if wh.count == 1 else 'es'} accepted this session. "
-                "Point the tunnel at "
-                f"http://localhost:{wh.port}, then register its public "
-                f"https:// address at frc.nexus/api — once for the event and "
-                f"once for team {nexus.our_team}. See NEXUS.md, "
-                "\u201cGiving Nexus a route in\u201d.")
+        self._relay_toggle.blockSignals(True)
+        self._relay_toggle.setChecked(bool(prefs["relay_enabled"]))
+        self._relay_toggle.blockSignals(False)
+        if not self._relay_url_edit.hasFocus():
+            self._relay_url_edit.setText(prefs["relay_url"])
+        link = nexus.relay
+        tele = link.telemetry()
+        stats = tele["relay"]
+        if not prefs["relay_enabled"]:
+            color, text = brand.STATUS_IDLE, "Off. The live snapshot is polled."
+        elif not api.relay_token():
+            color, text = brand.STATUS_IDLE, (
+                "No relay token on this machine — paste it under Nexus access "
+                "(admin).")
+        elif link.connected:
+            color = brand.STATUS_ONLINE
+            text = f"Live — {tele['snapshots']} snapshot(s) pushed this session."
+            if stats:
+                hook = stats.get("lastWebhookAt") or 0
+                text += (f" The relay has had {stats.get('webhooks', 0)} webhook(s)"
+                         + (f", the last {'just now' if _rel(hook) == 'now' else _rel(hook)}."
+                            if hook else
+                            " — none yet; it is pulling Nexus every 30s instead."))
+        elif link.state == "off":
+            color, text = brand.STATUS_IDLE, "Not connected — no event is set."
         else:
-            self._webhook_lbl.setText(
-                "Off. Polling still brings every update; a push just arrives "
-                "seconds sooner. Needs the webhook token below and a way for "
-                "frc.nexus to reach this machine.")
+            color = brand.STATUS_PENDING
+            text = "Reconnecting…"
+            if tele["last_error"]:
+                text += f" {tele['last_error']}"
+            if nexus.polling:
+                text += " Polling for the live snapshot meanwhile."
+        self._relay_dot.set_color(color)
+        self._relay_lbl.setText(text + "  Details: Pit Systems → Telemetry.")
 
     def _refresh_keys(self):
-        self._api_key_state.setText(
-            "An API key is stored on this machine." if api.configured()
-            else "No API key — the feed is off.")
         self._token_state.setText(
-            "A webhook token is stored on this machine." if api.webhook_token()
-            else "No webhook token — pushes will be refused.")
+            "A relay token is stored on this machine." if api.relay_token()
+            else "No relay token — the relay cannot be used.")
+        self._api_key_state.setText(
+            "An API key is stored — direct polling is available as a fallback."
+            if api.configured() else
+            "No API key — fine while the relay works; there is no fallback "
+            "without it.")
 
     def _on_log(self, line: str):
         stamp = datetime.now().strftime("%H:%M:%S")
         self._log.append(f"{stamp}  {line}")
         self._log = self._log[-_LOG_LINES:]
         self._log_lbl.setText("\n".join(self._log))
-        self._refresh_webhook()
 
     def _apply_lock(self, unlocked: bool):
         # Hidden, not disabled — the same line the update token draws.
@@ -641,7 +668,6 @@ class NexusPanel(QWidget):
     def _on_team_changed(self, team):
         self._refresh_btn.set_accent(team.primary_color)
         self._refresh_live()
-        self._refresh_webhook()
 
     # ── Actions ───────────────────────────────────────────────────────────
 
@@ -662,14 +688,15 @@ class NexusPanel(QWidget):
         nexus.set_poll_interval(seconds)
         self._refresh_polling()
 
-    def _set_port(self):
-        try:
-            port = int(self._port_edit.text())
-        except ValueError:
-            self._refresh_webhook()
-            return
-        nexus.set_webhook_port(port)
-        self._refresh_webhook()
+    def _set_relay_enabled(self, on: bool):
+        nexus.set_relay(enabled=on)
+        self._refresh_relay()
+
+    def _save_relay_url(self):
+        url = self._relay_url_edit.text().strip() or settings.DEFAULT_RELAY_URL
+        nexus.set_relay(url=url)
+        self._relay_url_edit.clearFocus()
+        self._refresh_relay()
 
     def _save_api_key(self):
         value = self._api_key_edit.text().strip()
@@ -689,14 +716,16 @@ class NexusPanel(QWidget):
         value = self._token_edit.text().strip()
         if not value:
             return
-        nexus.set_webhook_token(value)
+        nexus.set_relay_token(value)
         self._token_edit.clear()
         self._refresh_keys()
+        self._refresh_relay()
 
     def _clear_token(self):
-        nexus.set_webhook_token("")
+        nexus.set_relay_token("")
         self._token_edit.clear()
         self._refresh_keys()
+        self._refresh_relay()
 
     def _import_setup(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -710,9 +739,9 @@ class NexusPanel(QWidget):
             QMessageBox.warning(self, "Not applied", str(exc))
             return
         self._setup_state.setText("Imported: " + "; ".join(lines))
-        # The service re-reads keys and the event; the panel follows its signals.
-        nexus.set_api_key(api.api_key())
+        # The service re-reads keys, relay and event; the panel follows its signals.
         nexus.set_event_key(settings.get("event_key"))
+        nexus.set_relay()
         self._refresh_all()
 
     def _export_setup(self):

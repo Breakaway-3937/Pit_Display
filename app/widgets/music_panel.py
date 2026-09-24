@@ -295,6 +295,17 @@ class MusicPanel(QWidget):
             f' font-family: "{brand.FONT_DISPLAY}"; font-size: 15px;'
             f' font-weight: 600;')
         card_head.addWidget(self._preamp_value)
+
+        # The live band display, in the card header beside the preamp — it is
+        # a property of this instrument, not a setting somewhere else. Off by
+        # default: it costs a second decode of the playing file, and most of
+        # the time an operator is setting a curve rather than watching one.
+        self._analyser_chip = SelectableChip("ANALYSER")
+        self._analyser_chip.setCheckable(True)
+        self._analyser_chip.setChecked(False)
+        self._analyser_chip.clicked.connect(self._on_analyser_toggled)
+        card_head.addSpacing(10)
+        card_head.addWidget(self._analyser_chip)
         card.addLayout(card_head)
 
         self._eq_field = EQField()
@@ -532,6 +543,19 @@ class MusicPanel(QWidget):
             self._follow_toggle.setChecked(music.follow_mode)
         finally:
             self._syncing = False
+
+    def _on_analyser_toggled(self):
+        """
+        Show or hide the live band levels behind the curve.
+
+        Nothing here can stop playback: the service starts a separate,
+        output-less decoder and hands this widget the analyser it feeds. If
+        that decoder will not start, `analyser()` stays None and the field
+        draws exactly what it always drew.
+        """
+        on = self._analyser_chip.isChecked()
+        analyser = music.set_analyser_enabled(on)
+        self._eq_field.set_analyser(analyser if on else None)
 
     def _apply_lock(self, unlocked: bool):
         self._eq_section.setVisible(unlocked)
