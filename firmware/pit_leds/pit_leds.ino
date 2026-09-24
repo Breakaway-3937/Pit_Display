@@ -322,7 +322,8 @@ const Strip strips[NUM_STRIPS] = {
 };
 
 #define FW_MAJOR 2
-#define FW_MINOR 4   // 2.4: no-host default is a violet sparkle (EEPROM magic 0xBE)
+#define FW_MINOR 5   // 2.5: OP_STATUS — link and timing telemetry (State unchanged, magic stays 0xBE)
+                     // 2.4: no-host default is a violet sparkle (EEPROM magic 0xBE)
                      // 2.3: no-host default was a red chase (EEPROM magic 0xBD)
                      // 2.2: SET_COLOR takes an optional 5th byte, W, per segment
                      // 2.1: switch is WHITE / app / RED, no manual OFF
@@ -341,8 +342,10 @@ enum : uint8_t {
   OP_SAVE       = 0x14,
   OP_PING       = 0x15,
   OP_OFF        = 0x16,
+  OP_STATUS     = 0x17,   // host → device: report telemetry (fw 2.5+)
   OP_INFO       = 0x80,
-  OP_LOG        = 0x81
+  OP_LOG        = 0x81,
+  OP_STATUS_REPLY = 0x82   // device → host: the telemetry, see sendStatus()
 };
 
 enum : uint8_t {
@@ -410,6 +413,48 @@ bool  blanked = false;
 bool  dirty = true;
 unsigned long lastRx = 0;
 bool  hostSeen = false;
+
+// ── Telemetry (fw 2.5) ────────────────────────────────────────────────────
+// Counted as it happens, sent on request (OP_STATUS → sendStatus()). Nothing
+// here changes behaviour; it is what the host needs to see the link's
+// response rate and latency from this side.
+//
+// **Timed on Timer1, never millis()/micros().** A strip write holds
+// interrupts off for milliseconds, and Timer0's overflow interrupt — which is
+// all millis() and micros() are — is lost for the duration, so they would
+// under-report exactly the windows worth measuring. Timer1 is a hardware
+// counter that keeps counting with interrupts off: prescaler 64 at 16 MHz is
+// 4 µs a tick, and a 16-bit difference covers 262 ms. Nothing else in this
+// sketch uses Timer1 (no Servo, no PWM on 9/10, FastLED's AVR clockless
+// driver is cycle-counted).
+struct Telemetry {
+  uint16_t framesOk;         // CRC-good frames handled
+  uint16_t crcErrors;        // decoded, CRC wrong -> NAK
+  uint16_t decodeErrors;     // COBS decode failed (bytes lost mid-frame)
+  uint16_t overruns;         // frame longer than RX_MAX before its 0x00
+  uint16_t unknownOps;       // CRC-good, op not understood -> NAK
+  uint16_t shows;            // showAll() calls
+  uint16_t fallbacks;        // watchdog reverted to the saved default
+  uint16_t showTicksLast;    // one whole showAll(), both channels
+  uint16_t showTicksMax;
+  uint16_t gapTicksMax;      // longest stretch between readSerial() calls
+  uint16_t cmdTicksLast;     // command received -> end of the show that drew it
+  uint16_t cmdTicksMax;
+  uint32_t rxBytes;
+} tele = {};
+uint16_t lastReadTick = 0;
+uint16_t cmdTick = 0;
+bool     cmdPending = false;
+
+// Declared exactly as FastLED declares them (char, C linkage): a second,
+// different declaration is an LTO type mismatch the compiler warns may be
+// misoptimized.
+extern "C" char __heap_start;
+extern "C" char *__brkval;
+static int freeRam() {
+  char top;
+  return (int)(&top - (__brkval == 0 ? &__heap_start : __brkval));
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 //  The shared axis
@@ -526,6 +571,46 @@ void sendLog(const char *msg) {
   sendFrame(0, OP_LOG, buf, n);
 }
 
+// STATUS_REPLY (fw 2.5), big-endian like INFO:
+//   format(1)=1 | uptime_ms(4) | free_ram(2) | switch(1) 0=WHITE 1=HOST 2=RED |
+//   mode(1) | brightness(1) | flags(1) bit0 blanked, bit1 hostSeen, bit2 dirty |
+//   framesOk crcErrors decodeErrors overruns unknownOps shows fallbacks
+//   showTicksLast showTicksMax gapTicksMax cmdTicksLast cmdTicksMax (2 each) |
+//   rxBytes(4)                                           = 39 bytes
+// Ticks are Timer1 at 4 µs. uptime_ms is millis(), which runs slow while
+// strips are being written; it is for spotting a reboot, not for timing.
+// Maxima reset when read, so each reply is the worst since the last one.
+uint8_t switchPosition();
+extern uint8_t swPos;
+void sendStatus(uint8_t seq) {
+  uint8_t p[39];
+  uint8_t n = 0;
+  unsigned long up = millis();
+  p[n++] = 1;
+  p[n++] = (up >> 24) & 0xFF; p[n++] = (up >> 16) & 0xFF;
+  p[n++] = (up >> 8) & 0xFF;  p[n++] = up & 0xFF;
+  int ram = freeRam();
+  p[n++] = (ram >> 8) & 0xFF; p[n++] = ram & 0xFF;
+  p[n++] = swPos;
+  p[n++] = state.mode;
+  p[n++] = state.brightness;
+  p[n++] = (blanked ? 1 : 0) | (hostSeen ? 2 : 0) | (dirty ? 4 : 0);
+  // Straight out of the struct, in declaration order — no stack copy: this
+  // can run inside showAll()'s mid-write readSerial(), the deepest stack the
+  // sketch has, with ~390 bytes of RAM to spare.
+  const uint16_t *v = &tele.framesOk;
+  for (uint8_t i = 0; i < 12; i++) {
+    p[n++] = (v[i] >> 8) & 0xFF;
+    p[n++] = v[i] & 0xFF;
+  }
+  p[n++] = (tele.rxBytes >> 24) & 0xFF; p[n++] = (tele.rxBytes >> 16) & 0xFF;
+  p[n++] = (tele.rxBytes >> 8) & 0xFF;  p[n++] = tele.rxBytes & 0xFF;
+  sendFrame(seq, OP_STATUS_REPLY, p, n);
+  tele.showTicksMax = 0;
+  tele.gapTicksMax = 0;
+  tele.cmdTicksMax = 0;
+}
+
 // INFO: major | minor | count_hi | count_lo | n_seg | (start,len) * n_seg.
 // The host never hardcodes geometry — it asks, and now gets three segments
 // back, one per pit unit, in leds[] order.
@@ -575,7 +660,12 @@ void handleFrame(uint8_t *body, uint8_t len) {
   if (len < 3) return;
   uint8_t expected = crc8(body, len - 1);
   uint8_t seq = body[0];
-  if (body[len - 1] != expected) { sendFrame(seq, OP_NAK, NULL, 0); return; }
+  if (body[len - 1] != expected) {
+    tele.crcErrors++;
+    sendFrame(seq, OP_NAK, NULL, 0);
+    return;
+  }
+  tele.framesOk++;
 
   uint8_t op = body[1];
   uint8_t *p = body + 2;
@@ -583,7 +673,19 @@ void handleFrame(uint8_t *body, uint8_t len) {
 
   lastRx = millis();
   hostSeen = true;
+
+  // A status request changes nothing on the strips, so it must not cost a
+  // redraw — measuring the link must not load the link.
+  if (op == OP_STATUS) {
+    sendStatus(seq);
+    return;
+  }
+
   dirty = true;                  // cheap: a PING costs one redundant frame
+  if (op != OP_PING && op != OP_HELLO) {
+    cmdTick = TCNT1;             // time this command until it is drawn
+    cmdPending = true;
+  }
 
   switch (op) {
     case OP_HELLO:
@@ -645,6 +747,7 @@ void handleFrame(uint8_t *body, uint8_t len) {
       break;
 
     default:
+      tele.unknownOps++;
       sendFrame(seq, OP_NAK, NULL, 0);
       return;
   }
@@ -652,18 +755,29 @@ void handleFrame(uint8_t *body, uint8_t len) {
 }
 
 void readSerial() {
+  // The gap since the last call is the window in which inbound bytes can only
+  // queue in the UART's 2-byte FIFO (plus the ring buffer, if interrupts were
+  // on). Its maximum is the single best predictor of lost frames.
+  uint16_t t = TCNT1;
+  uint16_t gap = t - lastReadTick;
+  if (gap > tele.gapTicksMax) tele.gapTicksMax = gap;
+  lastReadTick = t;
+
   while (Serial.available()) {
     uint8_t c = Serial.read();
+    tele.rxBytes++;
     if (c == 0x00) {
       if (rxLen > 0) {
         uint8_t n = cobsDecode(rxBuf, rxLen);
         if (n) handleFrame(rxBuf, n);
+        else tele.decodeErrors++;
         rxLen = 0;
       }
     } else if (rxLen < RX_MAX) {
       rxBuf[rxLen++] = c;
     } else {
       rxLen = 0;                 // overrun: drop and resync on the next 0x00
+      tele.overruns++;
     }
   }
 }
@@ -942,6 +1056,13 @@ void setup() {
 
   measureAxis();
   loadState();
+
+  // Timer1 free-running at clk/64 = 4 µs a tick, for telemetry only. Normal
+  // mode, no compare outputs, no interrupts: it just counts.
+  TCCR1A = 0;
+  TCCR1B = _BV(CS11) | _BV(CS10);
+  lastReadTick = TCNT1;
+
   lastRx = millis();
 }
 
@@ -952,6 +1073,7 @@ void loop() {
   // Watchdog: if the host stops talking, fall back to the saved default
   // rather than holding whatever was on screen when it vanished.
   if (hostSeen && (millis() - lastRx > WATCHDOG_MS)) {
+    tele.fallbacks++;
     state = fallback;
     blanked = false;
     hostSeen = false;
@@ -1007,7 +1129,19 @@ void loop() {
         break;
     }
     if (outBright > MAX_BRIGHTNESS) outBright = MAX_BRIGHTNESS;
+    uint16_t t0 = TCNT1;
     showAll(outBright, outWhite, hostWhite);
+    uint16_t t1 = TCNT1;
+    uint16_t dt = t1 - t0;
+    tele.shows++;
+    tele.showTicksLast = dt;
+    if (dt > tele.showTicksMax) tele.showTicksMax = dt;
+    if (cmdPending) {
+      uint16_t lat = t1 - cmdTick;
+      tele.cmdTicksLast = lat;
+      if (lat > tele.cmdTicksMax) tele.cmdTicksMax = lat;
+      cmdPending = false;
+    }
     dirty = false;
   }
 }

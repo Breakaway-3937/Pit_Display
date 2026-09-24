@@ -53,9 +53,11 @@ class Op(IntEnum):
     PING       = 0x15   # heartbeat
     OFF        = 0x16   # hard blank — distinct from brightness 0 so the
                         # firmware can skip its animation loop entirely
+    STATUS     = 0x17   # report telemetry (fw 2.5+; older firmware NAKs it)
 
     INFO       = 0x80   # device → host: reply to HELLO
     LOG        = 0x81   # device → host: ascii diagnostic string
+    STATUS_REPLY = 0x82 # device → host: reply to STATUS, see parse_status()
 
 
 class Mode(IntEnum):
@@ -220,6 +222,74 @@ class DeviceInfo:
     def describe(self) -> str:
         seg = f", {len(self.segments)} segments" if len(self.segments) > 1 else ""
         return f"fw {self.version} · {self.led_count} px{seg}"
+
+
+# Firmware that answers STATUS. Asking anything older would only earn a NAK.
+STATUS_MIN_FW = (2, 5)
+# Timer1 ticks in the firmware's telemetry: clk/64 at 16 MHz.
+TICK_US = 4.0
+
+SWITCH_NAMES = {0: "WHITE", 1: "HOST", 2: "RED"}
+
+
+@dataclass(frozen=True)
+class DeviceStatus:
+    """
+    Parsed STATUS_REPLY (fw 2.5+): the controller's own view of the link.
+
+    Counters are since the controller booted (they wrap at 65,535; compare
+    successive replies). The `*_max_us` fields are the worst since the
+    previous reply — the firmware resets them when it answers.
+    """
+
+    uptime_ms: int
+    free_ram: int
+    switch: str
+    mode: int
+    brightness: int
+    blanked: bool
+    host_seen: bool
+    dirty: bool
+    frames_ok: int
+    crc_errors: int
+    decode_errors: int
+    overruns: int
+    unknown_ops: int
+    shows: int
+    fallbacks: int
+    show_us: float          # the last strip write, both channels
+    show_max_us: float
+    gap_max_us: float       # longest stretch the UART went unread
+    cmd_us: float           # last command received -> drawn
+    cmd_max_us: float
+    rx_bytes: int
+
+
+def parse_status(payload: bytes) -> DeviceStatus:
+    """STATUS_REPLY payload, format 1 — the layout is documented at `sendStatus()` in the .ino."""
+    if len(payload) < 39 or payload[0] != 1:
+        raise ProtocolError(f"STATUS payload not format 1 ({len(payload)}B)")
+    b = payload
+
+    def u16(i: int) -> int:
+        return (b[i] << 8) | b[i + 1]
+
+    def u32(i: int) -> int:
+        return (b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3]
+
+    v = [u16(11 + 2 * k) for k in range(12)]
+    return DeviceStatus(
+        uptime_ms=u32(1), free_ram=u16(5),
+        switch=SWITCH_NAMES.get(b[7], f"?{b[7]}"),
+        mode=b[8], brightness=b[9],
+        blanked=bool(b[10] & 1), host_seen=bool(b[10] & 2), dirty=bool(b[10] & 4),
+        frames_ok=v[0], crc_errors=v[1], decode_errors=v[2], overruns=v[3],
+        unknown_ops=v[4], shows=v[5], fallbacks=v[6],
+        show_us=v[7] * TICK_US, show_max_us=v[8] * TICK_US,
+        gap_max_us=v[9] * TICK_US,
+        cmd_us=v[10] * TICK_US, cmd_max_us=v[11] * TICK_US,
+        rx_bytes=u32(35),
+    )
 
 
 def parse_info(payload: bytes) -> DeviceInfo:

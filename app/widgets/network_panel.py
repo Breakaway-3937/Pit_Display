@@ -43,7 +43,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from app import brand
-from app.config import SCREEN_LABELS
+from app.config import SCREEN_LABELS, config
 from app.leds import leds
 from app.nexus import nexus
 from app.nexus import settings as nexus_settings
@@ -166,6 +166,16 @@ class NetworkPanel(QWidget):
         # ── LED controller ────────────────────────────────────────────────
         root.addWidget(eyebrow("LED controller"))
         root.addSpacing(8)
+        led_head = QHBoxLayout()
+        led_head.setSpacing(10)
+        self._led_dot = StatusDot()
+        led_head.addWidget(self._led_dot, alignment=Qt.AlignmentFlag.AlignTop)
+        self._led_head = label("", "stat_value")
+        self._led_head.setWordWrap(True)
+        self._led_head.setStyleSheet("font-size: 15px;")
+        led_head.addWidget(self._led_head, stretch=1)
+        root.addLayout(led_head)
+        root.addSpacing(6)
         self._leds = label("", "stat_label")
         self._leds.setWordWrap(True)
         root.addWidget(self._leds)
@@ -196,6 +206,8 @@ class NetworkPanel(QWidget):
         nexus.relay_changed.connect(self._refresh)
         nexus.state_changed.connect(self._on_feed_state)
         leds.connection_changed.connect(self._on_leds)
+        leds.telemetry_changed.connect(self._refresh)
+        leds.state_changed.connect(self._refresh)
 
         # One slow tick, only so the ages stay honest while nothing else is
         # happening. Everything that *matters* arrives on a signal; this is
@@ -391,21 +403,129 @@ class NetworkPanel(QWidget):
         self._live.setText("\n".join(rows))
 
     def _draw_leds(self) -> None:
-        if leds.connected:
-            info = leds.device
-            line = f"Connected on {leds.port_name or '?'}"
-            if info:
-                line += f" · {info.describe()}"
-            # The link's own status usually says the same thing; only show it
-            # when it adds something.
-            if info and info.describe() not in leds.status:
-                line += f"\n{leds.status}"
-            self._leds.setText(line)
+        """
+        The Arduino link, in two halves: what this machine measures (every
+        firmware), and what the controller reports about itself (fw 2.5+,
+        OP_STATUS). See `LinkStats` in app/leds/link.py and `sendStatus()` in
+        firmware/pit_leds/pit_leds.ino.
+        """
+        t = leds.telemetry()
+        if not leds.connected:
+            self._led_dot.set_color(brand.STATUS_IDLE)
+            self._led_head.setText("Not connected")
+            self._leds.setText(f"{leds.status}\n{t['attempts']} connection "
+                               f"attempts, {t['reconnects']} reconnects this session.")
+            return
+
+        info = leds.device
+        dev = t["device"]
+        findings = self._led_findings(t, dev)
+        self._led_dot.set_color(brand.STATUS_PENDING if findings else brand.STATUS_ONLINE)
+        self._led_head.setText(
+            f"Connected on {leds.port_name or '?'}"
+            + (f" · {info.describe()}" if info else "")
+            + (f" · up {_ago(t['connected_s'])}" if t["connected_s"] is not None else ""))
+
+        def ms(v):
+            return "—" if v is None else f"{v:.1f} ms"
+
+        lines = ["THIS MACHINE → CONTROLLER"]
+        lines.append(f"Last heard {_ago(t['last_heard_s'])} ago · "
+                     f"{t['cmd_per_s']:.1f} commands/s over the last 10 s")
+        lines.append(f"Round trip (sent → acknowledged): median {ms(t['rtt_p50_ms'])}, "
+                     f"95% {ms(t['rtt_p95_ms'])}, worst {ms(t['rtt_max_ms'])}")
+        lines.append(f"Waiting in this machine's queue before sending: median "
+                     f"{ms(t['wait_p50_ms'])}, 95% {ms(t['wait_p95_ms'])}, "
+                     f"worst {ms(t['wait_max_ms'])}")
+        lines.append(f"{t['sent']:,} sent ({_bytes(t['bytes_out'])}) · {t['acks']:,} "
+                     f"acknowledged · {t['naks']} rejected · {t['unanswered']} "
+                     f"unanswered · {t['shed']} dropped from the queue")
+
+        lines.append("")
+        lines.append("THE CONTROLLER'S OWN VIEW")
+        if dev is None:
+            fw = info.version if info else "?"
+            lines.append(f"Not available: firmware {fw} doesn't report it. Flash "
+                         "firmware/pit_leds (2.5 or newer) for strip-write "
+                         "timing, command-to-visible latency and receive errors.")
+            switch_name, switch_age = t["switch"], t["switch_s"]
         else:
-            self._leds.setText(f"Not connected — {leds.status}")
+            us = lambda v: f"{v / 1000:.2f} ms"
+            lines.append(f"Up {_ago(dev['uptime_ms'] / 1000)} · {dev['free_ram']} B "
+                         f"RAM free · reported {_ago(dev['age_s'])} ago"
+                         + (f" · rebooted {t['reboots']}× while connected"
+                            if t["reboots"] else ""))
+            if "frames_per_s" in dev:
+                lines.append(f"Receiving {dev['frames_per_s']:.1f} frames/s "
+                             f"({dev['rx_bytes_per_s']:.0f} B/s) · redrawing "
+                             f"{dev['shows_per_s']:.1f} times/s")
+            lines.append(f"Strip write (interrupts off, serial deaf): last "
+                         f"{us(dev['show_us'])}, worst {us(dev['show_max_session_us'])}")
+            lines.append(f"Longest the serial port went unread: "
+                         f"{us(dev['gap_max_session_us'])}")
+            lines.append(f"Command received → on the strips: last {us(dev['cmd_us'])}, "
+                         f"worst {us(dev['cmd_max_session_us'])}")
+            lines.append(f"Receive errors since boot: {dev['crc_errors']} bad checksum · "
+                         f"{dev['decode_errors']} broken frames · {dev['overruns']} "
+                         f"overruns · {dev['unknown_ops']} unknown commands · "
+                         f"{dev['fallbacks']} watchdog fallbacks")
+            switch_name, switch_age = dev["switch"], dev["age_s"]
+
+        switch = {"HOST": "middle — the app is in charge",
+                  "WHITE": "up — white work light (app overridden)",
+                  "RED": "down — solid red (app overridden)"}.get(switch_name)
+        lines.append(f"Switch: {switch}" + (f", reported {_ago(switch_age)} ago"
+                                            if switch_age is not None else "")
+                     if switch else
+                     "Switch: not reported since connecting — firmware older "
+                     "than 2.5 only reports it when it moves")
+
+        if leds.overridden:
+            look = f"{config.mode} override"
+        elif leds.alert is not None:
+            look = f"alert: {leds.alert.label or 'queue call'}"
+        else:
+            look = "white work light" if leds.white else f"{leds.preset_key} look"
+        lines.append(f"Showing: {look if leds.enabled else 'off (kill switch)'} · "
+                     f"brightness {leds.brightness}")
+
+        if findings:
+            lines.append("")
+            lines.extend(findings)
+        if t["logs"]:
+            lines.append("Controller says: " + " · ".join(
+                f"{text} ({_ago(time.time() - at)} ago)" for at, text in t["logs"][:3]))
+        self._leds.setText("\n".join(lines))
+
+    @staticmethod
+    def _led_findings(t: dict, dev: dict | None) -> list[str]:
+        """Only what somebody should act on, each with the likely fix."""
+        out = []
+        if t["last_heard_s"] is not None and t["last_heard_s"] > 3.0:
+            out.append(f"Silent for {_ago(t['last_heard_s'])}: the heartbeat isn't "
+                       "being answered. Check the USB cable and the controller's power.")
+        if t["naks"] or (dev and dev.get("errors_since_last")):
+            out.append("Frames are arriving damaged or incomplete. Bytes that land "
+                       "during a strip write are lost, so this rises with animation "
+                       "and strip length; a bad USB cable makes it worse.")
+        if t["unanswered"] or t["shed"]:
+            out.append("Commands are going unanswered or being dropped: the "
+                       "controller can't keep up, or the link is failing.")
+        if t["wait_p95_ms"] is not None and t["wait_p95_ms"] > 20:
+            out.append(f"Commands wait up to {t['wait_p95_ms']:.0f} ms in this "
+                       "machine's queue before they're even sent. That's host-side "
+                       "latency, not the Arduino.")
+        if t["reboots"]:
+            out.append(f"The controller rebooted {t['reboots']}× while connected: "
+                       "usually a brown-out when the strips draw too much from its supply.")
+        return out
 
     def _draw_recent(self) -> None:
         lines: list[tuple[float, str]] = []
+        for row in leds.telemetry()["drops"]:
+            lines.append((row["ended_at"],
+                          f"LED controller  ·  dropped {_ago(time.time() - row['ended_at'])} "
+                          f"ago after {_ago(row['uptime_s'])} — {row['reason']}"))
         for row in nexus.relay.telemetry()["history"]:
             lines.append((row["ended_at"],
                           f"Relay link  ·  dropped {_ago(time.time() - row['ended_at'])} "

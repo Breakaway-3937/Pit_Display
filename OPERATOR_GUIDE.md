@@ -248,6 +248,14 @@ viewer in Judges mode can't be shown over the network.
 event relay, which route event data came through, every networked display, the
 LED controller, recent drops, and robot logs.
 
+For the LEDs it shows two halves: what this machine measures (when the
+controller last answered, round-trip time, how long commands wait before
+they're sent) and, with controller firmware 2.5 or newer, what the controller
+reports about itself (strip-write time, command-to-visible latency, receive
+errors, the live switch position, reboots). Rejected frames or a controller gone silent almost
+always mean the USB cable or port: swap it. It also shows the box's switch
+position once the switch has been moved since connecting.
+
 For the whole app, run `--self-check` (see [`DEPLOYMENT.md`](DEPLOYMENT.md)).
 It writes `selfcheck.log` in the data directory, which is the file to send.
 

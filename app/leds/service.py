@@ -86,6 +86,10 @@ class _LEDService(QObject):
     # Something the operator should see
     error = pyqtSignal(str)
 
+    # The serial link's counters moved in a way worth redrawing for at once
+    # (a NAK, a switch report, a connect or drop). See telemetry().
+    telemetry_changed = pyqtSignal()
+
     def __init__(self):
         super().__init__()
         self._enabled = True
@@ -120,6 +124,7 @@ class _LEDService(QObject):
         self._link.disconnected.connect(self._on_disconnected)
         self._link.status.connect(self._on_status)
         self._link.link_error.connect(self.error)
+        self._link.telemetry_changed.connect(self.telemetry_changed)
 
         config.team_changed.connect(self._on_team_changed)
         config.mode_changed.connect(self._on_mode_changed)
@@ -160,6 +165,10 @@ class _LEDService(QObject):
     @property
     def status(self) -> str:
         return self._status
+
+    def telemetry(self) -> dict:
+        """The serial link's counters, as `LinkStats.snapshot()` (app/leds/link.py)."""
+        return self._link.stats.snapshot()
 
     @property
     def port_name(self) -> str:

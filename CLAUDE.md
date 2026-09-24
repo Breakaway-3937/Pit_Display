@@ -312,7 +312,7 @@ Feed, Software Updates.
 **Telemetry (`network_panel.py`) is the home of all telemetry.** It has the
 event relay (this machine's socket *and* the relay's own counters), which route
 each piece of event data came through, the overhead displays, the LED
-controller, recent drops, and robot logs (`RobotLogPanel`, embedded whole).
+controller's serial link (heartbeat, round trip, rejected frames, switch), recent drops, and robot logs (`RobotLogPanel`, embedded whole).
 It redraws on signals; a 5 s tick only keeps ages honest.
 
 **Screen placement (`app/display.py`):** per-screen `display` (monitor index,
@@ -370,6 +370,27 @@ frames (on AVR, `show()` disables interrupts and drops serial bytes). Change
   underneath; the flash is host-driven at 3 Hz.
 - **Known bug:** `SET_PIXELS` is overwritten by SOLID's next render; nothing
   sends it.
+
+**Link telemetry, two halves (Telemetry → LED controller).**
+- **Host side, any firmware** (`LinkStats`, `app/leds/link.py`): round trip
+  per command (ACK matched by sequence number; p50/p95/max over 200), **time
+  spent in the host queue before the write**, commands/s, NAKs, unanswered
+  (>2 s), queue sheds, heartbeat "last heard", reconnects, drops.
+- **Controller side, fw 2.5+** (`OP_STATUS` 0x17 → `STATUS_REPLY` 0x82, 39
+  bytes, polled every 2 s; `parse_status()`): uptime (backwards = a reboot,
+  counted), free RAM, live switch position, frames/redraws per second, strip
+  write time, longest unread-UART gap, command-received → drawn, CRC / COBS /
+  overrun / unknown-op counts, watchdog fallbacks. **Timed on Timer1 (4 µs
+  ticks), never `millis()`/`micros()`**, because those stop while a strip write
+  holds interrupts off, which is exactly what's being measured. Maxima reset
+  per reply; the host keeps the session worst. STATUS does not set `dirty`,
+  so measuring doesn't cost a redraw.
+- **Measured finding (2026-09-23, simulated port):** `_pump` blocks up to 50 ms
+  in `read()` plus a 5 ms sleep, so a command waits **median 23 ms / p95 59 ms**
+  in the host queue against a 1.3 ms round trip. A 2 ms read wait cut that to
+  2.5 / 9 ms. Not changed yet: the operator is working on latency.
+- Every PING still sets `dirty`, so a static look redraws once a second (a
+  ~5 ms window where inbound bytes are lost). Also not changed yet.
 
 Tools: `firmware/pit_probe`, `tools/led_probe.py`, `tools/led_color_check.py`.
 
