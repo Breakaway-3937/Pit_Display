@@ -129,7 +129,12 @@ class _Redirect(urllib.request.HTTPRedirectHandler):
         return new
 
 
-_opener = urllib.request.build_opener(_Redirect)
+# Verified the way the OS verifies — see app/net.py for why this matters on
+# a pit machine and not on a home one.
+from app import net  # noqa: E402
+
+_opener = urllib.request.build_opener(
+    _Redirect, urllib.request.HTTPSHandler(context=net.ssl_context()))
 
 
 def _request(url: str, accept: str):
@@ -163,8 +168,8 @@ def _open(url: str, accept: str):
                 "repository name and that the token can see it.") from e
         raise UpdateError(f"GitHub returned {e.code} {e.reason}.") from e
     except urllib.error.URLError as e:
-        raise UpdateError(f"Could not reach GitHub: {e.reason}. "
-                          "This machine may have no internet.") from e
+        host = urllib.parse.urlparse(url).netloc or "github.com"
+        raise UpdateError(net.describe_url_error(e, host, "GitHub")) from e
     except OSError as e:
         raise UpdateError(f"Could not reach GitHub: {e}") from e
 

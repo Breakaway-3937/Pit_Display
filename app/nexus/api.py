@@ -58,7 +58,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
-from app import credentials, paths
+from app import credentials, net, paths
 
 BASE_URL = os.environ.get("PIT_NEXUS_API", "https://frc.nexus/api/v1")
 API_KEY_SECRET = "nexus_api_key"
@@ -669,13 +669,14 @@ class Client:
             "User-Agent": _USER_AGENT,
         })
         try:
-            with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+            with urllib.request.urlopen(req, timeout=_TIMEOUT,
+                                        context=net.ssl_context()) as r:
                 body = r.read().decode("utf-8")
         except urllib.error.HTTPError as e:
             raise NexusError(self._explain(e.code, path), e.code) from e
         except urllib.error.URLError as e:
-            raise NexusError(f"Could not reach {self.WHERE}: {e.reason}. "
-                             "This machine may have no internet.") from e
+            host = urllib.parse.urlparse(url).netloc
+            raise NexusError(net.describe_url_error(e, host, self.WHERE)) from e
         except OSError as e:
             raise NexusError(f"Could not reach {self.WHERE}: {e}") from e
         try:

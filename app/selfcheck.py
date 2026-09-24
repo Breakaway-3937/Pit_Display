@@ -544,6 +544,12 @@ def _check_network() -> Result:
         ctx = ssl.create_default_context()
         lines.append(f"python ssl  {ssl.OPENSSL_VERSION}, "
                      f"{len(ctx.get_ca_certs()) or 'system'} CA certs")
+        from app import net
+        lines.append(f"https via   {net.verifier()}")
+        if "truststore" not in net.verifier():
+            problems.append("truststore is missing from this build — HTTPS "
+                            "will fail on machines whose certificate store is "
+                            "incomplete or behind a filtering proxy (app/net.py)")
     except Exception as exc:
         problems.append(f"Python's ssl module is broken: {exc}")
     if problems:

@@ -63,6 +63,15 @@ the one that covers what you touched.
   last one. The app has no console, so it's the only record of a failed start.
 - **The version is stamped by CI from the tag, never edited.** `app/version.py`
   holds a sentinel that `version.is_release()` refuses.
+- **Python HTTPS goes through `app/net.py`, verified by the OS (`truststore`),
+  never `ssl.create_default_context()`.** Python's default reads a snapshot of
+  the Windows certificate store and never triggers Windows' on-demand root
+  download or trusts a school filter's re-signing CA the way Edge does. That
+  broke updates with CERTIFICATE_VERIFY_FAILED on the first deploy machine
+  while home worked. Any new HTTPS call uses `net.ssl_context()`; failures go
+  through `net.describe_url_error()` so the operator gets the cause (clock,
+  filter, missing root). `--net-check` diagnoses a machine; `--self-check`'s
+  `network` line fails if `truststore` isn't bundled.
 - **Windows stdout is cp1252 when redirected.** Every entry point that prints
   calls `console.use_utf8()` first (`tools/make_manifest.py` inlines it). Fix
   the encoding, never the character.

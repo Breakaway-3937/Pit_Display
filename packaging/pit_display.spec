@@ -155,6 +155,10 @@ hiddenimports = [
     # `network` result is what proves it made it in.
     "PyQt6.QtNetwork",
     "PyQt6.QtWebSockets",
+    # Python-side HTTPS (updates, Nexus) verifies through the OS, not a
+    # snapshot of its certificate store — see app/net.py. Imported lazily, so
+    # named here; `--self-check`'s `network` line fails without it.
+    "truststore",
 ]
 
 excludes = [

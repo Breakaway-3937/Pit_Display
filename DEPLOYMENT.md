@@ -198,7 +198,7 @@ nothing fails.
 | `audio` | libVLC **and** its plugins | "No plugins" means silent playback; the build skipped `fetch_vlc.py` |
 | `updates` | version, channel, layout, token | names which of four reasons self-update is off |
 | `appcontrol` | Windows Smart App Control state | `WARN` on Evaluation or On: turn it off before an event, or it may block the app |
-| `network` | Qt TLS backend (schannel on Windows) + Python `ssl` | `FAIL` means the relay socket can never connect; a packaging fault (`PyQt6.QtNetwork` in the spec's `hiddenimports`) |
+| `network` | Qt TLS backend (schannel on Windows) + Python `ssl`, and that HTTPS verifies through the OS (`truststore`) | `FAIL` means the relay socket can never connect; a packaging fault (`PyQt6.QtNetwork` in the spec's `hiddenimports`) |
 | `nexus` | relay/key present, models parse the bundled examples | `WARN` with no relay token and no key means the feed is off |
 | `webcast` | which screens are published, their exact URLs, and that the pages are in the bundle | try the printed URL from the Pi's browser |
 | `qt` | Qt's own warnings this run | full text in `qt_warnings.log` |
@@ -206,6 +206,28 @@ nothing fails.
 | `windows` | all four built and rendered | |
 
 ---
+
+## "Certificate verify failed"
+
+Updates or the event feed fail on one machine with a certificate error, while
+another machine (and the browser on the same machine) works. Run:
+
+```
+"%LOCALAPPDATA%\Programs\Breakaway Pit Display\current\Breakaway Pit Display.exe" --net-check
+```
+
+It tries GitHub, frc.nexus and the relay and says which of three causes it is:
+
+| It says | Cause | Fix |
+|---|---|---|
+| expired / not yet valid | the machine's clock is wrong | set the date and time |
+| re-signing secure traffic | a school/venue web filter | a phone hotspot; or ask for the hosts to be allowed |
+| doesn't have the certificate authority | Windows hasn't fetched that root yet | open the site once in Edge; builds from 2026-09-24 on fetch it themselves |
+
+Builds from 2026-09-24 on verify through Windows itself (`truststore`,
+`app/net.py`), which handles the last two the way the browser does. A machine
+on an older build whose updater is failing can't update itself to the fix:
+install the new Setup.exe over it (data is untouched).
 
 ## Code signing
 

@@ -33,10 +33,12 @@ def _close_launcher_splash() -> None:
     every path out of here must: the boot screen taking over, and every CLI
     flag that answers without a window.
     """
+    if not _launcher_splash_up():
+        return
     try:
-        # Only exists in a build with a splash — and its import can raise
-        # ConnectionError if the bootloader's side failed. A splash must never
-        # be the reason the app doesn't start, so any failure means "no splash".
+        # Its import can raise ConnectionError if the bootloader's side
+        # failed. A splash must never be the reason the app doesn't start, so
+        # any failure means "no splash".
         import pyi_splash
     except Exception:
         return
@@ -47,7 +49,19 @@ def _close_launcher_splash() -> None:
         pass
 
 
+def _launcher_splash_up() -> bool:
+    """
+    Did the bootloader actually put a splash up? It says so in this variable
+    (consumed when `pyi_splash` is first imported, hence also the module
+    check). Importing `pyi_splash` without it prints a traceback to stderr —
+    noise in every `--self-check` of a build with no splash.
+    """
+    return "_PYI_SPLASH_IPC" in os.environ or "pyi_splash" in sys.modules
+
+
 def _launcher_status(text: str) -> None:
+    if not _launcher_splash_up():
+        return
     try:
         import pyi_splash
         if pyi_splash.is_alive():
@@ -96,6 +110,16 @@ def _cli(argv: list[str]) -> int | None:
         except UpdateError as exc:
             print(f"Could not roll back: {exc}", file=sys.stderr)
             return 1
+
+    if "--net-check" in argv:
+        # Can this machine make the app's HTTPS connections, and if not, why?
+        # For "updates fail on this machine but not that one". See app/net.py.
+        from app import net
+        from app.selfcheck import _attach_console
+        _attach_console()
+        ok, lines = net.check()
+        print("\n".join(lines))
+        return 0 if ok else 1
 
     if "--provision" in argv:
         # Apply a pit setup file — keys and the event — from a script or a
