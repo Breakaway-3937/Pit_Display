@@ -119,7 +119,14 @@
 // Turn it back on only if the pit starts showing mostly whites and greys.
 #define RGBW_EXTRACT_WHITE 0
 
-#define LED_TYPE     WS2812B    // timing only; the byte layout is ours
+// Timing only; the byte layout is ours. SK6812 since fw 2.7 — these ARE
+// SK6812 strips. WS2812B timing (T0H 250 / T1H 875 / 1250 ns) left the low
+// after every 1-bit at 375 ns, under the SK6812's 450 ns minimum: out of
+// spec on every '1', with no noise margin. Under the audio amplifier's noise
+// that showed up as flicker on animated looks — each frame is another
+// chance to misread a bit, and a flipped bit in a violet pixel's zero W byte
+// is a white flash. FastLED's SK6812 timing is 375 / 750 / 1250 ns, all in spec.
+#define LED_TYPE     SK6812
 // RGB, not GRB: the controllers emit our packed bytes verbatim and the
 // channel order is applied during packing. Setting GRB here would reorder
 // bytes that are pixel data to the strip but arbitrary numbers to FastLED.
@@ -135,6 +142,21 @@
 // full white is roughly 10 A; this keeps it to something a bench supply and
 // the pit wiring can actually deliver.
 #define MAX_BRIGHTNESS 200
+
+// ── Centre power budget (fw 2.7) ───────────────────────────────────────
+// The centre run is the longest (93 px, fed from one end), so a supply sag
+// shows there first: violet at 180 drew ~1.7x the white work light, and with
+// the audio amplifier's bass pulling on the same supply it flickered. Every
+// centre frame is now held to the white work light's own draw — measured as
+// the sum of all four channels after brightness, since current tracks that —
+// and scaled down, colour kept, when it would exceed it. White at 160 sits
+// exactly on the budget and is never touched. The sides are not regulated
+// yet; add a SIDES budget the same way when they need one.
+#define CENTER_POWER_BUDGET ((uint32_t)CENTER_COUNT * 160)
+// The sides channel carries 76 px of data but feeds two strips (the Y-split),
+// so its current is twice what its bytes suggest; its budget is in the same
+// data units. Off (0 %) by default: sides regulation is opt-in via SET_CAP.
+#define SIDES_POWER_BUDGET  ((uint32_t)SIDES_COUNT * 160)
 
 // ── The three-way switch ──────────────────────────────────────────────
 // A panel switch on the front of the pit, in reach of anyone standing at it.
@@ -322,7 +344,13 @@ const Strip strips[NUM_STRIPS] = {
 };
 
 #define FW_MAJOR 2
-#define FW_MINOR 5   // 2.5: OP_STATUS — link and timing telemetry (State unchanged, magic stays 0xBE)
+#define FW_MINOR 8   // 2.8: in animated looks the centre holds a steady white work light;
+                     //      only the sides animate (constant centre power)
+                     // 2.7: redraw only when the picture changes; animations at 30 fps;
+                     //      no-host look is a slow violet breathe (EEPROM magic 0xBF);
+                     //      centre power budget; SK6812 bit timing (was WS2812B)
+                     // 2.6: a command landing mid-write is drawn next frame, not dropped
+                     // 2.5: OP_STATUS — link and timing telemetry (State unchanged, magic stays 0xBE)
                      // 2.4: no-host default is a violet sparkle (EEPROM magic 0xBE)
                      // 2.3: no-host default was a red chase (EEPROM magic 0xBD)
                      // 2.2: SET_COLOR takes an optional 5th byte, W, per segment
@@ -343,6 +371,7 @@ enum : uint8_t {
   OP_PING       = 0x15,
   OP_OFF        = 0x16,
   OP_STATUS     = 0x17,   // host → device: report telemetry (fw 2.5+)
+  OP_SET_CAP    = 0x18,   // centre %, sides % of the white-look draw (fw 2.7+); 0 = off
   OP_INFO       = 0x80,
   OP_LOG        = 0x81,
   OP_STATUS_REPLY = 0x82   // device → host: the telemetry, see sendStatus()
@@ -354,6 +383,12 @@ enum : uint8_t {
 };
 
 static const uint16_t WATCHDOG_MS = 5000;
+// Animation frame period, and how many 60 fps steps each frame advances so
+// the visible speed is unchanged. See loop().
+static const uint8_t  ANIM_FRAME_MS = 33;
+static const uint8_t  ANIM_STEP     = 2;
+// A static picture is redrawn at least this often, to heal a glitched strip.
+static const uint16_t REFRESH_MS    = 10000;
 static const uint8_t  RX_MAX      = 200;
 static const uint8_t  ALL_SEGMENTS = 0xFF;
 
@@ -368,7 +403,7 @@ static const uint16_t EEPROM_MAGIC_ADDR = 0;
 // read into a new layout garbles every field after `brightness` rather than
 // failing, so this has to move whenever State's shape does — and whenever
 // the default must win.
-static const uint8_t  EEPROM_MAGIC = 0xBE;
+static const uint8_t  EEPROM_MAGIC = 0xBF;   // 0xBF (2.7): discard a saved sparkle default
 
 CRGB leds[TOTAL_LEDS];
 
@@ -402,7 +437,7 @@ struct State {
 // the app having crashed mid-sequence. The app's own resting look (white on
 // the W die) is pushed the moment it connects.
 State state = {
-  MODE_SPARKLE, 150, 180,
+  MODE_BREATHE, 40, 180,       // ~2 s per breath: alive, calm, and violet
   { 128, 128 }, { 0, 0 }, { 255, 255 },                // violet, see palette
   { 0, 0 },
 };
@@ -443,6 +478,15 @@ struct Telemetry {
   uint32_t rxBytes;
 } tele = {};
 uint16_t lastReadTick = 0;
+// Centre power cap (fw 2.7), see capCentrePower(): the last scale applied
+// (255 = untouched) and how many frames needed it.
+uint8_t  capScaleLast = 255;
+uint16_t cappedFrames = 0;
+// Live limits, in percent of each channel's white-look budget, set by
+// OP_SET_CAP so a limit can be tuned by eye without reflashing. RAM only: a
+// reboot returns to the compiled defaults (centre 100 %, sides off).
+uint8_t  capPctCentre = 100;
+uint8_t  capPctSides  = 0;
 uint16_t cmdTick = 0;
 bool     cmdPending = false;
 
@@ -571,7 +615,9 @@ void sendLog(const char *msg) {
   sendFrame(0, OP_LOG, buf, n);
 }
 
-// STATUS_REPLY (fw 2.5), big-endian like INFO:
+// STATUS_REPLY, big-endian like INFO. Format 2 (fw 2.7) appends the centre
+// power cap: capScale(1) 255 = untouched | cappedFrames(2)   = 42 bytes.
+// Format 1 (fw 2.5, 2.6):
 //   format(1)=1 | uptime_ms(4) | free_ram(2) | switch(1) 0=WHITE 1=HOST 2=RED |
 //   mode(1) | brightness(1) | flags(1) bit0 blanked, bit1 hostSeen, bit2 dirty |
 //   framesOk crcErrors decodeErrors overruns unknownOps shows fallbacks
@@ -583,10 +629,10 @@ void sendLog(const char *msg) {
 uint8_t switchPosition();
 extern uint8_t swPos;
 void sendStatus(uint8_t seq) {
-  uint8_t p[39];
+  uint8_t p[42];
   uint8_t n = 0;
   unsigned long up = millis();
-  p[n++] = 1;
+  p[n++] = 2;
   p[n++] = (up >> 24) & 0xFF; p[n++] = (up >> 16) & 0xFF;
   p[n++] = (up >> 8) & 0xFF;  p[n++] = up & 0xFF;
   int ram = freeRam();
@@ -605,6 +651,8 @@ void sendStatus(uint8_t seq) {
   }
   p[n++] = (tele.rxBytes >> 24) & 0xFF; p[n++] = (tele.rxBytes >> 16) & 0xFF;
   p[n++] = (tele.rxBytes >> 8) & 0xFF;  p[n++] = tele.rxBytes & 0xFF;
+  p[n++] = capScaleLast;
+  p[n++] = (cappedFrames >> 8) & 0xFF;  p[n++] = cappedFrames & 0xFF;
   sendFrame(seq, OP_STATUS_REPLY, p, n);
   tele.showTicksMax = 0;
   tele.gapTicksMax = 0;
@@ -681,8 +729,12 @@ void handleFrame(uint8_t *body, uint8_t len) {
     return;
   }
 
-  dirty = true;                  // cheap: a PING costs one redundant frame
-  if (op != OP_PING && op != OP_HELLO) {
+  // Only a command that can change the picture costs a redraw. A PING used
+  // to set `dirty` too — one identical frame a second, and ~8 ms each time
+  // with the UART deaf. HELLO returns inside the switch; SAVE changes nothing
+  // on the strips.
+  const bool changesOutput = (op != OP_PING && op != OP_HELLO && op != OP_SAVE);
+  if (changesOutput) {
     cmdTick = TCNT1;             // time this command until it is drawn
     cmdPending = true;
   }
@@ -739,6 +791,14 @@ void handleFrame(uint8_t *body, uint8_t len) {
       saveState();
       break;
 
+    case OP_SET_CAP:
+      // p[0] centre %, p[1] sides % of the white-look draw; 0 = no limit.
+      if (plen >= 2) {
+        capPctCentre = p[0] > 100 ? 100 : p[0];
+        capPctSides  = p[1] > 100 ? 100 : p[1];
+      }
+      break;
+
     case OP_OFF:
       blanked = true;
       break;
@@ -751,6 +811,7 @@ void handleFrame(uint8_t *body, uint8_t len) {
       sendFrame(seq, OP_NAK, NULL, 0);
       return;
   }
+  if (changesOutput) dirty = true;
   sendFrame(seq, OP_ACK, NULL, 0);
 }
 
@@ -863,11 +924,13 @@ static const uint8_t CHASE_WIDTH    = 14;   // half-width of the running dot,
 
 void render() {
   // Modes with a persistence tail fade the buffer instead of rewriting it.
-  if (state.mode == MODE_CHASE)   fadeToBlackBy(leds, TOTAL_LEDS, 40);
+  if (state.mode == MODE_CHASE)   fadeToBlackBy(leds, TOTAL_LEDS, 73);   // = 40 twice, 30 fps
   if (state.mode == MODE_SPARKLE) {
-    fadeToBlackBy(leds, TOTAL_LEDS, 24);
+    // Tuned per frame, at 30 fps: the same density and tail as 60 fps with 24
+    // and 60 — (1 - 24/256)^2 is about 1 - 46/256.
+    fadeToBlackBy(leds, TOTAL_LEDS, 46);
     // No geometry: a twinkle is a twinkle wherever it lands.
-    if (random8() < 60) {
+    if (random8() < 120) {
       uint16_t i = random16(TOTAL_LEDS);
       uint8_t s = stripOf(i);
       leds[i] = CRGB(state.r[s], state.g[s], state.b[s]);
@@ -951,6 +1014,28 @@ void render() {
 
 void readSerial();          // defined below; showAll drains between writes
 
+// Hold the centre run to CENTER_POWER_BUDGET: sum every channel byte that
+// will go down the wire, and if the frame would draw more than the budget,
+// scale every byte by budget/sum. One extra pass over ~370 bytes, before the
+// write, with interrupts still on. Reported in STATUS as the last scale
+// applied (255 = untouched) and how many frames needed it.
+// Returns the scale applied (255 = untouched). `pct` 0 = no limit.
+uint8_t capPower(uint8_t *raw, uint16_t nbytes, uint32_t budget100, uint8_t pct) {
+  if (pct == 0) return 255;
+  uint32_t budget = budget100 * pct / 100;
+  uint32_t sum = 0;
+  for (uint16_t i = 0; i < nbytes; i++) sum += raw[i];
+  if (sum <= budget) return 255;
+  uint8_t scale = (uint8_t)((budget * 256UL) / sum);
+  for (uint16_t i = 0; i < nbytes; i++) raw[i] = scale8(raw[i], scale);
+  return scale;
+}
+
+void capCentrePower(uint8_t *raw, uint16_t nbytes) {
+  capScaleLast = capPower(raw, nbytes, CENTER_POWER_BUDGET, capPctCentre);
+  if (capScaleLast != 255) cappedFrames++;
+}
+
 // `wByte` is the strip's fourth channel — the dedicated white die, which
 // nothing in leds[] can express because a CRGB has only three components.
 // Effects and host colours pass 0 and it costs them nothing; the manual
@@ -989,18 +1074,23 @@ void packAndShow(uint8_t ctrl, const CRGB *src, uint16_t npx,
   // it dirty would clock a garbage pixel onto the end of the run.
   for (uint16_t i = (uint16_t)npx * 4; i < nslots * 3; i++) raw[i] = 0;
 
+  if (ctrl == 0) capCentrePower(raw, (uint16_t)npx * 4);
+  else capPower(raw, (uint16_t)npx * 4, SIDES_POWER_BUDGET, capPctSides);
   FastLED[ctrl].showLeds(255);
 }
 
 // `wByte` is the override's white (the WHITE switch position); `hostW`
 // adds the host's per-segment white on top of it, so an alert can light the
-// centre run from the W die while the sides carry a colour.
-void showAll(uint8_t bright, uint8_t wByte, bool hostW) {
+// centre run from the W die while the sides carry a colour. `centreWork`
+// puts the centre on the W die at full (before brightness and the power
+// budget) — the steady work light every animated look keeps down the middle.
+void showAll(uint8_t bright, uint8_t wByte, bool hostW, bool centreWork) {
   uint8_t wc = wByte, ws = wByte;
   if (hostW) {
     if (state.w[SEG_CENTER] > wc) wc = state.w[SEG_CENTER];
     if (state.w[SEG_SIDES]  > ws) ws = state.w[SEG_SIDES];
   }
+  if (centreWork) wc = 255;
   packAndShow(0, &leds[strips[SEG_CENTER].start], CENTER_COUNT, bright, wc);
   // Drain the port between the two channel writes. Each show holds
   // interrupts off for milliseconds and the AVR's UART keeps only two bytes
@@ -1080,25 +1170,36 @@ void loop() {
     dirty = true;
   }
 
+  // A static picture is re-sent now and then anyway, so a strip that
+  // glitched (a static discharge, a loose connector) recovers by itself.
+  static unsigned long lastShow = 0;
+  if (!dirty && millis() - lastShow >= REFRESH_MS) dirty = true;
+
   static unsigned long lastFrame = 0;
   unsigned long now = millis();
-  if (now - lastFrame >= 16) {          // ~60fps
-    lastFrame = now;
-
-    bool animating = (swPos == SW_HOST) && !blanked && modeAnimates(state.mode);
-    if (animating) {
-      // speed maps to how fast the animation phase advances. Only advanced
-      // while something is actually animating — a phase that keeps running
-      // behind a static frame just makes the next mode change jump.
-      animStep += 1 + (state.speed >> 5);
-      chasePos += 1 + (state.speed >> 6);
+  bool animating = (swPos == SW_HOST) && !blanked && modeAnimates(state.mode);
+  // Two reasons to draw: the picture changed (draw now — no waiting for a
+  // frame tick, so a command is visible within one strip write), or an
+  // animation is due its next frame. Animations run at ANIM_FRAME_MS, not
+  // 60 fps: every strip write leaves the UART deaf for ~8 ms, and at 60 fps
+  // that was half of all time — about half of every command lost. 30 fps
+  // halves the deafness, and a breathe or a chase looks the same.
+  bool animDue = animating && (now - lastFrame >= ANIM_FRAME_MS);
+  if (dirty || animDue) {
+    if (animDue) {
+      lastFrame = now;
+      // speed maps to how fast the animation phase advances — ANIM_STEP
+      // times per frame, so the visible speed is what it was at 60 fps. Only
+      // advanced while something is animating: a phase that kept running
+      // behind a static frame made the next mode change jump.
+      animStep += ANIM_STEP * (1 + (state.speed >> 5));
+      chasePos += ANIM_STEP * (1 + (state.speed >> 6));
     }
-    if (!animating && !dirty) return;   // nothing to redraw; leave the port
-                                        // alone so the host can be heard
 
     uint8_t outBright;
     uint8_t outWhite = 0;              // the fourth channel; RGB modes send 0
     bool    hostWhite = false;         // add the host's per-segment W?
+    bool    centreWork = false;        // centre on the steady work light?
     switch (swPos) {
       case SW_WHITE:
         // The RGB channels stay dark and the white die does all of it. Mixing
@@ -1125,13 +1226,33 @@ void loop() {
           // that flashed the sides while the W die held steady would read
           // as a broken strip, and no effect asks for white anyway.
           hostWhite = (state.mode == MODE_SOLID);
+          // The centre never animates (fw 2.8). Its supply sags with the
+          // audio amplifier's bass, and any look that changes the centre's
+          // draw frame to frame flickered there — even held to a fifth of the
+          // white look's power (measured 2026-09-24, amp at full). A steady
+          // draw holds, so every animated look keeps the centre on the white
+          // work light and moves only the sides: the same rule the queue
+          // alert already follows. Solid colour looks still colour the
+          // centre — fine without music, not with it.
+          if (modeAnimates(state.mode)) {
+            fill_solid(&leds[strips[SEG_CENTER].start], CENTER_COUNT, CRGB::Black);
+            centreWork = true;
+          }
         }
         break;
     }
     if (outBright > MAX_BRIGHTNESS) outBright = MAX_BRIGHTNESS;
+    // Clear BEFORE the write, not after. showAll() reads the serial port
+    // between the centre and sides writes, and a command handled there sets
+    // `dirty` for the state it just changed. Clearing afterwards threw that
+    // away: the change sat undrawn until some later redraw (the next PING, up
+    // to a second on) and then appeared all at once — which is what erratic
+    // alert flashing and "late" commands looked like before 2.6.
+    dirty = false;
     uint16_t t0 = TCNT1;
-    showAll(outBright, outWhite, hostWhite);
+    showAll(outBright, outWhite, hostWhite, centreWork);
     uint16_t t1 = TCNT1;
+    lastShow = millis();
     uint16_t dt = t1 - t0;
     tele.shows++;
     tele.showTicksLast = dt;
@@ -1142,6 +1263,5 @@ void loop() {
       if (lat > tele.cmdTicksMax) tele.cmdTicksMax = lat;
       cmdPending = false;
     }
-    dirty = false;
   }
 }

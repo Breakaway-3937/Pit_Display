@@ -99,8 +99,14 @@ automatically. Replugging is fine.
   is in charge, down = solid red. Up and down work with no computer at all.
 - **Resting look** is the white work light. Queue calls flash the sides in our
   alliance colour; passing inspection flashes them green.
-- **The violet sparkle** means the controller has power but no app talking to
-  it. That's normal at boot, and five seconds after the app closes.
+- **Violet breathing on the sides, steady white down the centre** means the
+  controller has power but no app talking to it. That's normal at boot, and
+  five seconds after the app closes.
+- **The centre run is the work light.** In every animated look it holds
+  steady white and only the sides move. The centre's supply sags with the
+  music's bass, and anything changing on the centre flickers while the amp is
+  loud. **Don't put a colour down the centre while music is playing**: a
+  solid colour look still colours it, and it will flicker.
 - **On/off** is the kill switch and needs no password.
 
 Hardware, wiring and firmware details are in [`CLAUDE.md`](CLAUDE.md), "LED

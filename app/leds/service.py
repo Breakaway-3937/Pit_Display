@@ -125,6 +125,10 @@ class _LEDService(QObject):
         self._link.status.connect(self._on_status)
         self._link.link_error.connect(self.error)
         self._link.telemetry_changed.connect(self.telemetry_changed)
+        self._link.telemetry_changed.connect(self._check_in_sync)
+        # Self-healing: see _check_in_sync().
+        self._resyncs = 0
+        self._last_resync = 0.0
 
         config.team_changed.connect(self._on_team_changed)
         config.mode_changed.connect(self._on_mode_changed)
@@ -168,7 +172,45 @@ class _LEDService(QObject):
 
     def telemetry(self) -> dict:
         """The serial link's counters, as `LinkStats.snapshot()` (app/leds/link.py)."""
-        return self._link.stats.snapshot()
+        t = self._link.stats.snapshot()
+        t["resyncs"] = self._resyncs
+        return t
+
+    # Firmware caps brightness at MAX_BRIGHTNESS (pit_leds.ino); a request
+    # above it is clamped there, not lost.
+    _FW_MAX_BRIGHTNESS = 200
+
+    def _check_in_sync(self) -> None:
+        """
+        Is the controller showing what the app wants? If not, replay the
+        whole intent.
+
+        Delivery (app/leds/link.py) makes a lost command rare, but it can't
+        see a controller that rebooted — a brown-out, a USB hiccup — and came
+        back up in its no-host look, or a command given up on while the link
+        was failing. The controller's STATUS (fw 2.5+) says what it is really
+        running; this compares, and replays at most every 5 s. Skipped while
+        an alert, an override or the manual switch owns the strips, since
+        those differ from the resting intent on purpose.
+        """
+        import time as _time
+        if self._device is None or not self._enabled or self._alert is not None:
+            return
+        if self.overridden:
+            return
+        dev = self._link.stats.snapshot()["device"]
+        if dev is None or not dev.get("after_last_command") or dev["switch"] != "HOST":
+            return
+        wanted = (int(self._mode), min(self._brightness, self._FW_MAX_BRIGHTNESS), False)
+        actual = (dev["mode"], dev["brightness"], dev["blanked"])
+        if actual == wanted:
+            return
+        now = _time.monotonic()
+        if now - self._last_resync < 5.0:
+            return
+        self._last_resync = now
+        self._resyncs += 1
+        self._push_all()
 
     @property
     def port_name(self) -> str:

@@ -349,6 +349,11 @@ frames (on AVR, `show()` disables interrupts and drops serial bytes). Change
 
 **Measured facts, don't re-guess (2026-09-03 / 09-08):**
 
+- **`LED_TYPE SK6812` (fw 2.7), never WS2812B.** WS2812B timing left the low
+  after each 1-bit at 375 ns, under the SK6812's 450 ns minimum — out of spec
+  on every '1'. With the audio amp's noise, animated looks (30 frames/s, each
+  a chance to misread) flickered on the centre, and a flipped bit in violet's
+  zero W byte shows as a white flash. Static white (sent once per 10 s) hid it.
 - **RGBW, 4 bytes/pixel, order RGBW.** Wrong format shows a solid colour as a
   3-pixel green/white/blue pattern while black still works. FastLED's
   `setRgbw()` can't be used on AVR (RAM); `packAndShow()` packs by hand, the
@@ -373,13 +378,62 @@ frames (on AVR, `show()` disables interrupts and drops serial bytes). Change
   before condemning it** (`firmware/pit_switch_probe`). `SW_ACTIVE_LOW` wrong
   reads as a jammed switch. A throw of `255` degrades to two positions.
 - **Resting look = white work light** (`MODE_PRESETS`, brightness 160). No
-  host → violet sparkle (fw 2.4). **No manual OFF position**, on purpose.
+  host → slow violet breathe on the sides, steady white down the centre
+  (fw 2.8; it was a whole-pit sparkle). **No manual OFF
+  position**, on purpose.
+- **The centre never animates (fw 2.8).** Its supply sags with the audio
+  amp's bass, and a centre whose draw changes frame to frame flickered —
+  measured by eye with the amp at full, the flicker survived the centre held
+  to 50% and to 20% of the white look's draw, so it is not the LEDs' load.
+  A steady draw holds. So every animated mode blanks the centre pixels and
+  puts it on the W die (`centreWork` in `showAll()`); only the sides move —
+  the rule the queue alert already follows. Solid colour looks still colour
+  the centre: fine without music, not with it. `tools/led_cap_sweep.py
+  --only C S` holds a live limit (OP_SET_CAP 0x18, RAM only) for tests.
+- **Centre power budget (fw 2.7, `capCentrePower()`).** Violet at 180 drew
+  ~1.7x the white work light, and with the audio amp's bass on the same supply
+  the centre run (longest, fed from one end) flickered — it went away on
+  white or with the music off. Each centre frame's channel sum is held to
+  the white look's (`CENTER_POWER_BUDGET` = 93 x 160) and scaled down, colour
+  kept, when over. White is never touched; solid violet 180 runs at ~59%.
+  **Sides are not regulated yet**, so an over-budget look shows a dimmer
+  centre than sides. STATUS format 2 reports the last scale and frames capped.
+- **Redraw only when the picture changes (fw 2.7).** PING/HELLO/SAVE don't set
+  `dirty`; a static frame is refreshed every 10 s (`REFRESH_MS`) to heal a
+  glitch. Animations run at 30 fps (`ANIM_FRAME_MS` 33, `ANIM_STEP` 2 keeps the
+  visible speed) — every strip write leaves the UART deaf ~8 ms, and at 60 fps
+  that lost about half of all frames.
 - **SRAM:** 169 px ≈ 1560 B of 2 KB; ~250 px is the ceiling, then use an ESP32.
 - **Move `EEPROM_MAGIC` on any `State` change** (now `0xBE`).
+- **Clear `dirty` before `showAll()`, never after** (fw 2.6). `showAll()`
+  reads serial between the centre and sides writes; a command handled there
+  sets `dirty`, and clearing afterwards dropped it until the next redraw.
+- **Flicker: `uv run tools/led_diag.py --flash-test`.** Confirms the white look
+  landed (resending until STATUS agrees), then four 15 s stages, each changing
+  one thing: no redraws at all (heartbeat paused via `SerialLink.heartbeat`),
+  one redraw/s, ~10 commands/s, an alert. The stage it flickers in names the
+  cause.
 - Alerts are overlays (`leds.start_alert/clear_alert`); intent keeps updating
   underneath; the flash is host-driven at 3 Hz.
 - **Known bug:** `SET_PIXELS` is overwritten by SOLID's next render; nothing
   sends it.
+
+**Delivery, not just sending (`app/leds/link.py`).** Output commands
+(SET_MODE/COLOR/BRIGHT/PIXELS, SAVE, OFF) go one at a time, in order, and are
+resent every 12–26 ms (jittered, so retries don't lock step with the frame
+period) until ACKed; a newer command for the same setting replaces a waiting
+one (`_key`/`_supersedes`: latest-wins is only safe for whole-value
+registers). PING/STATUS are sent once. Reads are non-blocking and the loop
+sleeps on an event `send()` sets. **The service self-heals** (`_check_in_sync`):
+when STATUS disagrees with the intent (and no alert/override/switch owns the
+strips) it replays the look, at most every 5 s — which also catches a
+controller reboot. Anything that drives the link directly (a test) must
+disable that, or it gets corrected back within ~2 s.
+
+Measured on the real controller, 2026-09-24: before — ~60% of commands lost
+on the animated default, the pit stuck sparkling, round trip ~54 ms, queued
+~23 ms. After (host + fw 2.7) — 0 given up, delivered median ~5 ms (p95 ~6 ms
+static), queued ~0.2 ms, 0 redraws/s while static.
 
 **Link telemetry, two halves (Telemetry → LED controller).**
 - **Host side, any firmware** (`LinkStats`, `app/leds/link.py`): round trip

@@ -438,14 +438,18 @@ class NetworkPanel(QWidget):
         lines = ["THIS MACHINE → CONTROLLER"]
         lines.append(f"Last heard {_ago(t['last_heard_s'])} ago · "
                      f"{t['cmd_per_s']:.1f} commands/s over the last 10 s")
-        lines.append(f"Round trip (sent → acknowledged): median {ms(t['rtt_p50_ms'])}, "
-                     f"95% {ms(t['rtt_p95_ms'])}, worst {ms(t['rtt_max_ms'])}")
-        lines.append(f"Waiting in this machine's queue before sending: median "
-                     f"{ms(t['wait_p50_ms'])}, 95% {ms(t['wait_p95_ms'])}, "
-                     f"worst {ms(t['wait_max_ms'])}")
-        lines.append(f"{t['sent']:,} sent ({_bytes(t['bytes_out'])}) · {t['acks']:,} "
-                     f"acknowledged · {t['naks']} rejected · {t['unanswered']} "
-                     f"unanswered · {t['shed']} dropped from the queue")
+        lines.append(f"Command delivered (queued → acknowledged, retries included): "
+                     f"median {ms(t['deliver_p50_ms'])}, 95% {ms(t['deliver_p95_ms'])}, "
+                     f"worst {ms(t['deliver_max_ms'])}")
+        lines.append(f"Round trip per frame: median {ms(t['rtt_p50_ms'])}, "
+                     f"95% {ms(t['rtt_p95_ms'])} · queued before sending: median "
+                     f"{ms(t['wait_p50_ms'])}, 95% {ms(t['wait_p95_ms'])}")
+        lines.append(f"{t['delivered']:,} commands delivered · {t['retries']:,} resends · "
+                     f"{t['superseded']} replaced by a newer one · {t['unanswered']} "
+                     f"given up · {t['probes_lost']} heartbeats unanswered · "
+                     f"{t['naks']} rejected · {t['resyncs']} resyncs")
+        lines.append(f"{t['sent']:,} frames sent ({_bytes(t['bytes_out'])}) · "
+                     f"{t['acks']:,} acknowledged · {t['shed']} dropped from the queue")
 
         lines.append("")
         lines.append("THE CONTROLLER'S OWN VIEW")
@@ -479,6 +483,13 @@ class NetworkPanel(QWidget):
                          f"{dev['decode_errors']} broken frames · {dev['overruns']} "
                          f"overruns · {dev['unknown_ops']} unknown commands · "
                          f"{dev['fallbacks']} watchdog fallbacks")
+            if dev.get("cap_scale") is not None:
+                lines.append(
+                    f"Centre power budget: "
+                    + ("not needed right now" if dev["cap_scale"] >= 1.0 else
+                       f"holding the centre at {dev['cap_scale']:.0%} of this look's "
+                       f"brightness")
+                    + f" · {dev['capped_frames']:,} frames capped since boot")
             running = _MODE_NAMES.get(dev["mode"], f"mode {dev['mode']}")
             lines.append(f"Running: {running} at brightness {dev['brightness']}"
                          + (" · blanked (off)" if dev["blanked"] else ""))
@@ -540,14 +551,18 @@ class NetworkPanel(QWidget):
         if t["last_heard_s"] is not None and t["last_heard_s"] > 3.0:
             out.append(f"Silent for {_ago(t['last_heard_s'])}: the heartbeat isn't "
                        "being answered. Check the USB cable and the controller's power.")
-        if t["naks"] or (dev and dev.get("errors_since_last")):
-            out.append("Frames are arriving damaged or incomplete. Bytes that land "
-                       "during a strip write are lost, so this rises with animation "
-                       "and strip length; a bad USB cable makes it worse.")
+        if t["naks"] and not t["retries"]:
+            out.append("Frames are being rejected as corrupted without any being "
+                       "lost to strip writes — that's the cable or USB port.")
         if t["unanswered"] or t["shed"]:
-            out.append("Commands are going unanswered or being dropped: the "
-                       "controller can't keep up, or the link is failing.")
-        if t["wait_p95_ms"] is not None and t["wait_p95_ms"] > 20:
+            out.append("Commands were given up on after repeated resends, or "
+                       "dropped: the link is failing (cable, port, or the "
+                       "controller stuck). The app will resync once it recovers.")
+        if t["delivered"] >= 20 and t["retries"] > t["delivered"]:
+            out.append("More resends than commands: most first attempts are lost. "
+                       "Expected only with firmware older than 2.7 during an "
+                       "animated look — flash firmware/pit_leds.")
+        if t["wait_p95_ms"] is not None and t["wait_p95_ms"] > 5:
             out.append(f"Commands wait up to {t['wait_p95_ms']:.0f} ms in this "
                        "machine's queue before they're even sent. That's host-side "
                        "latency, not the Arduino.")

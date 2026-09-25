@@ -4,6 +4,21 @@ Serial link to the LED controller — discovery, connection, and the I/O loop.
 Everything here runs on a QThread. The GUI never blocks on a serial write: the
 UI thread drops a frame on a queue and returns immediately.
 
+**Every command that changes the strips is delivered, not just sent.** The
+controller is deaf while it writes a strip — its UART holds two bytes with
+interrupts off — so on an animated look about half of all frames were lost
+(measured 2026-09-24), and a lost "go white" left the pit sparkling while the
+app believed otherwise. Output commands now go one at a time, in order, and
+each is resent until the controller ACKs it (`_RETRY_S` plus jitter); a newer command for
+the same setting replaces an older one still waiting, so a backlog never
+replays stale looks. PING and STATUS are probes: sent once, never retried.
+
+**Nothing blocks on the port.** Reads are non-blocking and the thread sleeps
+on an event that `send()` sets, so a command goes out the moment it is queued
+and an ACK is read the moment it lands. The old loop blocked in `read()` for
+its whole 50 ms timeout, which alone added ~27 ms (median) to every command
+and ~54 ms to every round trip.
+
 Reconnection is the normal case, not the error case. Cables get kicked, boards
 get replugged, and the port name changes when they do — so the link discovers
 the board by USB VID/PID and confirms with a HELLO handshake rather than
@@ -12,7 +27,7 @@ looking, forever, without any user action.
 """
 
 import os
-import queue
+import random
 import threading
 import time
 from collections import deque
@@ -49,9 +64,24 @@ KNOWN_IDS: dict[tuple[int, int], str] = {
 
 _BACKOFF = [1.0, 2.0, 3.0, 5.0, 8.0]   # seconds between reconnect attempts
 
-# A command with no ACK after this long is counted as unanswered. The firmware
-# ACKs within a frame or two; two seconds is "the byte never arrived".
-_ACK_TIMEOUT_S = 2.0
+# Output commands: resent until ACKed. The firmware ACKs as soon as it parses a
+# frame (a few ms, USB included), so 25 ms without one means the frame was lost
+# to a strip write. Give up after ~1.5 s of trying — the link is failing, and
+# the service's resync (it compares the controller's STATUS against intent)
+# will put the look back once it recovers.
+_RELIABLE = frozenset({Op.SET_MODE, Op.SET_COLOR, Op.SET_BRIGHT,
+                       Op.SET_PIXELS, Op.SAVE, Op.OFF, Op.SET_CAP})
+_RETRY_S = 0.012
+# …plus up to this much random delay. A fixed interval falls into step with
+# the firmware's frame period and lands in the same deaf window over and over
+# (measured: p95 delivery 58 ms at a fixed 25 ms); jitter breaks the lock-step.
+_RETRY_JITTER_S = 0.014
+_MAX_TRIES = 60
+# A PING or STATUS with no answer after this long is counted lost.
+_PROBE_TIMEOUT_S = 1.0
+# Output commands waiting to go. Latest-wins coalescing keeps this tiny in
+# practice; the cap only matters for a flood of SET_PIXELS.
+_QUEUE_CAP = 64
 
 # How often to ask a fw 2.5+ controller for its own telemetry. 39 bytes back,
 # and the firmware does not redraw for it, so this costs the link nothing.
@@ -91,8 +121,13 @@ class LinkStats:
         self.bytes_out = 0
         self.acks = 0
         self.naks = 0
-        self.unanswered = 0
+        self.unanswered = 0         # output commands given up on after _MAX_TRIES
+        self.delivered = 0          # output commands ACKed (after any retries)
+        self.retries = 0            # resends of an output command
+        self.superseded = 0         # replaced by a newer command before delivery
+        self.probes_lost = 0        # PINGs/STATUS requests that got no answer
         self.shed = 0               # commands dropped because the queue was full
+        self._deliveries: deque[float] = deque(maxlen=_SAMPLES)  # ms, queued → ACKed
         self.last_heard = 0.0       # wall clock of the last frame from the device
         self.last_rtt_ms = 0.0
         self._rtt_sum = 0.0
@@ -135,17 +170,14 @@ class LinkStats:
                 self.last_cmd_at = now
             self.sent += 1
             self.bytes_out += size
-            self._waits.append(waited_s * 1000)
+            if waited_s >= 0:
+                self._waits.append(waited_s * 1000)
             self._writes.append(now)
-            # A reused sequence number (it wraps at 256) that was never
-            # answered is a lost command, not a pending one.
-            if seq in self._pending:
-                self.unanswered += 1
+            # Round-trip bookkeeping only; loss is accounted by the link, which
+            # knows what was a retry and what was a probe.
             self._pending[seq] = now
-            stale = [k for k, t in self._pending.items() if now - t > _ACK_TIMEOUT_S]
-            for k in stale:
+            for k in [k for k, t in self._pending.items() if now - t > 5.0]:
                 del self._pending[k]
-            self.unanswered += len(stale)
 
     def on_frame(self, seq: int, op: int, payload: bytes) -> None:
         now = time.monotonic()
@@ -188,6 +220,27 @@ class LinkStats:
         self.dev_show_max_us = max(self.dev_show_max_us, st.show_max_us)
         self.dev_gap_max_us = max(self.dev_gap_max_us, st.gap_max_us)
         self.dev_cmd_max_us = max(self.dev_cmd_max_us, st.cmd_max_us)
+
+    def on_delivered(self, queued_at: float) -> None:
+        with self._lock:
+            self.delivered += 1
+            self._deliveries.append((time.monotonic() - queued_at) * 1000)
+
+    def on_retry(self) -> None:
+        with self._lock:
+            self.retries += 1
+
+    def on_failed(self) -> None:
+        with self._lock:
+            self.unanswered += 1
+
+    def on_superseded(self) -> None:
+        with self._lock:
+            self.superseded += 1
+
+    def on_probe_lost(self, n: int = 1) -> None:
+        with self._lock:
+            self.probes_lost += n
 
     def on_shed(self) -> None:
         with self._lock:
@@ -239,6 +292,11 @@ class LinkStats:
                 "sent": self.sent, "bytes_out": self.bytes_out,
                 "acks": self.acks, "naks": self.naks,
                 "unanswered": self.unanswered, "shed": self.shed,
+                "delivered": self.delivered, "retries": self.retries,
+                "superseded": self.superseded, "probes_lost": self.probes_lost,
+                "deliver_p50_ms": self._pct(self._deliveries, 0.5),
+                "deliver_p95_ms": self._pct(self._deliveries, 0.95),
+                "deliver_max_ms": max(self._deliveries) if self._deliveries else None,
                 "in_flight": len(self._pending),
                 "last_rtt_ms": self.last_rtt_ms if self._rtt_n else None,
                 "avg_rtt_ms": (self._rtt_sum / self._rtt_n) if self._rtt_n else None,
@@ -257,6 +315,43 @@ class LinkStats:
                 "switch_s": now - self.switch_at if self.switch_at else None,
                 "logs": list(self.logs), "drops": list(self.drops),
             }
+
+
+class _Cmd:
+    """One output command on its way: resent until the controller ACKs it."""
+    __slots__ = ("op", "payload", "key", "queued_at", "seq", "sent_at", "retry_at", "tries")
+
+    def __init__(self, op: int, payload: bytes, key, queued_at: float):
+        self.op, self.payload, self.key, self.queued_at = op, payload, key, queued_at
+        self.seq = -1
+        self.sent_at = 0.0
+        self.retry_at = 0.0
+        self.tries = 0
+
+
+def _key(op: int, payload: bytes):
+    """
+    Which setting a command writes, for latest-wins coalescing — or None for a
+    command that must never be merged (SAVE, SET_PIXELS). Only a whole-value
+    register qualifies: dropping an older write of it can't change the final
+    state, because the newer write lands after everything in between.
+    """
+    if op == Op.SET_COLOR and payload:
+        return ("color", payload[0])          # segment, or ALL_SEGMENTS
+    if op in (Op.SET_MODE, Op.SET_BRIGHT, Op.OFF, Op.SET_CAP):
+        return (op,)
+    return None
+
+
+def _supersedes(new, old) -> bool:
+    """Does a command writing `new` make a waiting one writing `old` pointless?"""
+    if new is None or old is None:
+        return False
+    if new == old:
+        return True
+    # SET_COLOR to every segment replaces a pending one to any single segment.
+    return (new[0] == "color" and old[0] == "color"
+            and new[1] == proto.ALL_SEGMENTS)
 
 
 def candidate_ports() -> list[tuple[str, str]]:
@@ -305,8 +400,17 @@ class SerialLink(QThread):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._out: queue.Queue[tuple[int, bytes, float, int]] = queue.Queue(maxsize=256)
+        # Output commands, in order, coalesced latest-wins; probes separately.
+        # Both are touched from the GUI thread (send) and this thread (_pump).
+        self._lock = threading.Lock()
+        self._cmds: deque[_Cmd] = deque()
+        self._probes: deque[int] = deque()
+        self._wake = threading.Event()
         self.stats = LinkStats()
+        # The 1 Hz PING. Only `tools/led_diag.py --flash-test` turns it off,
+        # to see the strips with no redraws at all; STATUS (fw 2.5+) still
+        # feeds the controller's watchdog without costing a redraw.
+        self.heartbeat = True
         self._running = False
         self._seq = 0
         self._port: "serial.Serial | None" = None
@@ -329,18 +433,32 @@ class SerialLink(QThread):
         return self._device is not None
 
     def send(self, op: int, payload: bytes = b"") -> None:
-        """Queue a frame. Never blocks; drops the oldest if the queue backs up."""
+        """
+        Queue a frame. Never blocks. Output commands are delivered (resent
+        until ACKed, in order); a newer one for the same setting replaces an
+        older one still waiting. PING/STATUS/HELLO are sent once.
+        """
+        op = int(op)
+        with self._lock:
+            if op in _RELIABLE:
+                key = _key(op, payload)
+                if key is not None:
+                    before = len(self._cmds)
+                    self._cmds = deque(c for c in self._cmds
+                                       if not _supersedes(key, c.key))
+                    for _ in range(before - len(self._cmds)):
+                        self.stats.on_superseded()
+                self._cmds.append(_Cmd(op, bytes(payload), key, time.monotonic()))
+                while len(self._cmds) > _QUEUE_CAP:
+                    self._cmds.popleft()
+                    self.stats.on_shed()
+            else:
+                self._probes.append(op)
+        self._wake.set()
+
+    def _next_seq(self) -> int:
         self._seq = (self._seq + 1) & 0xFF
-        item = (self._seq, proto.encode_frame(self._seq, op, payload), time.monotonic(), int(op))
-        try:
-            self._out.put_nowait(item)
-        except queue.Full:
-            try:
-                self._out.get_nowait()          # shed the stalest command
-                self.stats.on_shed()
-                self._out.put_nowait(item)
-            except queue.Empty:
-                pass
+        return self._seq
 
     def stop(self) -> None:
         self._running = False
@@ -442,41 +560,110 @@ class SerialLink(QThread):
     # ── I/O loop ──────────────────────────────────────────────────────────
 
     def _pump(self) -> None:
-        assert self._port is not None
-        last_ping = 0.0
-        last_status = 0.0
+        """
+        One loop, never blocking on the port: write probes, keep one output
+        command in flight (sent, then resent every `_RETRY_S` until its ACK),
+        read whatever has arrived, and otherwise sleep until `send()` wakes it
+        or 2 ms pass.
+        """
+        port = self._port
+        assert port is not None
+        port.timeout = 0                        # non-blocking reads from here on
+        last_ping = last_status = 0.0
         info = self._device
         wants_status = info is not None and (info.fw_major, info.fw_minor) >= proto.STATUS_MIN_FW
+        inflight: _Cmd | None = None
+        probes_out: dict[int, float] = {}       # seq → monotonic time sent
+        with self._lock:                        # a new connection starts clean:
+            self._cmds.clear()                  # the service replays the whole
+            self._probes.clear()                # intent on `connected`
         while self._running:
             try:
+                busy = False
                 now = time.monotonic()
-                if now - last_ping >= proto.HEARTBEAT_S:
+                if self.heartbeat and now - last_ping >= proto.HEARTBEAT_S:
                     last_ping = now
-                    self.send(Op.PING)
+                    self._probes.append(Op.PING)
                 if wants_status and now - last_status >= _STATUS_EVERY_S:
                     last_status = now
-                    self.send(Op.STATUS)
+                    self._probes.append(Op.STATUS)
 
-                while True:
-                    try:
-                        seq, data, queued_at, op = self._out.get_nowait()
-                    except queue.Empty:
-                        break
-                    self._port.write(data)
-                    self.stats.on_write(seq, len(data), time.monotonic() - queued_at, op)
+                # Probes: once each.
+                with self._lock:
+                    probes = list(self._probes)
+                    self._probes.clear()
+                for op in probes:
+                    seq = self._next_seq()
+                    data = proto.encode_frame(seq, op)
+                    port.write(data)
+                    self.stats.on_write(seq, len(data), -1, op)
+                    probes_out[seq] = now
+                    busy = True
 
-                chunk = self._port.read(256)
+                # Output commands: one in flight, resent until ACKed.
+                if inflight is not None:
+                    with self._lock:
+                        stale = any(_supersedes(c.key, inflight.key) for c in self._cmds)
+                    if stale:                   # a newer one for the same setting
+                        self.stats.on_superseded()   # is waiting: stop resending
+                        inflight = None
+                    elif now >= inflight.retry_at:
+                        if inflight.tries >= _MAX_TRIES:
+                            self.stats.on_failed()
+                            inflight = None
+                        else:
+                            self.stats.on_retry()
+                            self._transmit(port, inflight)
+                            busy = True
+                if inflight is None:
+                    with self._lock:
+                        inflight = self._cmds.popleft() if self._cmds else None
+                    if inflight is not None:
+                        self._transmit(port, inflight)
+                        busy = True
+
+                waiting = port.in_waiting
+                chunk = port.read(waiting) if waiting else b""
                 if chunk:
+                    busy = True
                     for seq, op, payload in self._reader.feed(chunk):
                         self.stats.on_frame(seq, int(op), bytes(payload))
+                        if inflight is not None and seq == inflight.seq:
+                            if op == Op.ACK:
+                                self.stats.on_delivered(inflight.queued_at)
+                                inflight = None
+                            elif op == Op.NAK:
+                                inflight.retry_at = 0.0     # resend now
+                        probes_out.pop(seq, None)
                         if op in (Op.NAK, Op.LOG, Op.STATUS_REPLY):
                             self.telemetry_changed.emit()
                         self.frame.emit(int(op), bytes(payload))
-                else:
-                    self.msleep(5)
+
+                lost = [k for k, t in probes_out.items() if now - t > _PROBE_TIMEOUT_S]
+                for k in lost:
+                    del probes_out[k]
+                if lost:
+                    self.stats.on_probe_lost(len(lost))
+
+                if not busy:
+                    # Until something is queued, or the in-flight command is
+                    # due a resend, or 2 ms pass for the next read.
+                    self._wake.wait(0.002)
+                    self._wake.clear()
             except Exception as exc:
                 self._close(str(exc))
                 return
+
+    def _transmit(self, port, cmd: "_Cmd") -> None:
+        cmd.seq = self._next_seq()
+        cmd.tries += 1
+        data = proto.encode_frame(cmd.seq, cmd.op, cmd.payload)
+        port.write(data)
+        # The queue wait is measured once: queued → first on the wire.
+        waited = (time.monotonic() - cmd.queued_at) if cmd.tries == 1 else -1
+        self.stats.on_write(cmd.seq, len(data), waited, cmd.op)
+        cmd.sent_at = time.monotonic()
+        cmd.retry_at = cmd.sent_at + _RETRY_S + random.random() * _RETRY_JITTER_S
 
     def _close(self, reason: str) -> None:
         was_up = self._device is not None
@@ -522,7 +709,8 @@ class MockLink(SerialLink):
         # Behave like a healthy fw 2.5 controller on the counters: written,
         # then answered — an ACK, or for STATUS a plausible telemetry reply.
         self._seq = (self._seq + 1) & 0xFF
-        self.stats.on_write(self._seq, 8 + len(payload), 0.0, int(op))
+        reliable = int(op) in _RELIABLE
+        self.stats.on_write(self._seq, 8 + len(payload), 0.0 if reliable else -1, int(op))
         if self._device is None:
             return
         self._frames += 1
@@ -531,6 +719,8 @@ class MockLink(SerialLink):
             self.telemetry_changed.emit()
         else:
             self.stats.on_frame(self._seq, int(Op.ACK), b"")
+            if reliable:
+                self.stats.on_delivered(time.monotonic())
 
     def _fake_status(self) -> bytes:
         import struct
@@ -566,7 +756,7 @@ class MockLink(SerialLink):
         self.telemetry_changed.emit()
         last = last_status = 0.0
         while self._running:
-            if time.monotonic() - last >= proto.HEARTBEAT_S:
+            if self.heartbeat and time.monotonic() - last >= proto.HEARTBEAT_S:
                 last = time.monotonic()
                 self.send(Op.PING)
             if time.monotonic() - last_status >= _STATUS_EVERY_S:

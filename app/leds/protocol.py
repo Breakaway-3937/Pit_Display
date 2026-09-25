@@ -54,6 +54,7 @@ class Op(IntEnum):
     OFF        = 0x16   # hard blank — distinct from brightness 0 so the
                         # firmware can skip its animation loop entirely
     STATUS     = 0x17   # report telemetry (fw 2.5+; older firmware NAKs it)
+    SET_CAP    = 0x18   # centre %, sides % of the white-look power draw; 0 = off (fw 2.7+)
 
     INFO       = 0x80   # device → host: reply to HELLO
     LOG        = 0x81   # device → host: ascii diagnostic string
@@ -263,12 +264,15 @@ class DeviceStatus:
     cmd_us: float           # last command received -> drawn
     cmd_max_us: float
     rx_bytes: int
+    # Format 2 (fw 2.7+): the centre power budget. None on older firmware.
+    cap_scale: float | None = None      # last scale applied, 1.0 = untouched
+    capped_frames: int | None = None    # frames that needed scaling, since boot
 
 
 def parse_status(payload: bytes) -> DeviceStatus:
-    """STATUS_REPLY payload, format 1 — the layout is documented at `sendStatus()` in the .ino."""
-    if len(payload) < 39 or payload[0] != 1:
-        raise ProtocolError(f"STATUS payload not format 1 ({len(payload)}B)")
+    """STATUS_REPLY payload, format 1 or 2 — the layout is documented at `sendStatus()` in the .ino."""
+    if len(payload) < 39 or payload[0] not in (1, 2) or (payload[0] == 2 and len(payload) < 42):
+        raise ProtocolError(f"STATUS payload not format 1 or 2 ({len(payload)}B)")
     b = payload
 
     def u16(i: int) -> int:
@@ -289,6 +293,8 @@ def parse_status(payload: bytes) -> DeviceStatus:
         gap_max_us=v[9] * TICK_US,
         cmd_us=v[10] * TICK_US, cmd_max_us=v[11] * TICK_US,
         rx_bytes=u32(35),
+        cap_scale=(b[39] / 255) if b[0] >= 2 else None,
+        capped_frames=u16(40) if b[0] >= 2 else None,
     )
 
 

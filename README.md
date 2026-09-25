@@ -38,5 +38,5 @@ No unit tests; these exercise the real thing and exit 0/1.
 | `uv run tools/relay_check.py` | the Nexus relay end to end (`--local` against `wrangler dev`) |
 | `uv run tools/webcast_check.py` | the pit-LAN screens |
 | `uv run tools/upgrade_check.py` | a version change keeps every row a person typed |
-| `uv run tools/led_diag.py` | the LED controller link on real hardware: round trip, queue wait, the controller's own timing and errors |
+| `uv run tools/led_diag.py` | the LED controller link on real hardware: round trip, queue wait, the controller's own timing and errors. `--flash-test` isolates flicker |
 | `uv run tools/eq_check.py` | the equaliser's band display against real tones |
