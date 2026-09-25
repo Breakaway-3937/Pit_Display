@@ -51,9 +51,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import (
     Qt, QEasingCurve, QPropertyAnimation, QRect, QRectF, pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QFont, QPainter
+from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
 
-from app import brand
+from app import brand, paths
 from app.cad_assets import cad_assets
 from app.config import config
 from app.touch import is_touch
@@ -244,8 +244,18 @@ _ABOUT_STATS = [
     ("100%",  "AR FRC Teams Served"),
     ("29+",   "Arkansas Counties"),
 ]
-# TODO(team): swap in real sponsor logos / names.
-_SPONSORS = ["Sponsor", "Sponsor", "Sponsor", "Sponsor"]
+# The sponsor marks, left to right, in the order the team asked for. Each is
+# (file in assets/Sponsor Logos, the ground its artwork was drawn for). A mark
+# is never recoloured or boxed differently to suit the panel; the plate takes
+# the ground the artwork expects instead — the Haas file is the dark-ground
+# version (its white H vanishes on white), the rest are drawn on white.
+SPONSOR_DIR = ("assets", "Sponsor Logos")
+_SPONSORS = [
+    ("HA_Wildcats_ColorNoStroke.jpg", "light"),
+    ("HU Logo.png", "light"),
+    ("Copy of dark background image.png", "dark"),
+    ("Full_Color_DoWSTEM_Logo.jpg", "light"),
+]
 
 
 _Bold = QFont.Weight.Bold
@@ -342,6 +352,38 @@ CAD_STAGE_H  = 648
 # subsystem chips.
 CAD_STAGE_RATIO = CAD_STAGE_H / 1920.0
 SPONSOR_H    = 76
+
+
+class _SponsorMark(QWidget):
+    """
+    One sponsor logo, contain-fitted and centred inside its plate.
+
+    Painted rather than a QLabel pixmap so it rescales with the plate and never
+    stretches. A file that won't load leaves the plate empty rather than
+    showing a filename to the public.
+    """
+
+    PAD = 0.14          # of the plate's height, all round
+
+    def __init__(self, path, parent=None):
+        super().__init__(parent)
+        self._pix = QPixmap(str(path))
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def paintEvent(self, _event):
+        if self._pix.isNull():
+            return
+        r = QRectF(self.rect())
+        pad = r.height() * self.PAD
+        box = r.adjusted(pad, pad, -pad, -pad)
+        if box.width() <= 0 or box.height() <= 0:
+            return
+        s = min(box.width() / self._pix.width(), box.height() / self._pix.height())
+        w, h = self._pix.width() * s, self._pix.height() * s
+        target = QRectF(box.center().x() - w / 2, box.center().y() - h / 2, w, h)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        p.drawPixmap(target, self._pix, QRectF(self._pix.rect()))
 
 
 class _Band(QFrame):
@@ -493,6 +535,7 @@ class InteractiveBoard(PlatePanel):
         self._cards: list[RoundedFrame] = []
         self._chips: list[_SubsystemChip] = []
         self._sponsor_plates: list[RoundedFrame] = []
+        self._sponsor_grounds: dict[RoundedFrame, str] = {}
         self._cad_host: QWidget | None = None
         self._cad_view = None
         self._sheet: "_DetailSheet | None" = None
@@ -814,21 +857,33 @@ class InteractiveBoard(PlatePanel):
         row.setSpacing(18)
         row.addWidget(self._disp("Sponsors", FS_STAT_CAP, _Demi, "faint",
                                  track=120))
-        for _ in _SPONSORS:
-            plate = RoundedFrame(fill=brand.N50, border=None,
+        for filename, ground in _SPONSORS:
+            plate = RoundedFrame(fill=brand.WHITE, border=None,
                                  radius=brand.R_MEDIA)
             plate.setFixedHeight(SPONSOR_H)
             self._sponsor_plates.append(plate)
+            self._sponsor_grounds[plate] = ground
+            self._style_sponsor_plate(plate)
             self._cards.append(plate)
-            lbl = QLabel("LOGO", plate)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet(f"color:{brand.N400}; background:transparent;")
             inner = QVBoxLayout(plate)
             inner.setContentsMargins(0, 0, 0, 0)
-            inner.addWidget(lbl)
-            self._fonts.append((lbl, FS_RAIL, _Demi, None, 110))
+            inner.addWidget(_SponsorMark(paths.resource(*SPONSOR_DIR, filename)))
             row.addWidget(plate, stretch=1)
         return band
+
+    def _style_sponsor_plate(self, plate) -> None:
+        """
+        White under a light-ground mark, carbon under a dark-ground one, on
+        either theme: the JPEGs carry their own white, so any other light
+        fill would show as a box around them. A plate only needs an edge when
+        it matches the panel around it.
+        """
+        if self._sponsor_grounds.get(plate) == "dark":
+            plate.set_fill(brand.CARBON)
+            plate.set_border(brand.CARBON_LINE if self.dark else None)
+        else:
+            plate.set_fill(brand.WHITE)
+            plate.set_border(None if self.dark else brand.N200)
 
     # ── The detail sheet ──────────────────────────────────────────────────
 
@@ -889,8 +944,7 @@ class InteractiveBoard(PlatePanel):
             self._refresh_wordmark()
         for card in self._cards:
             if card in self._sponsor_plates:
-                card.set_fill(brand.N50 if self.dark else brand.WHITE)
-                card.set_border(None if self.dark else brand.N200)
+                self._style_sponsor_plate(card)
                 continue
             if isinstance(card, _CardButton) and card._accent_hex == brand.RED:
                 continue                    # the Act plate is red on both

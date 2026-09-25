@@ -276,6 +276,11 @@ Only deleting a list is admin-gated. Content is the team's: ship it empty.
 1080×1920 portrait, touched by strangers. One scrolling surface:
 identity → CAD → Act 472 → reach → programs → sponsors (the footer, pinned).
 
+- **Sponsors are `_SPONSORS`**: files in `assets/Sponsor Logos/`, in display
+  order, each with the ground its artwork was drawn for. A dark-ground mark
+  gets a carbon plate; never recolour a mark to suit the panel. The spec ships
+  the folder and `--self-check`'s `sponsors` line names any file that's lost.
+
 - **There is one CAD viewer and it moves.** A `QWebEngineView` is a Chromium
   process; `ProjectScreen` lends it to the board (`attach_cad`) and takes it
   back for the full-screen face (`detach_cad`). Never build a second.
@@ -349,11 +354,19 @@ frames (on AVR, `show()` disables interrupts and drops serial bytes). Change
 
 **Measured facts, don't re-guess (2026-09-03 / 09-08):**
 
-- **`LED_TYPE SK6812` (fw 2.7), never WS2812B.** WS2812B timing left the low
-  after each 1-bit at 375 ns, under the SK6812's 450 ns minimum — out of spec
-  on every '1'. With the audio amp's noise, animated looks (30 frames/s, each
-  a chance to misread) flickered on the centre, and a flipped bit in violet's
-  zero W byte shows as a white flash. Static white (sent once per 10 s) hid it.
+- **Every strip write is a chance to flicker; write only what changed (fw
+  2.9).** Flash test, 2026-09-24: steady white drawn once was clean, the same
+  white re-sent ~10×/s (identical bytes, identical power) flickered. That is
+  why the switch positions (one write per 10 s) never showed it and the app
+  did. So `packAndShow()` skips a channel whose bytes match the last write
+  (Fletcher-16, `sentSum`); only boot and the 10 s refresh (`forceShow`) write
+  regardless. Don't add a redraw path that bypasses it.
+- **`LED_TYPE SK6812Spec` (fw 2.9), a custom timing, never FastLED's
+  `SK6812` or `WS2812B`.** FastLED 3.10.5 on AVR rounds its ns table to
+  cycles: WS2812B gives a '1' 875 high / 375 low, SK6812 937 / 312. Both are
+  under the SK6812's 450 ns low minimum (fw 2.7 made it worse, reading the
+  unused legacy AVR table). `TimingSK6812Spec` 375/375/500 gives '0' 375/875,
+  '1' 750/500, all in spec. Read the library, don't trust its comments.
 - **RGBW, 4 bytes/pixel, order RGBW.** Wrong format shows a solid colour as a
   3-pixel green/white/blue pattern while black still works. FastLED's
   `setRgbw()` can't be used on AVR (RAM); `packAndShow()` packs by hand, the
@@ -412,7 +425,8 @@ frames (on AVR, `show()` disables interrupts and drops serial bytes). Change
   landed (resending until STATUS agrees), then four 15 s stages, each changing
   one thing: no redraws at all (heartbeat paused via `SerialLink.heartbeat`),
   one redraw/s, ~10 commands/s, an alert. The stage it flickers in names the
-  cause.
+  cause. On fw 2.8 it flickered in stage 3 (identical redraws); on fw 2.9
+  stage 3 should report ~0 redraws/s.
 - Alerts are overlays (`leds.start_alert/clear_alert`); intent keeps updating
   underneath; the flash is host-driven at 3 Hz.
 - **Known bug:** `SET_PIXELS` is overwritten by SOLID's next render; nothing
@@ -462,8 +476,9 @@ static), queued ~0.2 ms, 0 redraws/s while static.
   in `read()` plus a 5 ms sleep, so a command waits **median 23 ms / p95 59 ms**
   in the host queue against a 1.3 ms round trip. A 2 ms read wait cut that to
   2.5 / 9 ms. Not changed yet: the operator is working on latency.
-- Every PING still sets `dirty`, so a static look redraws once a second (a
-  ~5 ms window where inbound bytes are lost). Also not changed yet.
+- PINGs no longer set `dirty` (fw 2.7), and since fw 2.9 an unchanged frame
+  isn't written at all, so a static look makes no redraws between the 10 s
+  refreshes. STATUS `shows` counts real writes.
 
 Tools: `firmware/pit_probe`, `tools/led_probe.py`, `tools/led_color_check.py`.
 

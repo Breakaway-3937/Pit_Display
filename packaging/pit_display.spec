@@ -43,6 +43,10 @@ datas: list[tuple[str, str]] = []
 datas += tree("assets/fonts")
 datas += tree("assets/cad_viewer")
 datas += tree("assets/logos", optional=True)
+# The pit-front panel's sponsor marks. Required: a bundle without them shows
+# the public four empty plates, and --self-check's `sponsors` line names any
+# that went missing.
+datas += tree("assets/Sponsor Logos")
 # The Nexus API's example payloads: the offline fake feed and what
 # --self-check parses to prove the models still match the spec.
 datas += tree("assets/nexus")

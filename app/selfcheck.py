@@ -170,6 +170,20 @@ def _check_fonts() -> Result:
     return Result("fonts", True, f"{detail}; all three families present")
 
 
+def _check_sponsors() -> Result:
+    # A missing or unreadable mark paints an empty plate on the pit-front
+    # panel and nothing else complains, so name each one.
+    from PyQt6.QtGui import QImageReader
+    from app import paths
+    from app.widgets.interactive_board import SPONSOR_DIR, _SPONSORS
+    bad = [name for name, _ in _SPONSORS
+           if not QImageReader(str(paths.resource(*SPONSOR_DIR, name))).canRead()]
+    if bad:
+        return Result("sponsors", False,
+                      f"missing or unreadable: {', '.join(bad)}", critical=False)
+    return Result("sponsors", True, f"{len(_SPONSORS)} logos readable")
+
+
 def _check_owlet() -> Result:
     try:
         from app.robot import owlet
@@ -691,6 +705,7 @@ def run() -> int:
         init_webcast()
         app.setStyleSheet(dark_qss())
         results.append(_check_fonts())
+        results.append(_check_sponsors())
         results.append(_check_owlet())
         results.append(_check_audio())
         results.append(_check_updates())

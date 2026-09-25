@@ -119,14 +119,31 @@
 // Turn it back on only if the pit starts showing mostly whites and greys.
 #define RGBW_EXTRACT_WHITE 0
 
-// Timing only; the byte layout is ours. SK6812 since fw 2.7 — these ARE
-// SK6812 strips. WS2812B timing (T0H 250 / T1H 875 / 1250 ns) left the low
-// after every 1-bit at 375 ns, under the SK6812's 450 ns minimum: out of
-// spec on every '1', with no noise margin. Under the audio amplifier's noise
-// that showed up as flicker on animated looks — each frame is another
-// chance to misread a bit, and a flipped bit in a violet pixel's zero W byte
-// is a white flash. FastLED's SK6812 timing is 375 / 750 / 1250 ns, all in spec.
-#define LED_TYPE     SK6812
+// Timing only; the byte layout is ours. These are SK6812 strips, whose spec
+// is T0H 300 / T1H 600 / T1L 600 ns, each ±150.
+//
+// NEITHER BUILT-IN FASTLED TIMING IS IN SPEC ON AVR (FastLED 3.10.5, read
+// from the library, fw 2.9). FastLED's AVR driver rounds its nanosecond table
+// to whole 62.5 ns cycles:
+//   WS2812B  250 / 625 / 375  ->  '1' = 875 high, 375 low
+//   SK6812   300 / 600 / 300  ->  '1' = 937 high, 312 low   (fw 2.7, 2.8)
+// Both hold a '1' high too long and low too short (spec min 450 ns). fw 2.7
+// switched to FastLED's SK6812 believing it was 375 / 750 / 1250 — that is
+// the unused legacy table in led_timing_legacy_avr.h — so it made the low
+// shorter, not longer. `SK6812Spec` below is in spec: '0' = 375 high / 875
+// low, '1' = 750 high / 500 low, 1250 ns a bit.
+//
+// Measured 2026-09-24 (tools/led_diag.py --flash-test): steady white, nothing
+// changing, ~10 identical redraws a second flickered; the same look drawn
+// once did not. Every write of a frame is a chance for the strip to misread
+// it, which is why the switch positions (one write per 10 s) never showed it.
+struct TimingSK6812Spec {
+  enum : uint32_t { T1 = 375, T2 = 375, T3 = 500, RESET = 80 };
+};
+template <fl::u8 DATA_PIN, fl::EOrder RGB_ORDER>
+class SK6812Spec
+    : public fl::ClocklessControllerImpl<DATA_PIN, TimingSK6812Spec, RGB_ORDER> {};
+#define LED_TYPE     SK6812Spec
 // RGB, not GRB: the controllers emit our packed bytes verbatim and the
 // channel order is applied during packing. Setting GRB here would reorder
 // bytes that are pixel data to the strip but arbitrary numbers to FastLED.
@@ -344,7 +361,9 @@ const Strip strips[NUM_STRIPS] = {
 };
 
 #define FW_MAJOR 2
-#define FW_MINOR 8   // 2.8: in animated looks the centre holds a steady white work light;
+#define FW_MINOR 9   // 2.9: in-spec SK6812 bit timing; a channel whose bytes have not
+                     //      changed is not re-sent (only the 10 s refresh forces it)
+                     // 2.8: in animated looks the centre holds a steady white work light;
                      //      only the sides animate (constant centre power)
                      // 2.7: redraw only when the picture changes; animations at 30 fps;
                      //      no-host look is a slow violet breathe (EEPROM magic 0xBF);
@@ -1036,12 +1055,36 @@ void capCentrePower(uint8_t *raw, uint16_t nbytes) {
   if (capScaleLast != 255) cappedFrames++;
 }
 
+// ── Only write what changed (fw 2.9) ────────────────────────────────────
+// Re-sending an identical frame is not free on these strips: each write is a
+// chance to misread a bit, and a misread shows as a flash (the flash test's
+// stage 3 flickered on identical redraws alone). So each channel remembers a
+// checksum of the bytes it last sent and a redraw that would send the same
+// bytes again is skipped. That covers every source of a redundant redraw at
+// once — a repeated command, a host resend, the steady centre of an animated
+// look — without each having to know. `forceShow` (boot, the 10 s refresh)
+// writes regardless, so a strip that did glitch still heals.
+//
+// Fletcher-16: position-sensitive, ~370 bytes in well under a millisecond,
+// interrupts on. A collision skips one real change; the next change or the
+// refresh draws it.
+uint16_t sentSum[NUM_STRIPS];
+bool     sentValid[NUM_STRIPS] = {};
+bool     forceShow = true;
+
+static uint16_t wireSum(const uint8_t *raw, uint16_t n) {
+  uint8_t a = 0, b = 0;
+  for (uint16_t i = 0; i < n; i++) { a += raw[i]; b += a; }
+  return ((uint16_t)b << 8) | a;
+}
+
 // `wByte` is the strip's fourth channel — the dedicated white die, which
 // nothing in leds[] can express because a CRGB has only three components.
 // Effects and host colours pass 0 and it costs them nothing; the manual
 // WHITE override passes 255 and gets a real white rather than R+G+B fired
 // together, which on these strips is tinted and three times the current.
-void packAndShow(uint8_t ctrl, const CRGB *src, uint16_t npx,
+// Returns whether the channel was actually written.
+bool packAndShow(uint8_t ctrl, const CRGB *src, uint16_t npx,
                  uint8_t bright, uint8_t wByte) {
   uint16_t nbytes = (uint16_t)npx * 4;
   uint16_t nslots = (nbytes + 2) / 3;
@@ -1076,7 +1119,14 @@ void packAndShow(uint8_t ctrl, const CRGB *src, uint16_t npx,
 
   if (ctrl == 0) capCentrePower(raw, (uint16_t)npx * 4);
   else capPower(raw, (uint16_t)npx * 4, SIDES_POWER_BUDGET, capPctSides);
+
+  // Skip the write when this channel would get the bytes it already has.
+  const uint16_t sum = wireSum(raw, nslots * 3);
+  if (!forceShow && sentValid[ctrl] && sum == sentSum[ctrl]) return false;
+  sentSum[ctrl] = sum;
+  sentValid[ctrl] = true;
   FastLED[ctrl].showLeds(255);
+  return true;
 }
 
 // `wByte` is the override's white (the WHITE switch position); `hostW`
@@ -1084,20 +1134,23 @@ void packAndShow(uint8_t ctrl, const CRGB *src, uint16_t npx,
 // centre run from the W die while the sides carry a colour. `centreWork`
 // puts the centre on the W die at full (before brightness and the power
 // budget) — the steady work light every animated look keeps down the middle.
-void showAll(uint8_t bright, uint8_t wByte, bool hostW, bool centreWork) {
+// Returns whether either channel was actually written.
+bool showAll(uint8_t bright, uint8_t wByte, bool hostW, bool centreWork) {
   uint8_t wc = wByte, ws = wByte;
   if (hostW) {
     if (state.w[SEG_CENTER] > wc) wc = state.w[SEG_CENTER];
     if (state.w[SEG_SIDES]  > ws) ws = state.w[SEG_SIDES];
   }
   if (centreWork) wc = 255;
-  packAndShow(0, &leds[strips[SEG_CENTER].start], CENTER_COUNT, bright, wc);
+  bool wrote = packAndShow(0, &leds[strips[SEG_CENTER].start], CENTER_COUNT, bright, wc);
   // Drain the port between the two channel writes. Each show holds
   // interrupts off for milliseconds and the AVR's UART keeps only two bytes
   // without its ISR, so the gap between strips is the only chance an inbound
   // frame gets. Halving the blackout roughly halves the loss.
   readSerial();
-  packAndShow(1, &leds[strips[SEG_SIDES].start],  SIDES_COUNT,  bright, ws);
+  wrote |= packAndShow(1, &leds[strips[SEG_SIDES].start], SIDES_COUNT, bright, ws);
+  forceShow = false;
+  return wrote;
 }
 
 // Whether this mode's output changes from frame to frame. A static mode that
@@ -1170,10 +1223,15 @@ void loop() {
     dirty = true;
   }
 
-  // A static picture is re-sent now and then anyway, so a strip that
-  // glitched (a static discharge, a loose connector) recovers by itself.
-  static unsigned long lastShow = 0;
-  if (!dirty && millis() - lastShow >= REFRESH_MS) dirty = true;
+  // Both channels are re-sent every REFRESH_MS regardless, so a strip that
+  // glitched (a static discharge, a loose connector) recovers by itself. On
+  // its own timer, not "since the last write": in an animated look the sides
+  // write every frame and the unchanging centre would otherwise never refresh.
+  static unsigned long lastRefresh = 0;
+  if (millis() - lastRefresh >= REFRESH_MS) {
+    lastRefresh = millis();
+    dirty = forceShow = true;
+  }
 
   static unsigned long lastFrame = 0;
   unsigned long now = millis();
@@ -1250,13 +1308,16 @@ void loop() {
     // alert flashing and "late" commands looked like before 2.6.
     dirty = false;
     uint16_t t0 = TCNT1;
-    showAll(outBright, outWhite, hostWhite, centreWork);
+    const bool wrote = showAll(outBright, outWhite, hostWhite, centreWork);
     uint16_t t1 = TCNT1;
-    lastShow = millis();
-    uint16_t dt = t1 - t0;
-    tele.shows++;
-    tele.showTicksLast = dt;
-    if (dt > tele.showTicksMax) tele.showTicksMax = dt;
+    // `shows` counts real strip writes, so "redraws/s" in Telemetry and the
+    // flash test is what reached the strips, not how often we checked.
+    if (wrote) {
+      uint16_t dt = t1 - t0;
+      tele.shows++;
+      tele.showTicksLast = dt;
+      if (dt > tele.showTicksMax) tele.showTicksMax = dt;
+    }
     if (cmdPending) {
       uint16_t lat = t1 - cmdTick;
       tele.cmdTicksLast = lat;
