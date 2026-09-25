@@ -109,19 +109,49 @@ def get_preset(name: str) -> EQPreset | None:
     return _row_to_preset(row) if row else None
 
 
-def save_preset(preset: EQPreset) -> None:
-    """Upsert. Built-ins are protected — saving over one creates a copy."""
-    name = preset.name
-    if name in BUILT_IN_NAMES:
-        name = f"{name} (edited)"
+def find_user_preset(name: str) -> str | None:
+    """
+    The saved (non-built-in) preset this name refers to, ignoring case.
+
+    Names are shown in capitals on the chips, so "Pit Display" and "PIT
+    DISPLAY" look identical to an operator and must be the same preset. The
+    column itself is case-sensitive (and older installs may already hold two
+    such rows); the oldest one wins.
+    """
+    row = db.fetchone(
+        """SELECT name FROM eq_presets
+           WHERE name = ? COLLATE NOCASE AND built_in = 0
+           ORDER BY id LIMIT 1""",
+        (name.strip(),))
+    return row["name"] if row else None
+
+
+def stored_name(name: str) -> str:
+    """The name `save_preset(name)` will actually write under."""
+    name = name.strip()
+    builtin = next((b for b in BUILT_IN_NAMES if b.casefold() == name.casefold()), None)
+    if builtin is not None:
+        name = f"{builtin} (edited)"
+    return find_user_preset(name) or name
+
+
+def save_preset(preset: EQPreset) -> str:
+    """
+    Save, overwriting a saved preset of the same name (ignoring case).
+    Built-ins are protected — saving over one creates "<name> (edited)".
+    Returns the name it was stored under.
+    """
+    name = stored_name(preset.name)
+    gains = ",".join(str(g) for g in preset.clamped())
     with db.transaction():
         db.execute(
             """INSERT INTO eq_presets (name, preamp, gains, built_in)
                VALUES (?, ?, ?, 0)
                ON CONFLICT(name) DO UPDATE SET preamp = excluded.preamp,
                                                gains  = excluded.gains""",
-            (name, preset.preamp, ",".join(str(g) for g in preset.clamped())),
+            (name, preset.preamp, gains),
         )
+    return name
 
 
 def delete_preset(name: str) -> bool:

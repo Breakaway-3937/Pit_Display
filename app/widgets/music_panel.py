@@ -12,7 +12,7 @@ from pathlib import Path
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLineEdit, QListWidget,
-    QListWidgetItem, QSizePolicy, QSlider, QVBoxLayout, QWidget,
+    QListWidgetItem, QMessageBox, QSizePolicy, QSlider, QVBoxLayout, QWidget,
 )
 
 from app import brand
@@ -320,6 +320,12 @@ class MusicPanel(QWidget):
                                 accent=config.active_team.primary_color)
         save_eq.clicked.connect(self._on_save_eq)
         eq_actions.addWidget(save_eq)
+        # Only while a preset the team saved is selected; built-ins can't go.
+        self._delete_eq = RoundedButton("Delete preset", variant="secondary",
+                                        accent=config.active_team.primary_color)
+        self._delete_eq.clicked.connect(self._on_delete_eq)
+        self._delete_eq.setVisible(False)
+        eq_actions.addWidget(self._delete_eq)
         eq_actions.addStretch(1)
         root.addLayout(eq_actions)
         root.addSpacing(10)
@@ -516,9 +522,32 @@ class MusicPanel(QWidget):
             music.set_preamp(float(value))
 
     def _on_save_eq(self):
-        name, ok = QInputDialog.getText(self, "Save EQ preset", "Preset name:")
-        if ok and name.strip():
-            music.save_eq_as(name.strip())
+        # Start from the selected preset's name, so saving again overwrites it.
+        current = music.eq_preset
+        start = "" if current in eq_module.BUILT_IN_NAMES else current
+        name, ok = QInputDialog.getText(self, "Save EQ preset", "Preset name:",
+                                        QLineEdit.EchoMode.Normal, start)
+        name = name.strip()
+        if not ok or not name:
+            return
+        existing = eq_module.find_user_preset(name)
+        if existing is not None:
+            answer = QMessageBox.question(
+                self, "Overwrite preset?",
+                f"“{existing}” already exists. Replace it with the current curve?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        music.save_eq_as(name)
+
+    def _on_delete_eq(self):
+        name = music.eq_preset
+        if not name or name in eq_module.BUILT_IN_NAMES:
+            return
+        answer = QMessageBox.question(
+            self, "Delete preset?",
+            f"Delete the EQ preset “{name}”? The music keeps its current sound.")
+        if answer == QMessageBox.StandardButton.Yes:
+            music.delete_eq_preset(name)
 
     def _on_follow_mode(self, on: bool):
         if not self._syncing:
@@ -535,6 +564,7 @@ class MusicPanel(QWidget):
                 btn.set_active(name == music.eq_preset)
             match = next((p for p in presets if p.name == music.eq_preset), None)
             self._eq_desc.setText(match.description if match else "")
+            self._delete_eq.setVisible(match is not None and not match.built_in)
 
             self._eq_field.set_gains(music.eq_gains)
             preamp = int(round(music.eq_preamp))

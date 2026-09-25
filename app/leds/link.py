@@ -70,7 +70,7 @@ _BACKOFF = [1.0, 2.0, 3.0, 5.0, 8.0]   # seconds between reconnect attempts
 # the service's resync (it compares the controller's STATUS against intent)
 # will put the look back once it recovers.
 _RELIABLE = frozenset({Op.SET_MODE, Op.SET_COLOR, Op.SET_BRIGHT,
-                       Op.SET_PIXELS, Op.SAVE, Op.OFF, Op.SET_CAP})
+                       Op.SET_PIXELS, Op.SAVE, Op.OFF, Op.SET_CAP, Op.SET_FPS})
 _RETRY_S = 0.012
 # …plus up to this much random delay. A fixed interval falls into step with
 # the firmware's frame period and lands in the same deaf window over and over
@@ -338,7 +338,7 @@ def _key(op: int, payload: bytes):
     """
     if op == Op.SET_COLOR and payload:
         return ("color", payload[0])          # segment, or ALL_SEGMENTS
-    if op in (Op.SET_MODE, Op.SET_BRIGHT, Op.OFF, Op.SET_CAP):
+    if op in (Op.SET_MODE, Op.SET_BRIGHT, Op.OFF, Op.SET_CAP, Op.SET_FPS):
         return (op,)
     return None
 

@@ -55,6 +55,7 @@ class Op(IntEnum):
                         # firmware can skip its animation loop entirely
     STATUS     = 0x17   # report telemetry (fw 2.5+; older firmware NAKs it)
     SET_CAP    = 0x18   # centre %, sides % of the white-look power draw; 0 = off (fw 2.7+)
+    SET_FPS    = 0x19   # animation frames per second, 1..30 (fw 2.13+); RAM only
 
     INFO       = 0x80   # device → host: reply to HELLO
     LOG        = 0x81   # device → host: ascii diagnostic string

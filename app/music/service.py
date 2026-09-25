@@ -384,13 +384,22 @@ class _MusicService(QObject):
         self._push_eq()
         self.eq_changed.emit()
 
-    def save_eq_as(self, name: str) -> None:
-        eq_module.save_preset(
+    def save_eq_as(self, name: str) -> str:
+        """Save the live curve; an existing saved preset of that name is overwritten."""
+        self._eq_preset = eq_module.save_preset(
             eq_module.EQPreset(name, self._eq_preamp, list(self._eq_gains))
         )
-        self._eq_preset = name if name not in eq_module.BUILT_IN_NAMES \
-            else f"{name} (edited)"
         self.eq_changed.emit()
+        return self._eq_preset
+
+    def delete_eq_preset(self, name: str) -> bool:
+        """Remove a saved preset. Built-ins can't be. The live curve keeps playing."""
+        if not eq_module.delete_preset(name):
+            return False
+        if self._eq_preset == name:
+            self._eq_preset = ""
+        self.eq_changed.emit()
+        return True
 
     def _push_eq(self) -> bool:
         return self._engine.set_equalizer(self._eq_preamp, self._eq_gains)

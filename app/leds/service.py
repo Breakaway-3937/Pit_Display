@@ -17,11 +17,12 @@ was. The resting intent is never touched, so a queue alert that lands in the
 middle of judges mode ends with judges mode, and a reconnect during an alert
 replays the alert rather than the look underneath it.
 
-**The flash is host-driven.** The firmware's ALERT mode flashes every segment,
-and the queue alert wants the centre run steady while the sides flash — so
-the app holds the controller in SOLID and toggles the sides' colour itself,
-three times a second. A SET_COLOR is four bytes and a redraw is one show;
-the serial trouble this subsystem has had was frames at 60 Hz, not at 3.
+**Every animation runs on the controller, the alert flash included (fw
+2.11).** The app sends an alert's colours once and puts the controller in
+ALERT, which flashes the sides and holds the centre steady on-board; the
+steady part is SOLID. The app used to toggle the sides' colour itself three
+times a second, so every lost or resent command showed as a stutter in the
+flash.
 
 Usage anywhere:
     from app.leds import leds
@@ -43,10 +44,9 @@ from app.leds.protocol import (
     hex_to_rgb, payload_brightness, payload_color, payload_mode, rgb_to_hex,
 )
 
-# The alert flash: 1.5 Hz, so a toggle every 333 ms. Gentle on the serial
-# link — anything much faster and the firmware's show() blackouts start
-# eating the very frames that drive it.
-ALERT_FLASH_MS = 333
+# The alert flash's speed byte for the firmware's ALERT mode: 32..63 gives
+# ~264 ms on, ~264 ms off (see render() in pit_leds.ino).
+ALERT_SPEED = 32
 ALERT_BRIGHTNESS = 200        # the firmware's MAX_BRIGHTNESS; an alert is the
                               # one moment full output is the point
 
@@ -61,9 +61,10 @@ class Alert:
 
     `sides` / `centre` are brand hexes or None (leave that segment dark);
     `centre_white` puts the centre run on the white die instead — the only
-    real white these strips have. `flash_s` is how long the sides flash, then
-    the look sits lit for `steady_s`; after that `hold` keeps it up until
-    `clear_alert()`, and False lets the resting look back by itself.
+    real white these strips have. `flash_s` is how long the sides flash (the
+    centre never does), then the look sits lit for `steady_s`; after that
+    `hold` keeps it up until `clear_alert()`, and False lets the resting look
+    back by itself.
     """
     sides: str | None
     centre: str | None = None
@@ -71,7 +72,6 @@ class Alert:
     flash_s: float = 2.0
     steady_s: float = 1.0
     hold: bool = False
-    flash_centre: bool = False
     label: str = ""
 
 
@@ -108,10 +108,7 @@ class _LEDService(QObject):
         self._status = "Starting…"
 
         self._alert: Alert | None = None
-        self._alert_on = False           # which half of the flash we are in
-        self._flash_timer = QTimer(self)
-        self._flash_timer.setInterval(ALERT_FLASH_MS)
-        self._flash_timer.timeout.connect(self._flash_tick)
+        self._flashing = False           # in the flash part of the alert
         self._settle_timer = QTimer(self)
         self._settle_timer.setSingleShot(True)
         self._settle_timer.timeout.connect(self._settle)
@@ -396,9 +393,8 @@ class _LEDService(QObject):
             return
         self._release_timer.stop()
         self._alert = alert
-        self._alert_on = True
-        self._push_alert(flash_phase=True)
-        self._flash_timer.start()
+        self._flashing = True
+        self._push_alert()
         self._settle_timer.start(int(max(0.0, alert.flash_s) * 1000))
         self.state_changed.emit()
 
@@ -406,62 +402,48 @@ class _LEDService(QObject):
         """Back to the resting look, exactly as it was."""
         if self._alert is None:
             return
-        self._flash_timer.stop()
         self._settle_timer.stop()
         self._release_timer.stop()
         self._alert = None
+        self._flashing = False
         self._push_all()
         self.state_changed.emit()
 
-    def _segment_payloads(self, alert: Alert, sides_lit: bool,
-                          centre_lit: bool) -> list[bytes]:
-        """The two SET_COLOR payloads for one frame of the alert."""
+    def _segment_payloads(self, alert: Alert) -> list[bytes]:
+        """The two SET_COLOR payloads for the alert: sides, then centre."""
         black = (0, 0, 0)
-        sides = (self._wire_rgb(alert.sides) if alert.sides and sides_lit
-                 else black)
+        sides = self._wire_rgb(alert.sides) if alert.sides else black
         if alert.centre_white:
-            centre_rgb, white = black, (255 if centre_lit else 0)
+            centre_rgb, white = black, 255
         else:
-            centre_rgb = (self._wire_rgb(alert.centre)
-                          if alert.centre and centre_lit else black)
+            centre_rgb = self._wire_rgb(alert.centre) if alert.centre else black
             white = 0
         return [payload_color(sides, SEG_SIDES, 0),
                 payload_color(centre_rgb, SEG_CENTER, white)]
 
-    def _push_alert(self, flash_phase: bool) -> None:
-        """Replay the alert in full: brightness, both colours, SOLID."""
+    def _push_alert(self) -> None:
+        """
+        Replay the alert in full: brightness, both colours, then the mode —
+        ALERT while flashing (the controller does the flashing), SOLID after.
+        """
         if self._device is None or not self._enabled or self._alert is None:
             return
-        a = self._alert
-        lit = self._alert_on or not flash_phase
-        centre_lit = lit if a.flash_centre else True
         self._link.send(Op.SET_BRIGHT, payload_brightness(ALERT_BRIGHTNESS))
-        for payload in self._segment_payloads(a, lit, centre_lit):
+        for payload in self._segment_payloads(self._alert):
             self._link.send(Op.SET_COLOR, payload)
-        self._link.send(Op.SET_MODE, payload_mode(Mode.SOLID, self._speed))
-
-    def _flash_tick(self) -> None:
-        if self._alert is None or self._device is None or not self._enabled:
-            return
-        self._alert_on = not self._alert_on
-        a = self._alert
-        centre_lit = self._alert_on if a.flash_centre else True
-        payloads = self._segment_payloads(a, self._alert_on, centre_lit)
-        # A steady centre was set when the alert started; only resend what moves.
-        for payload in (payloads if a.flash_centre else payloads[:1]):
-            self._link.send(Op.SET_COLOR, payload)
+        mode = Mode.ALERT if self._flashing else Mode.SOLID
+        self._link.send(Op.SET_MODE, payload_mode(mode, ALERT_SPEED))
 
     def _settle(self) -> None:
         """The flash is over: sit lit for `steady_s`, then hold or let go."""
-        self._flash_timer.stop()
         a = self._alert
         if a is None:
             return
+        self._flashing = False
         if not a.hold and a.steady_s <= 0:
             self.clear_alert()
             return
-        self._alert_on = True
-        self._push_alert(flash_phase=False)
+        self._send(Op.SET_MODE, payload_mode(Mode.SOLID, ALERT_SPEED))
         if not a.hold:
             self._release_timer.start(int(a.steady_s * 1000))
 
@@ -481,7 +463,7 @@ class _LEDService(QObject):
         if self._alert is not None:
             # An alert outranks the resting look for as long as it is up; a
             # reconnect mid-alert comes back into the alert, not under it.
-            self._push_alert(flash_phase=self._flash_timer.isActive())
+            self._push_alert()
             return
         self._link.send(Op.SET_BRIGHT, payload_brightness(self._brightness))
         # W is always explicit — 255 for the white look, 0 for a colour — so

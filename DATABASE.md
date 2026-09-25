@@ -154,6 +154,12 @@ Always read and written as a complete set of ten and never queried per band, so
 a column beats a child table here. `built_in = 1` rows are protected — saving
 over one forks a copy named `"<name> (edited)"`.
 
+**Names are matched ignoring case** (`find_user_preset()`, `COLLATE NOCASE`,
+oldest row wins), because the chips show them in capitals and "Pit Display" /
+"PIT DISPLAY" look like one preset. The `UNIQUE` column itself is still
+case-sensitive, so older installs can hold such pairs; saving updates the
+oldest and the panel's Delete removes the other.
+
 #### `checklist` / `checklist_item`
 The pit checklists shown on the overhead screens. Written and ticked from
 Control → (a presentation screen) → Checklist; read by `ChecklistOverlay`.

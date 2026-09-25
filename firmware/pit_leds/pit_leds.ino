@@ -361,7 +361,15 @@ const Strip strips[NUM_STRIPS] = {
 };
 
 #define FW_MAJOR 2
-#define FW_MINOR 10  // 2.10: no-host look is the violet sparkle again, over the WHOLE pit,
+#define FW_MINOR 14  // 2.14: back to 30 fps by default — 15 read as choppy
+                     // 2.13: frame rate live-tunable with OP_SET_FPS; animation speed
+                     //       follows the clock, not the frame count
+                     // 2.12: every animation runs on the centre too — the 2.8 "centre holds
+                     //       the white work light" rule is gone
+                     // 2.11: ALERT flashes the sides on-board (the host no longer toggles
+                     //       colours), centre steady; a mode change restarts the animation;
+                     //       animated looks draw only on their frame tick
+                     // 2.10: no-host look is the violet sparkle again, over the WHOLE pit,
                      //       centre included (EEPROM magic 0xC0)
                      // 2.9: in-spec SK6812 bit timing; a channel whose bytes have not
                      //      changed is not re-sent (only the 10 s refresh forces it)
@@ -393,6 +401,7 @@ enum : uint8_t {
   OP_OFF        = 0x16,
   OP_STATUS     = 0x17,   // host → device: report telemetry (fw 2.5+)
   OP_SET_CAP    = 0x18,   // centre %, sides % of the white-look draw (fw 2.7+); 0 = off
+  OP_SET_FPS    = 0x19,   // animation frames per second, 1..30 (fw 2.13+); RAM only
   OP_INFO       = 0x80,
   OP_LOG        = 0x81,
   OP_STATUS_REPLY = 0x82   // device → host: the telemetry, see sendStatus()
@@ -404,10 +413,16 @@ enum : uint8_t {
 };
 
 static const uint16_t WATCHDOG_MS = 5000;
-// Animation frame period, and how many 60 fps steps each frame advances so
-// the visible speed is unchanged. See loop().
-static const uint8_t  ANIM_FRAME_MS = 33;
-static const uint8_t  ANIM_STEP     = 2;
+// Animation frames per second. Every frame is one write of both strip runs,
+// and each write is a chance for the data line to garble it (a one-frame band
+// of white / green / red — see CLAUDE.md), so fewer frames means fewer
+// glitches but choppier motion. 15 was tried in 2.13 and read as choppy; 30
+// is smooth. OP_SET_FPS changes it live (RAM only)
+// so the effect of the write rate can be judged by eye; a reboot returns
+// here. Animation SPEED does not depend on it: the phase advances by the
+// time elapsed (see loop()), so a lower rate means bigger steps, not slower.
+static const uint8_t  ANIM_FPS_DEFAULT = 30;
+static const uint8_t  ANIM_FPS_MAX     = 30;
 // A static picture is redrawn at least this often, to heal a glitched strip.
 static const uint16_t REFRESH_MS    = 10000;
 static const uint8_t  RX_MAX      = 200;
@@ -729,6 +744,9 @@ void loadState() {
 // including WHITE and RED. The manual override suppresses the *output*, not
 // the conversation: flick back to the middle and the pit is already showing
 // what the app has been asking for, with no round trip and no stale frame.
+extern uint8_t animStep, chasePos;
+extern uint16_t animFrameMs;
+
 void handleFrame(uint8_t *body, uint8_t len) {
   if (len < 3) return;
   uint8_t expected = crc8(body, len - 1);
@@ -770,7 +788,12 @@ void handleFrame(uint8_t *body, uint8_t len) {
       return;
 
     case OP_SET_MODE:
-      if (plen >= 2) { state.mode = p[0]; state.speed = p[1]; blanked = false; }
+      if (plen >= 2) {
+        // A new mode starts from its first frame: an alert opens lit, a wipe
+        // opens from the centre. Re-sending the same mode changes nothing.
+        if (p[0] != state.mode) { animStep = 0; chasePos = 0; }
+        state.mode = p[0]; state.speed = p[1]; blanked = false;
+      }
       break;
 
     case OP_SET_COLOR: {
@@ -821,6 +844,13 @@ void handleFrame(uint8_t *body, uint8_t len) {
       if (plen >= 2) {
         capPctCentre = p[0] > 100 ? 100 : p[0];
         capPctSides  = p[1] > 100 ? 100 : p[1];
+      }
+      break;
+
+    case OP_SET_FPS:
+      if (plen >= 1) {
+        uint8_t fps = p[0] < 1 ? 1 : (p[0] > ANIM_FPS_MAX ? ANIM_FPS_MAX : p[0]);
+        animFrameMs = 1000 / fps;
       }
       break;
 
@@ -938,6 +968,18 @@ void pollSwitch() {
 // ─────────────────────────────────────────────────────────────────────────
 uint8_t animStep = 0;
 uint8_t chasePos = 0;
+uint16_t animFrameMs = 1000 / ANIM_FPS_DEFAULT;
+// How many 60-per-second ticks the current frame covers — the unit every
+// effect's speed and fade was tuned in. Set by loop() each frame.
+uint8_t animTicks = 1;
+
+// The fade that `base` applied once per 60 fps tick amounts to over `ticks`
+// of them: 1 - (1 - base/256)^ticks, so a tail lasts as long at any rate.
+static uint8_t fadeOver(uint8_t base, uint8_t ticks) {
+  uint16_t keep = 256;
+  for (uint8_t i = 0; i < ticks; i++) keep = (keep * (256 - base)) >> 8;
+  return keep >= 256 ? 0 : (uint8_t)(255 - keep);
+}
 
 // How far the effect spreads across the pit, in phase counts out of 255.
 // 128 is half a cycle from centre to the far ends. Lower reads as a gentle
@@ -949,13 +991,16 @@ static const uint8_t CHASE_WIDTH    = 14;   // half-width of the running dot,
 
 void render() {
   // Modes with a persistence tail fade the buffer instead of rewriting it.
-  if (state.mode == MODE_CHASE)   fadeToBlackBy(leds, TOTAL_LEDS, 73);   // = 40 twice, 30 fps
+  // Tuned per 60 fps tick (chase fade 40; sparkle fade 24, a 60/256 chance of
+  // a twinkle) and scaled to however many ticks this frame covers, so the
+  // tail and the density look the same at any frame rate.
+  if (state.mode == MODE_CHASE)
+    fadeToBlackBy(leds, TOTAL_LEDS, fadeOver(40, animTicks));
   if (state.mode == MODE_SPARKLE) {
-    // Tuned per frame, at 30 fps: the same density and tail as 60 fps with 24
-    // and 60 — (1 - 24/256)^2 is about 1 - 46/256.
-    fadeToBlackBy(leds, TOTAL_LEDS, 46);
+    fadeToBlackBy(leds, TOTAL_LEDS, fadeOver(24, animTicks));
     // No geometry: a twinkle is a twinkle wherever it lands.
-    if (random8() < 120) {
+    for (uint8_t t = 0; t < animTicks; t++) {
+      if (random8() >= 60) continue;
       uint16_t i = random16(TOTAL_LEDS);
       uint8_t s = stripOf(i);
       leds[i] = CRGB(state.r[s], state.g[s], state.b[s]);
@@ -1011,7 +1056,11 @@ void render() {
           break;
 
         case MODE_ALERT:
-          px[i] = (animStep & 0x20) ? base : CRGB::Black;
+          // The sides flash; the centre holds its colour (and the host's W,
+          // see loop()) — the queue alert's look, run entirely on-board. Lit
+          // first: SET_MODE restarts animStep at 0. At speed 32..63 the
+          // phase moves 4 a frame, so each half is 8 frames, ~264 ms.
+          px[i] = (s == SEG_CENTER || !(animStep & 0x20)) ? base : CRGB::Black;
           break;
 
         case MODE_OFF:
@@ -1137,17 +1186,14 @@ bool packAndShow(uint8_t ctrl, const CRGB *src, uint16_t npx,
 
 // `wByte` is the override's white (the WHITE switch position); `hostW`
 // adds the host's per-segment white on top of it, so an alert can light the
-// centre run from the W die while the sides carry a colour. `centreWork`
-// puts the centre on the W die at full (before brightness and the power
-// budget) — the steady work light every animated look keeps down the middle.
+// centre run from the W die while the sides carry a colour.
 // Returns whether either channel was actually written.
-bool showAll(uint8_t bright, uint8_t wByte, bool hostW, bool centreWork) {
+bool showAll(uint8_t bright, uint8_t wByte, bool hostW) {
   uint8_t wc = wByte, ws = wByte;
   if (hostW) {
     if (state.w[SEG_CENTER] > wc) wc = state.w[SEG_CENTER];
     if (state.w[SEG_SIDES]  > ws) ws = state.w[SEG_SIDES];
   }
-  if (centreWork) wc = 255;
   bool wrote = packAndShow(0, &leds[strips[SEG_CENTER].start], CENTER_COUNT, bright, wc);
   // Drain the port between the two channel writes. Each show holds
   // interrupts off for milliseconds and the AVR's UART keeps only two bytes
@@ -1244,26 +1290,36 @@ void loop() {
   bool animating = (swPos == SW_HOST) && !blanked && modeAnimates(state.mode);
   // Two reasons to draw: the picture changed (draw now — no waiting for a
   // frame tick, so a command is visible within one strip write), or an
-  // animation is due its next frame. Animations run at ANIM_FRAME_MS, not
-  // 60 fps: every strip write leaves the UART deaf for ~8 ms, and at 60 fps
-  // that was half of all time — about half of every command lost. 30 fps
-  // halves the deafness, and a breathe or a chase looks the same.
-  bool animDue = animating && (now - lastFrame >= ANIM_FRAME_MS);
-  if (dirty || animDue) {
+  // animation is due its next frame (every animFrameMs, 15 fps by default).
+  bool animDue = animating && (now - lastFrame >= animFrameMs);
+  // While animating, draw ONLY on the frame tick. A command used to force an
+  // extra frame the moment it landed, which broke the rhythm and — for the
+  // fading modes (chase, sparkle) — faded twice in one tick: a visible
+  // stutter every time the host spoke. A change now waits at most one frame
+  // (33 ms at 30 fps); `dirty` stays set until then.
+  if ((dirty && !animating) || animDue) {
     if (animDue) {
+      // Advance by the time that actually passed, counted in 60 fps ticks
+      // (the unit the speeds were tuned in), with the remainder carried so
+      // nothing drifts. Speed is then the same at any frame rate. Capped so
+      // the first frame after a still spell doesn't leap. Only advanced
+      // while animating: a phase that ran on behind a static frame made the
+      // next mode change jump.
+      static uint16_t tickAcc = 0;
+      unsigned long elapsed = now - lastFrame;
+      if (elapsed > 250) elapsed = 250;
       lastFrame = now;
-      // speed maps to how fast the animation phase advances — ANIM_STEP
-      // times per frame, so the visible speed is what it was at 60 fps. Only
-      // advanced while something is animating: a phase that kept running
-      // behind a static frame made the next mode change jump.
-      animStep += ANIM_STEP * (1 + (state.speed >> 5));
-      chasePos += ANIM_STEP * (1 + (state.speed >> 6));
+      tickAcc += (uint16_t)elapsed * 60;
+      animTicks = tickAcc / 1000;
+      tickAcc %= 1000;
+      if (animTicks == 0) animTicks = 1;
+      animStep += animTicks * (1 + (state.speed >> 5));
+      chasePos += animTicks * (1 + (state.speed >> 6));
     }
 
     uint8_t outBright;
     uint8_t outWhite = 0;              // the fourth channel; RGB modes send 0
     bool    hostWhite = false;         // add the host's per-segment W?
-    bool    centreWork = false;        // centre on the steady work light?
     switch (swPos) {
       case SW_WHITE:
         // The RGB channels stay dark and the white die does all of it. Mixing
@@ -1289,24 +1345,13 @@ void loop() {
           // Only the static mode carries the host's white: an animation
           // that flashed the sides while the W die held steady would read
           // as a broken strip, and no effect asks for white anyway.
-          hostWhite = (state.mode == MODE_SOLID);
-          // The centre never animates (fw 2.8). Its supply sags with the
-          // audio amplifier's bass, and any look that changes the centre's
-          // draw frame to frame flickered there — even held to a fifth of the
-          // white look's power (measured 2026-09-24, amp at full). A steady
-          // draw holds, so every animated look keeps the centre on the white
-          // work light and moves only the sides: the same rule the queue
-          // alert already follows. Solid colour looks still colour the
-          // centre — fine without music, not with it.
-          //
-          // The no-host look is exempt (2.10): with nobody connected the
-          // violet sparkle covers the whole pit, centre included. That
-          // flicker turned out to be re-sent frames and out-of-spec bit
-          // timing (fixed in 2.9), not the centre's power.
-          if (hostSeen && modeAnimates(state.mode)) {
-            fill_solid(&leds[strips[SEG_CENTER].start], CENTER_COUNT, CRGB::Black);
-            centreWork = true;
-          }
+          // ALERT too: its centre is steady and may be the white die.
+          hostWhite = (state.mode == MODE_SOLID || state.mode == MODE_ALERT);
+          // Every animation runs on the whole pit, centre included (2.12).
+          // fw 2.8 held the centre on a steady white during animations to
+          // hide a flicker blamed on the amp's supply; 2.9 found the real
+          // causes (re-sent frames, bit timing), and a centre that never
+          // animates is a centre whose flicker can't be seen or fixed.
         }
         break;
     }
@@ -1319,7 +1364,7 @@ void loop() {
     // alert flashing and "late" commands looked like before 2.6.
     dirty = false;
     uint16_t t0 = TCNT1;
-    const bool wrote = showAll(outBright, outWhite, hostWhite, centreWork);
+    const bool wrote = showAll(outBright, outWhite, hostWhite);
     uint16_t t1 = TCNT1;
     // `shows` counts real strip writes, so "redraws/s" in Telemetry and the
     // flash test is what reached the strips, not how often we checked.

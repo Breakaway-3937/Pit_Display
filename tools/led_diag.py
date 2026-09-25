@@ -7,6 +7,7 @@ Measure the LED controller link on real hardware. Exit 0/1.
     uv run tools/led_diag.py --flash-test    staged test for flicker: watch the strips
     uv run tools/led_diag.py --hold --seconds 300   white work light, confirmed, held
     uv run tools/led_diag.py --violet-test   is it the violet, or the animation?
+    uv run tools/led_diag.py --fps-test      breathe at 30 / 15 / 10 / 5 frames a second
 
 Runs the app's own LED service exactly as the app does — find the controller,
 handshake, push the resting look — then sends real commands at irregular
@@ -51,6 +52,8 @@ def main() -> int:
                          "for --seconds and report what the controller says")
     ap.add_argument("--violet-test", action="store_true",
                     help="violet still / violet redrawn / violet sparkle / white redrawn")
+    ap.add_argument("--fps-test", action="store_true",
+                    help="breathe at 30, 15, 10 and 5 frames a second, 20 s each")
     ap.add_argument("--flash-test", action="store_true",
                     help="four 15 s stages that each isolate one cause of flicker")
     args = ap.parse_args()
@@ -87,6 +90,11 @@ def main() -> int:
         return status
     if args.violet_test:
         status = violet_test(leds, pump)
+        leds.shutdown()
+        pump(0.3)
+        return status
+    if args.fps_test:
+        status = fps_test(leds, pump)
         leds.shutdown()
         pump(0.3)
         return status
@@ -238,6 +246,42 @@ def violet_test(leds, pump) -> int:
     stage("D: WHITE, REDRAWN 30x/s — the control",
           "flicker here means re-sending anything, not violet.", redraw=True)
     print("\nWhich stage(s) flickered?")
+    return 0
+
+
+def fps_test(leds, pump) -> int:
+    """
+    Does the glitching track how often the strips are written? One breathe,
+    stepped through frame rates. Every frame is one write of both runs, and a
+    misread write shows for one frame as bands of white / green / red, so the
+    count of those per stage should fall with the rate if the cause is the
+    data line. The animation's speed is the same in every stage (fw 2.13
+    advances it by the clock); only the step size changes.
+    """
+    from app.leds.protocol import Op
+    info = leds.device
+    if (info.fw_major, info.fw_minor) < (2, 13):
+        print(f"Firmware {info.version} has no frame-rate control; flash 2.13+ first.")
+        return 1
+    link = leds._link
+    link.telemetry_changed.disconnect(leds._check_in_sync)   # no self-healing mid-test
+    print(f"Connected on {leds.port_name} — {info.describe()}.")
+    leds.apply_preset("team_breathe")
+    pump(2.0)
+    for fps in (30, 15, 10, 5):
+        link.send(Op.SET_FPS, bytes([fps]))
+        pump(1.0)
+        a = link.stats.status
+        print(f"\nSTAGE: {fps} frames/s — count the white/green/red glitches for 20 s", flush=True)
+        pump(20.0)
+        b = link.stats.status
+        if a and b:
+            dt = max(0.001, (b.uptime_ms - a.uptime_ms) / 1000)
+            print(f"  measured: {((b.shows - a.shows) & 0xFFFF) / dt:.1f} writes/s", flush=True)
+    link.send(Op.SET_FPS, bytes([30]))            # the firmware default
+    leds.apply_preset("white")
+    pump(2.0)
+    print("\nDid the glitch count fall with the frame rate?")
     return 0
 
 

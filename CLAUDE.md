@@ -394,14 +394,26 @@ frames (on AVR, `show()` disables interrupts and drops serial bytes). Change
   host → violet sparkle over the **whole pit**, centre included (fw 2.10,
   EEPROM magic 0xC0). The app takes over through it fine (HELLO resends,
   delivery). **No manual OFF position**, on purpose.
-- **While the app is connected, animated looks keep the centre on the white
-  work light (fw 2.8; `centreWork`, gated on `hostSeen`).** Only the sides
-  move, as the queue alert does. It was added for a centre flicker blamed
-  on the amp's bass sagging the supply; fw 2.9 showed that flicker was
-  re-sent frames and bit timing, so the rule may no longer be needed — test
-  an animated centre with the amp at full before removing it.
-  `tools/led_cap_sweep.py --only C S` holds a live limit (OP_SET_CAP 0x18,
-  RAM only) for tests.
+- **The animated-look glitch is the data line, not the code (video,
+  2026-09-25, `IMG_5912.MOV`).** A glitch is one frame of white/green/red
+  bands or an orange tint (bytes landing shifted: red in the green or W
+  slot), clean again on the next frame, often starting partway down a run,
+  and the two long strips break differently in the same instant. Roughly 1
+  frame in 25. The firmware sends a fixed, cycle-counted waveform with
+  interrupts off; it can't produce that. Fix it in the wiring (buffer each
+  Y-split branch, e.g. 74AHCT125, data ground run with the data, 330 Ω at
+  the source). Software can only trade smoothness for fewer frames: 30 fps
+  default (fw 2.14; 15 read as choppy), live `OP_SET_FPS` 0x19, and
+  `tools/led_diag.py --fps-test` steps 30/15/10/5. Animation speed follows
+  the clock, so the rate never changes the speed.
+- **Every animation runs on the whole pit, centre included (fw 2.12).** fw
+  2.8 held the centre on steady white during animations to hide a flicker
+  blamed on the amp's supply; fw 2.9 found the real causes, and a centre that
+  never animates can't show its flicker to be fixed. The queue alert's steady
+  white centre is its design, not that rule. Measured 2026-09-25: breathe,
+  chase, wipe, sparkle, rainbow all hold 30.3 writes/s with or without
+  10 commands/s of traffic. `tools/led_cap_sweep.py --only C S` holds a live
+  power limit (OP_SET_CAP 0x18, RAM only) for tests.
 - **Centre power budget (fw 2.7, `capCentrePower()`).** Violet at 180 drew
   ~1.7x the white work light, and with the audio amp's bass on the same supply
   the centre run (longest, fed from one end) flickered — it went away on
@@ -428,7 +440,14 @@ frames (on AVR, `show()` disables interrupts and drops serial bytes). Change
   (2026-09-25) no stage flickered: stages 1–3 at 0.1 redraws/s, the alert at
   2/s with a 5 ms write (sides only; the centre is never re-sent).
 - Alerts are overlays (`leds.start_alert/clear_alert`); intent keeps updating
-  underneath; the flash is host-driven at 3 Hz.
+  underneath. **Every animation runs on the controller, the alert flash too
+  (fw 2.11):** the app sends the colours once, then SET_MODE ALERT (sides
+  flash ~264 ms on/off, centre steady with its W) and SOLID for the steady
+  part. Never drive a visible animation with timed commands from the host:
+  a lost or resent command shows as a stutter.
+- **Animated looks draw only on their 30 fps tick (fw 2.11)**; a command
+  waits at most one frame. An immediate extra frame broke the rhythm and
+  double-faded chase/sparkle. A mode change restarts the animation.
 - **Known bug:** `SET_PIXELS` is overwritten by SOLID's next render; nothing
   sends it.
 
