@@ -391,18 +391,17 @@ frames (on AVR, `show()` disables interrupts and drops serial bytes). Change
   before condemning it** (`firmware/pit_switch_probe`). `SW_ACTIVE_LOW` wrong
   reads as a jammed switch. A throw of `255` degrades to two positions.
 - **Resting look = white work light** (`MODE_PRESETS`, brightness 160). No
-  host → slow violet breathe on the sides, steady white down the centre
-  (fw 2.8; it was a whole-pit sparkle). **No manual OFF
-  position**, on purpose.
-- **The centre never animates (fw 2.8).** Its supply sags with the audio
-  amp's bass, and a centre whose draw changes frame to frame flickered —
-  measured by eye with the amp at full, the flicker survived the centre held
-  to 50% and to 20% of the white look's draw, so it is not the LEDs' load.
-  A steady draw holds. So every animated mode blanks the centre pixels and
-  puts it on the W die (`centreWork` in `showAll()`); only the sides move —
-  the rule the queue alert already follows. Solid colour looks still colour
-  the centre: fine without music, not with it. `tools/led_cap_sweep.py
-  --only C S` holds a live limit (OP_SET_CAP 0x18, RAM only) for tests.
+  host → violet sparkle over the **whole pit**, centre included (fw 2.10,
+  EEPROM magic 0xC0). The app takes over through it fine (HELLO resends,
+  delivery). **No manual OFF position**, on purpose.
+- **While the app is connected, animated looks keep the centre on the white
+  work light (fw 2.8; `centreWork`, gated on `hostSeen`).** Only the sides
+  move, as the queue alert does. It was added for a centre flicker blamed
+  on the amp's bass sagging the supply; fw 2.9 showed that flicker was
+  re-sent frames and bit timing, so the rule may no longer be needed — test
+  an animated centre with the amp at full before removing it.
+  `tools/led_cap_sweep.py --only C S` holds a live limit (OP_SET_CAP 0x18,
+  RAM only) for tests.
 - **Centre power budget (fw 2.7, `capCentrePower()`).** Violet at 180 drew
   ~1.7x the white work light, and with the audio amp's bass on the same supply
   the centre run (longest, fed from one end) flickered — it went away on
@@ -417,7 +416,7 @@ frames (on AVR, `show()` disables interrupts and drops serial bytes). Change
   visible speed) — every strip write leaves the UART deaf ~8 ms, and at 60 fps
   that lost about half of all frames.
 - **SRAM:** 169 px ≈ 1560 B of 2 KB; ~250 px is the ceiling, then use an ESP32.
-- **Move `EEPROM_MAGIC` on any `State` change** (now `0xBE`).
+- **Move `EEPROM_MAGIC` on any `State` change or new default** (now `0xC0`).
 - **Clear `dirty` before `showAll()`, never after** (fw 2.6). `showAll()`
   reads serial between the centre and sides writes; a command handled there
   sets `dirty`, and clearing afterwards dropped it until the next redraw.
@@ -425,8 +424,9 @@ frames (on AVR, `show()` disables interrupts and drops serial bytes). Change
   landed (resending until STATUS agrees), then four 15 s stages, each changing
   one thing: no redraws at all (heartbeat paused via `SerialLink.heartbeat`),
   one redraw/s, ~10 commands/s, an alert. The stage it flickers in names the
-  cause. On fw 2.8 it flickered in stage 3 (identical redraws); on fw 2.9
-  stage 3 should report ~0 redraws/s.
+  cause. On fw 2.8 it flickered in stage 3 (identical redraws). On fw 2.9
+  (2026-09-25) no stage flickered: stages 1–3 at 0.1 redraws/s, the alert at
+  2/s with a 5 ms write (sides only; the centre is never re-sent).
 - Alerts are overlays (`leds.start_alert/clear_alert`); intent keeps updating
   underneath; the flash is host-driven at 3 Hz.
 - **Known bug:** `SET_PIXELS` is overwritten by SOLID's next render; nothing

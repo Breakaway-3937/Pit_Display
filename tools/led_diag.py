@@ -50,7 +50,7 @@ def main() -> int:
                     help="put the white work light up, confirm it landed, hold it "
                          "for --seconds and report what the controller says")
     ap.add_argument("--violet-test", action="store_true",
-                    help="violet still / violet redrawn / violet breathe / white redrawn")
+                    help="violet still / violet redrawn / violet sparkle / white redrawn")
     ap.add_argument("--flash-test", action="store_true",
                     help="four 15 s stages that each isolate one cause of flicker")
     args = ap.parse_args()
@@ -231,8 +231,8 @@ def violet_test(leds, pump) -> int:
           "flicker here means the violet data itself.")
     stage("B: VIOLET, REDRAWN 30x/s — the same frame over and over",
           "flicker here (not in A) means re-sending violet.", redraw=True)
-    look(violet, 0, Mode.BREATHE)
-    stage("C: VIOLET BREATHE — the no-app look",
+    look(violet, 0, Mode.SPARKLE, speed=150)
+    stage("C: VIOLET SPARKLE — the no-app look (sides only while connected)",
           "flicker here only means the animation.")
     look((0, 0, 0), 255, Mode.SOLID)
     stage("D: WHITE, REDRAWN 30x/s — the control",

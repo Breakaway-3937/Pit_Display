@@ -361,7 +361,9 @@ const Strip strips[NUM_STRIPS] = {
 };
 
 #define FW_MAJOR 2
-#define FW_MINOR 9   // 2.9: in-spec SK6812 bit timing; a channel whose bytes have not
+#define FW_MINOR 10  // 2.10: no-host look is the violet sparkle again, over the WHOLE pit,
+                     //       centre included (EEPROM magic 0xC0)
+                     // 2.9: in-spec SK6812 bit timing; a channel whose bytes have not
                      //      changed is not re-sent (only the 10 s refresh forces it)
                      // 2.8: in animated looks the centre holds a steady white work light;
                      //      only the sides animate (constant centre power)
@@ -422,7 +424,7 @@ static const uint16_t EEPROM_MAGIC_ADDR = 0;
 // read into a new layout garbles every field after `brightness` rather than
 // failing, so this has to move whenever State's shape does — and whenever
 // the default must win.
-static const uint8_t  EEPROM_MAGIC = 0xBF;   // 0xBF (2.7): discard a saved sparkle default
+static const uint8_t  EEPROM_MAGIC = 0xC0;   // 0xC0 (2.10): discard a saved breathe default
 
 CRGB leds[TOTAL_LEDS];
 
@@ -455,8 +457,12 @@ struct State {
 // in the pit uses, so it can never be mistaken for an alliance, an alert or
 // the app having crashed mid-sequence. The app's own resting look (white on
 // the W die) is pushed the moment it connects.
+//
+// It covers every pixel, the centre too — the one animated look exempt from
+// "the centre never animates" (see loop()). Restored in 2.10 once 2.9 fixed
+// the flicker that rule was working around.
 State state = {
-  MODE_BREATHE, 40, 180,       // ~2 s per breath: alive, calm, and violet
+  MODE_SPARKLE, 150, 180,
   { 128, 128 }, { 0, 0 }, { 255, 255 },                // violet, see palette
   { 0, 0 },
 };
@@ -1292,7 +1298,12 @@ void loop() {
           // work light and moves only the sides: the same rule the queue
           // alert already follows. Solid colour looks still colour the
           // centre — fine without music, not with it.
-          if (modeAnimates(state.mode)) {
+          //
+          // The no-host look is exempt (2.10): with nobody connected the
+          // violet sparkle covers the whole pit, centre included. That
+          // flicker turned out to be re-sent frames and out-of-spec bit
+          // timing (fixed in 2.9), not the centre's power.
+          if (hostSeen && modeAnimates(state.mode)) {
             fill_solid(&leds[strips[SEG_CENTER].start], CENTER_COUNT, CRGB::Black);
             centreWork = true;
           }
