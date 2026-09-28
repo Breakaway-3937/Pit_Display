@@ -64,7 +64,6 @@ class _MusicService(QObject):
         self._eq_preamp = 0.0
         self._eq_gains = [0.0] * eq_module.N_BANDS
 
-        eq_module.ensure_seeded()
         self.apply_eq_preset(self._eq_preset, manual=False)
         self._engine.set_volume(self._effective_volume())
 

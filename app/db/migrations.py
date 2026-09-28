@@ -325,3 +325,31 @@ def _v8_checklists(conn: sqlite3.Connection) -> None:
     # items themselves are the team's to write — see the empty state in
     # ChecklistOverlay, which says where to add them.
     conn.execute("INSERT INTO checklist (name, position) VALUES ('Pit Checklist', 0)")
+
+
+@register_migration
+def _v9_seed_eq_presets(conn: sqlite3.Connection) -> None:
+    """
+    Write the stock EQ presets once, here, instead of on every launch.
+
+    They used to be re-inserted at every start (`eq.ensure_seeded()`), so a
+    stock preset the team deleted came straight back, and one could only be
+    "overwritten" by forking a "<name> (edited)" copy. Seeded once, they are
+    ordinary rows: the admin can overwrite or delete any of them. `built_in`
+    now only means "still the stock curve" (it shows the stock description).
+
+    A snapshot of the values as of this migration, deliberately not imported
+    from app.music.eq: a migration must do the same thing forever. INSERT OR
+    IGNORE, so a database that already has them keeps its own.
+    """
+    stock = [
+        ("Flat",            0.0, "0,0,0,0,0,0,0,0,0,0"),
+        ("Pit Default",    -2.0, "-12,-8,-3,-4,-2,0,2,3,1,0"),
+        ("Crowded",        -3.0, "-14,-10,-4,-5,-2,1,3,4,2,0"),
+        ("Judges Visiting", -6.0, "-16,-12,-6,-6,-3,0,2,2,0,-2"),
+        ("Lunch",          -2.0, "-8,-5,-2,-3,-1,0,1,2,1,0"),
+    ]
+    conn.executemany(
+        "INSERT OR IGNORE INTO eq_presets (name, preamp, gains, built_in) "
+        "VALUES (?, ?, ?, 1)", stock)
+

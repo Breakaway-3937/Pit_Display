@@ -320,7 +320,7 @@ class MusicPanel(QWidget):
                                 accent=config.active_team.primary_color)
         save_eq.clicked.connect(self._on_save_eq)
         eq_actions.addWidget(save_eq)
-        # Only while a preset the team saved is selected; built-ins can't go.
+        # Any selected preset, stock ones included — the EQ is admin-only.
         self._delete_eq = RoundedButton("Delete preset", variant="secondary",
                                         accent=config.active_team.primary_color)
         self._delete_eq.clicked.connect(self._on_delete_eq)
@@ -523,14 +523,12 @@ class MusicPanel(QWidget):
 
     def _on_save_eq(self):
         # Start from the selected preset's name, so saving again overwrites it.
-        current = music.eq_preset
-        start = "" if current in eq_module.BUILT_IN_NAMES else current
         name, ok = QInputDialog.getText(self, "Save EQ preset", "Preset name:",
-                                        QLineEdit.EchoMode.Normal, start)
+                                        QLineEdit.EchoMode.Normal, music.eq_preset)
         name = name.strip()
         if not ok or not name:
             return
-        existing = eq_module.find_user_preset(name)
+        existing = eq_module.find_preset(name)
         if existing is not None:
             answer = QMessageBox.question(
                 self, "Overwrite preset?",
@@ -541,7 +539,7 @@ class MusicPanel(QWidget):
 
     def _on_delete_eq(self):
         name = music.eq_preset
-        if not name or name in eq_module.BUILT_IN_NAMES:
+        if not name:
             return
         answer = QMessageBox.question(
             self, "Delete preset?",
@@ -564,7 +562,7 @@ class MusicPanel(QWidget):
                 btn.set_active(name == music.eq_preset)
             match = next((p for p in presets if p.name == music.eq_preset), None)
             self._eq_desc.setText(match.description if match else "")
-            self._delete_eq.setVisible(match is not None and not match.built_in)
+            self._delete_eq.setVisible(match is not None)
 
             self._eq_field.set_gains(music.eq_gains)
             preamp = int(round(music.eq_preamp))

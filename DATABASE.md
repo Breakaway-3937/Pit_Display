@@ -103,6 +103,7 @@ side effect. `main.py` does this at the top.
 | 6 | `_v6_admin` | `admin_credential` |
 | 7 | `_v7_robot_logs` | `log_session`, `device`, `signal`, `signal_enum`, `series`, `session_constant`, `fault_event` |
 | 8 | `_v8_checklists` | `checklist`, `checklist_item` |
+| 9 | `_v9_seed_eq_presets` | the five stock `eq_presets` rows, once (was every launch) |
 
 **Never edit a migration that has shipped.** Add a new one. A migration must be
 safe to run against a database that already has data — `_v5` checks
@@ -151,14 +152,21 @@ a display-mode change. `playlist_items` is ordered by `position`.
 Ten band gains stored as a comma-separated string in `gains`, plus `preamp`.
 
 Always read and written as a complete set of ten and never queried per band, so
-a column beats a child table here. `built_in = 1` rows are protected — saving
-over one forks a copy named `"<name> (edited)"`.
+a column beats a child table here.
 
-**Names are matched ignoring case** (`find_user_preset()`, `COLLATE NOCASE`,
-oldest row wins), because the chips show them in capitals and "Pit Display" /
+**Nothing is protected** (the EQ is admin-only). The stock presets are seeded
+once by `_v9` and are then ordinary rows: saving under any existing name
+overwrites it in place, and any row can be deleted and stays deleted.
+`built_in = 1` now only means "still the stock curve"; overwriting one clears
+it, and only then does the panel drop the stock description. Deleting a preset
+a display mode selects (`MODE_PRESETS`: Pit Default, Judges Visiting, Lunch)
+means that mode leaves the curve as it is.
+
+**Names are matched ignoring case** (`find_preset()`, `COLLATE NOCASE`, oldest
+row wins), because the chips show them in capitals and "Pit Display" /
 "PIT DISPLAY" look like one preset. The `UNIQUE` column itself is still
 case-sensitive, so older installs can hold such pairs; saving updates the
-oldest and the panel's Delete removes the other.
+oldest and Delete removes the other.
 
 #### `checklist` / `checklist_item`
 The pit checklists shown on the overhead screens. Written and ticked from
@@ -593,7 +601,7 @@ imported.
 | Module | Owns | Key functions |
 |---|---|---|
 | `app.music.library` | `tracks` | `scan(folder)`, `all_tracks(search)` |
-| `app.music.eq` | `eq_presets` | `all_presets()`, `get_preset()`, `save_preset()`, `delete_preset()`, `ensure_seeded()` |
+| `app.music.eq` | `eq_presets` | `all_presets()`, `get_preset()`, `find_preset()`, `save_preset()`, `delete_preset()` |
 | `app.admin` | `admin_credential` | `verify()`, `unlock()`, `change_password()`, `reset_to_default()` |
 | `app.robot.ingest` | writes everything under `log_session` | `import_log()`, `delete_session()` |
 | `app.robot.wpilog` | reads a `.wpilog` into records | `Reader`, `entry_identity()` |

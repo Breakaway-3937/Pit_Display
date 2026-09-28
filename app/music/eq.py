@@ -67,25 +67,15 @@ BUILT_INS: tuple[EQPreset, ...] = (
 BUILT_IN_NAMES = {p.name for p in BUILT_INS}
 
 
-def ensure_seeded() -> None:
-    """Write the built-ins into the DB once, so they can be listed uniformly."""
-    with db.transaction():
-        for preset in BUILT_INS:
-            db.execute(
-                """INSERT OR IGNORE INTO eq_presets (name, preamp, gains, built_in)
-                   VALUES (?, ?, ?, 1)""",
-                (preset.name, preset.preamp,
-                 ",".join(str(g) for g in preset.gains)),
-            )
-
-
 def _row_to_preset(row) -> EQPreset:
     try:
         gains = [float(x) for x in row["gains"].split(",")]
     except (ValueError, AttributeError):
         gains = [0.0] * N_BANDS
     gains = (gains + [0.0] * N_BANDS)[:N_BANDS]
-    desc = next((p.description for p in BUILT_INS if p.name == row["name"]), "")
+    # The stock description only while the row is still the stock curve.
+    desc = next((p.description for p in BUILT_INS if p.name == row["name"]), "") \
+        if row["built_in"] else ""
     return EQPreset(row["name"], row["preamp"], gains, bool(row["built_in"]), desc)
 
 
@@ -109,9 +99,9 @@ def get_preset(name: str) -> EQPreset | None:
     return _row_to_preset(row) if row else None
 
 
-def find_user_preset(name: str) -> str | None:
+def find_preset(name: str) -> str | None:
     """
-    The saved (non-built-in) preset this name refers to, ignoring case.
+    The stored preset this name refers to, ignoring case — stock or saved.
 
     Names are shown in capitals on the chips, so "Pit Display" and "PIT
     DISPLAY" look identical to an operator and must be the same preset. The
@@ -119,47 +109,38 @@ def find_user_preset(name: str) -> str | None:
     such rows); the oldest one wins.
     """
     row = db.fetchone(
-        """SELECT name FROM eq_presets
-           WHERE name = ? COLLATE NOCASE AND built_in = 0
+        """SELECT name FROM eq_presets WHERE name = ? COLLATE NOCASE
            ORDER BY id LIMIT 1""",
         (name.strip(),))
     return row["name"] if row else None
 
 
-def stored_name(name: str) -> str:
-    """The name `save_preset(name)` will actually write under."""
-    name = name.strip()
-    builtin = next((b for b in BUILT_IN_NAMES if b.casefold() == name.casefold()), None)
-    if builtin is not None:
-        name = f"{builtin} (edited)"
-    return find_user_preset(name) or name
-
-
 def save_preset(preset: EQPreset) -> str:
     """
-    Save, overwriting a saved preset of the same name (ignoring case).
-    Built-ins are protected — saving over one creates "<name> (edited)".
-    Returns the name it was stored under.
+    Save, overwriting any preset of the same name (ignoring case) — the stock
+    ones included; the EQ is admin-only, so nothing is protected. An
+    overwritten stock preset stops being `built_in`: it is the team's curve
+    now. Returns the name it was stored under.
     """
-    name = stored_name(preset.name)
+    name = find_preset(preset.name) or preset.name.strip()
     gains = ",".join(str(g) for g in preset.clamped())
     with db.transaction():
         db.execute(
             """INSERT INTO eq_presets (name, preamp, gains, built_in)
                VALUES (?, ?, ?, 0)
-               ON CONFLICT(name) DO UPDATE SET preamp = excluded.preamp,
-                                               gains  = excluded.gains""",
+               ON CONFLICT(name) DO UPDATE SET preamp   = excluded.preamp,
+                                               gains    = excluded.gains,
+                                               built_in = 0""",
             (name, preset.preamp, gains),
         )
     return name
 
 
 def delete_preset(name: str) -> bool:
-    if name in BUILT_IN_NAMES:
-        return False
+    """Delete any preset, stock or saved. Stays deleted (see migration _v9)."""
     with db.transaction():
-        db.execute("DELETE FROM eq_presets WHERE name = ? AND built_in = 0", (name,))
-    return True
+        cur = db.execute("DELETE FROM eq_presets WHERE name = ?", (name,))
+    return cur.rowcount > 0
 
 
 # Which EQ preset each display mode selects when the EQ is following the mode.
