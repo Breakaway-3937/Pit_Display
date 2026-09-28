@@ -27,7 +27,7 @@ the one that covers what you touched.
 | [`NEXUS.md`](NEXUS.md) | The event feed, the relay, every Nexus field |
 | [`nexus-relay/README.md`](nexus-relay/README.md) | The Cloudflare Worker (a separate npm/TypeScript subproject) |
 | [`sync-hub/README.md`](sync-hub/README.md) | The sync hub Worker: API, deploy, budget |
-| [`home/HANDOFF.md`](home/HANDOFF.md) | The home side (SQL Server master, MCP, Ollama), built by a session with access to that server |
+| [`home/HANDOFF.md`](home/HANDOFF.md) | The home side (SQL Server master, MCP, Ollama), built by a session with access to that server; `home/OPERATIONS.md` runs it, `home/KICKOFF.md` starts it |
 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | Build, release, install, update, the `--self-check` table |
 | [`OPERATOR_GUIDE.md`](OPERATOR_GUIDE.md) | What the crew does. Operator-facing detail goes there, not here |
 

@@ -78,6 +78,8 @@ curl https://sync.bh-stack.com/healthz
 ```
 
 Generate each token with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+Either secret may hold several comma-separated tokens, so one can be rotated
+without locking anyone out (`home/OPERATIONS.md`, "Rotating a token").
 The pit token goes to pit machines in a pit setup file (`sync_token`, see
 `app/provision.py`); the home token goes only to the home machine.
 

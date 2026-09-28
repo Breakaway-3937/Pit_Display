@@ -5,6 +5,30 @@ SQL Server, with access to it. This repo deliberately holds **no** server
 name, login, path or password for that machine; you have them there, this
 file doesn't. Read this file, then `sync-hub/README.md`, then
 `app/db/sync/bundle.py`'s docstring. Kick-off prompt: `home/KICKOFF.md`.
+Once built, running it is `home/OPERATIONS.md`.
+
+## Getting the code
+
+The pit repo is `https://github.com/Breakaway-3937/Pit_Display` (private).
+The sync work is on the **`team-sync`** branch until it's merged into `main`;
+check out whichever holds `app/db/sync/`. Keep this checkout beside the home
+project and **import from it** rather than copying files (see M3): the pit
+repo owns the formats. Python **3.14+** (the bundle reader uses the standard
+library's `compression.zstd`), `uv` recommended.
+
+## The hub today (2026-09-28)
+
+**Live** at `https://sync.bh-stack.com`, seeded from the dev Mac:
+
+* one machine, "Dev Mac" (`pit-9f07bf6075f9462a`);
+* 33 rows: 2 checklists, 7 items, 5 EQ presets, 13 CAN names, the admin
+  password hash, 2 settings documents, 2 team files, 1 log session;
+* 3 blobs, 60.8 MB, **none archived yet**: the session's bundle (2.98 MB,
+  from a 3.85 GB Phoenix export), the CAD model (57.8 MB zstd'd from 360 MB)
+  and its `subsystems.json`. These are M3's first real test data.
+
+`python home/hub_probe.py` (with `SYNC_HOME_TOKEN` set) shows the current
+state at any time and changes nothing.
 
 ## What already exists (built and tested 2026-09-28)
 
@@ -38,16 +62,22 @@ any conflict (`force`), and can rebuild the hub from scratch.
 
 Each milestone ends with a check you can run. Don't start the next until it
 passes. Suggested layout: a new repo or folder on the home machine
-(`breakaway-home/`), Python 3.12+, `uv`.
+(`breakaway-home/`), Python 3.14+, `uv`.
 
 ### M1. Reach the hub from home
 
 * Secrets on the home machine only: `SYNC_URL=https://sync.bh-stack.com`,
-  `SYNC_HOME_TOKEN` (the `HOME_TOKEN` Worker secret), a machine id like
-  `home-<hostname>`.
+  `SYNC_HOME_TOKEN` (the `HOME_TOKEN` Worker secret; the person running this
+  session carries it over from the dev Mac's `secrets/sync_home_token`), and
+  **one stable machine id** like `home-<hostname>`. Every distinct
+  `X-Pit-Machine` that pulls or pushes is registered on the hub and listed on
+  every pit's Telemetry screen, so tests and scripts reuse that id (or only
+  call `GET /v1/status`, which registers nothing).
 * HTTPS through the OS verifier (`truststore`), same reason as the pit app:
-  see `app/net.py`'s docstring.
-* **Check:** `GET /v1/status` returns the pits in `machines`.
+  see `app/net.py`'s docstring. `app/db/sync/client.py` is a complete,
+  tested client for every endpoint; importing it from the checkout is fine
+  (it needs only `app/net.py`, standard library + `truststore`).
+* **Check:** `python home/hub_probe.py` exits 0 and lists "Dev Mac".
 
 ### M2. Mirror rows into SQL Server (the home agent's core loop)
 
@@ -70,19 +100,23 @@ a checklist item on a pit shows up in `sync.row_history` within a minute.
 1. `GET /v1/blobs?unacked=1` → for each: `GET /v1/blob/{sha}` to a temp
    file, **verify the SHA-256**, move to the archive
    (`<archive>/<kind>/<sha[:2]>/<sha>`), record in `sync.blob`.
-2. `kind = "bundle"`: **don't reimplement the format.** Copy
-   `app/db/sync/columns.py`, `codec.py` and `bundle.open_bundle()` from the
-   pit repo (standard library only; Python 3.14+ for `compression.zstd`).
-   `open_bundle(path, scratch)` turns either bundle format into a plain SQLite
-   file whose tables include `sample` and `sample_1s` → read them → insert
-   into `telemetry.*` keyed by the bundle's `uid` (from `bundle_meta`). Enum
+2. `kind = "bundle"`: **don't reimplement the format; import it.**
+   `sys.path.insert(0, <pit checkout>)`, then
+   `from app.db.sync.bundle import open_bundle` (verified: standard library
+   only, no Qt, creates no files). `open_bundle(path, scratch_dir)` turns
+   either bundle format into a plain SQLite file (delete it after) whose
+   tables include `sample` and `sample_1s` → read them → insert into
+   `telemetry.*` keyed by the bundle's `uid` (from `bundle_meta`). Enum
    labels go in
    `telemetry.session_enum` **per session** (codes differ between pits).
    Use `SqlBulkCopy`-style bulk insert for `sample`; it's millions of rows.
    `kind = "raw"`: always a zstd frame of the original log (archive it
-   compressed; `zstd -d` restores it). `kind = "file"`: the row's `data`
-   says `codec: "zstd"` (stored compressed; `sha` is the original's) or
-   `"none"` / absent (stored as is).
+   compressed; `zstd -d` restores it). Pits send raws only with
+   `upload_raw` on (off by default: the bundle already holds every record).
+   `kind = "file"`: the `file` row's `data` says `codec: "zstd"` (the blob
+   is `data.blob`, compressed; `data.sha` is the original's) or `"none"` /
+   absent (the blob is `data.sha`, stored as is). Archive blobs exactly as
+   stored: a hub rebuild re-uploads them byte for byte.
 3. `POST /v1/blob/{sha}/ack`.
 4. After 30 days, `DELETE /v1/blob/{sha}` for `raw` blobs (the archive has
    them; R2's free tier is 10 GB). Keep `bundle` blobs 90 days: pits that come
@@ -98,9 +132,11 @@ same series count and sample count the pit reports
 
 * Anything home changes goes through `sync.push_queue`; the agent pushes with
   `force: true` and records the returned `seq`.
-* `home_agent restore`: force-push every non-deleted row of
-  `sync.row_state` (and re-upload any blob the hub lacks) into a **fresh**
-  hub. Pits see the new epoch and reconcile on their own.
+* `home_agent restore`: rebuild a **fresh** hub from home, the procedure in
+  `OPERATIONS.md` "Rebuilding the hub" (rows *and* tombstones, then blobs
+  from the archive). Pits see the new epoch and reconcile on their own. Test
+  it against `wrangler dev` (the pit repo's `tools/sync_check.py` shows how
+  to start one with `--persist-to` a temp dir), never the live hub.
 * **Check:** force-rename a checklist from home; every pit shows the new name
   within two cycles.
 
@@ -160,6 +196,14 @@ Runs after M3 ingests a new session (or on demand):
 **Not yours:** drawing it. The pit repo renders boards with the diagnostics
 board's painter (a follow-up there: an "Analysis" face that builds a
 `diagnostics.Dashboard` from the spec). Keep to the schema and it will paint.
+
+### M7. Run it for real
+
+Everything in `OPERATIONS.md`: the agent as a service (one instance, one
+machine id, restart on failure), backups of the database *and* the archive,
+the weekly R2 prune, and `hub_probe.py` on a schedule. **Check:** reboot the
+home machine; within five minutes `hub_probe.py --cursor …` shows home
+caught up, with no action from anyone.
 
 ## MCP, from zero
 

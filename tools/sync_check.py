@@ -55,6 +55,7 @@ from app.db.sync.engine import Engine  # noqa: E402
 _failures: list[str] = []
 PIT_TOKEN = "check-pit-token"
 HOME_TOKEN = "check-home-token"
+OLD_PIT_TOKEN = "check-old-pit-token"      # a token mid-rotation (--local only)
 
 
 def check(name: str, ok: bool, detail: str = "") -> bool:
@@ -123,7 +124,7 @@ def start_hub(tmp: Path) -> tuple[subprocess.Popen, str]:
     proc = subprocess.Popen(
         ["npx", "wrangler", "dev", "--local", "--ip", "127.0.0.1", "--port", str(port),
          "--persist-to", str(tmp / "hub-state"),
-         "--var", f"PIT_TOKEN:{PIT_TOKEN}", "--var", f"HOME_TOKEN:{HOME_TOKEN}"],
+         "--var", f"PIT_TOKEN:{PIT_TOKEN},{OLD_PIT_TOKEN}", "--var", f"HOME_TOKEN:{HOME_TOKEN}"],
         cwd=hub_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     url = f"http://127.0.0.1:{port}"
     for _ in range(60):
@@ -426,6 +427,9 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
         "Authorization": f"Bearer {home_token}", "X-Pit-Machine": "home"})
     urllib.request.urlopen(req, timeout=10).close()
     check("home may", "check-b" not in {m["id"] for m in home.status().get("machines", [])})
+    if pit_token == PIT_TOKEN:
+        old = HubClient(url, OLD_PIT_TOKEN, "check-old", "old", "check")
+        check("while rotating, the old pit token still works", "head" in old.status())
 
 
 if __name__ == "__main__":

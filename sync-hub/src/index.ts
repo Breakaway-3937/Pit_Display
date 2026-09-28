@@ -31,7 +31,7 @@ import { DurableObject } from "cloudflare:workers";
 export interface Env {
   HUB: DurableObjectNamespace<SyncHub>;
   BLOBS: R2Bucket;
-  PIT_TOKEN: string;   // secret — what every pit machine presents
+  PIT_TOKEN: string;   // secret — what every pit machine presents ("new,old" while rotating)
   HOME_TOKEN: string;  // secret — what the home agent presents (may force, ack, prune)
 }
 
@@ -104,11 +104,24 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+/**
+ * Each secret may hold several tokens, comma-separated, so a token can be
+ * rotated without locking anyone out: set "new,old", move every machine to
+ * the new one, then set "new" (home/OPERATIONS.md). Every entry is compared in
+ * constant time and none short-circuits.
+ */
+function anyToken(auth: string | null, configured: string | undefined): boolean {
+  let ok = false;
+  for (const t of (configured ?? "").split(",").map((x) => x.trim()).filter(Boolean)) {
+    if (safeEqual(auth, `Bearer ${t}`)) ok = true;
+  }
+  return ok;
+}
+
 function roleOf(request: Request, env: Env): Role | null {
   const auth = request.headers.get("Authorization");
-  // Both compared, neither short-circuits.
-  const home = safeEqual(auth, env.HOME_TOKEN ? `Bearer ${env.HOME_TOKEN}` : undefined);
-  const pit = safeEqual(auth, env.PIT_TOKEN ? `Bearer ${env.PIT_TOKEN}` : undefined);
+  const home = anyToken(auth, env.HOME_TOKEN);
+  const pit = anyToken(auth, env.PIT_TOKEN);
   if (home) return "home";
   if (pit) return "pit";
   return null;
