@@ -4,13 +4,13 @@ A robot log session as one file: how imported telemetry moves between machines.
 **Why a bundle, not the original log.** Re-importing the original on another
 machine would need owlet (a `.hoot` needs CTRE's converter, per platform)
 and minutes of parsing; the home server may not be able to run it at all. The
-bundle is what the import *produced*: a gzipped SQLite file with the session,
-its series, constants, faults, `sample` and `sample_1s`, every reference
-spelled out by name (`device_type`, `can_id`, signal `name`) instead of by
-this machine's integer ids. The original log still goes up separately
-(`upload_raw`), for the home archive.
+bundle is what the import *produced* (audited lossless against the source,
+DATABASE.md "Losslessness, audited"): a SQLite file with the session, its
+series, constants and faults, every reference spelled out by name
+(`device_type`, `can_id`, signal `name`) instead of this machine's integer
+ids, and the samples **as columns** (`columns.py`), the whole file zstd'd.
 
-    bundle_meta   k, v                 format = 1, session uid
+    bundle_meta   k, v                 format = 2, session uid
     session       the log_session row, minus paths and local ids
     device        device_type, can_id, label, subsystem, notes
     signal        device_type, name, value_kind, signal_class, unit
@@ -18,8 +18,13 @@ this machine's integer ids. The original log still goes up separately
     series        skey, device_type, can_id, sig_type, sig_name, n_raw, …
     constant      device_type, can_id, sig_type, sig_name, v, v_text
     fault         device_type, can_id, sig_type, sig_name, sticky, t_ms_start, t_ms_end
-    sample        skey, t_ms, ord, v
-    sample_1s     skey, t_s, v_min, v_max, v_avg, n
+    colblob       name, data           columns.encode_samples() / encode_rollup()
+                                       streams: `sample` and `sample_1s`
+
+**Size, measured on the real 3.85 GB Phoenix export: 3.1 MB** (format 1, the
+same tables row by row and gzipped, was 14.7 MB). `open_bundle()` reads both
+formats and hands back the tables with `sample` / `sample_1s` materialised,
+so the import below is format-blind.
 
 **Enum codes are per machine** (ingest interns labels in order of first
 appearance), so an import maps every bundle code to this machine's code for
@@ -38,8 +43,11 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-FORMAT = 1
-SUFFIX = ".pitlog.gz"
+from app.db.sync import codec, columns
+
+FORMAT = 2
+READS = (1, 2)
+SUFFIX = ".pitlog.zst"
 
 
 def _samples_path(main: Path) -> Path:
@@ -47,7 +55,7 @@ def _samples_path(main: Path) -> Path:
 
 
 def build(db_path: Path, session_id: int, out_dir: Path) -> Path:
-    """Write the session's bundle into `out_dir`. Returns the .gz path."""
+    """Write the session's bundle into `out_dir`. Returns the .zst path."""
     db_path = Path(db_path)
     out_dir.mkdir(parents=True, exist_ok=True)
     raw = Path(tempfile.mkstemp(suffix=".db", dir=out_dir)[1])
@@ -108,20 +116,16 @@ def build(db_path: Path, session_id: int, out_dir: Path) -> Path:
                FROM m.fault_event f JOIN m.device d ON d.id = f.device_id
                                     JOIN m.signal g ON g.id = f.signal_id
                WHERE f.session_id = :s""", p)
-        conn.execute(
-            """CREATE TABLE sample (skey INTEGER, t_ms INTEGER, ord INTEGER, v REAL,
-                                    PRIMARY KEY (skey, t_ms, ord)) WITHOUT ROWID""")
-        conn.execute(
-            """INSERT INTO sample SELECT a.series_id, a.t_ms, a.ord, a.v FROM s.sample a
-               WHERE a.series_id IN (SELECT id FROM m.series WHERE session_id = :s)""", p)
-        conn.execute(
-            """CREATE TABLE sample_1s (skey INTEGER, t_s INTEGER, v_min REAL, v_max REAL,
-                                       v_avg REAL, n INTEGER,
-                                       PRIMARY KEY (skey, t_s)) WITHOUT ROWID""")
-        conn.execute(
-            """INSERT INTO sample_1s SELECT a.series_id, a.t_s, a.v_min, a.v_max, a.v_avg, a.n
-               FROM s.sample_1s a
-               WHERE a.series_id IN (SELECT id FROM m.series WHERE session_id = :s)""", p)
+        streams = columns.encode_samples(conn.execute(
+            """SELECT a.series_id, a.t_ms, a.ord, a.v FROM s.sample a
+               WHERE a.series_id IN (SELECT id FROM m.series WHERE session_id = :s)
+               ORDER BY a.series_id, a.t_ms, a.ord""", p))
+        streams.update(columns.encode_rollup(conn.execute(
+            """SELECT a.series_id, a.t_s, a.v_min, a.v_max, a.v_avg, a.n FROM s.sample_1s a
+               WHERE a.series_id IN (SELECT id FROM m.series WHERE session_id = :s)
+               ORDER BY a.series_id, a.t_s""", p)))
+        conn.execute("CREATE TABLE colblob (name TEXT PRIMARY KEY, data BLOB NOT NULL)")
+        conn.executemany("INSERT INTO colblob VALUES (?, ?)", streams.items())
         conn.commit()
         conn.execute("DETACH DATABASE m")
         conn.execute("DETACH DATABASE s")
@@ -130,24 +134,45 @@ def build(db_path: Path, session_id: int, out_dir: Path) -> Path:
         conn.close()
 
     out = out_dir / f"{uid[0]}{SUFFIX}"
-    with open(raw, "rb") as src, gzip.open(out, "wb", compresslevel=6) as dst:
-        shutil.copyfileobj(src, dst, 1024 * 1024)
-    raw.unlink(missing_ok=True)
+    try:
+        codec.compress_file(raw, out)
+    finally:
+        raw.unlink(missing_ok=True)
     return out
 
 
-def read_meta(bundle_db: Path) -> dict[str, str]:
-    conn = sqlite3.connect(str(bundle_db))
-    try:
-        return dict(conn.execute("SELECT k, v FROM bundle_meta").fetchall())
-    finally:
-        conn.close()
-
-
-def gunzip(gz: Path, out_dir: Path) -> Path:
+def open_bundle(path: Path, out_dir: Path) -> Path:
+    """
+    Any bundle format → a plain SQLite file with `sample` and `sample_1s` as
+    tables. The caller deletes it. Format 1 was gzip with the tables in it;
+    format 2 is zstd with the samples as columns.
+    """
     out = Path(tempfile.mkstemp(suffix=".db", dir=out_dir)[1])
-    with gzip.open(gz, "rb") as src, open(out, "wb") as dst:
-        shutil.copyfileobj(src, dst, 1024 * 1024)
+    if codec.is_zstd(path):
+        codec.decompress_file(path, out)
+    else:
+        with gzip.open(path, "rb") as src, open(out, "wb") as dst:
+            shutil.copyfileobj(src, dst, 1024 * 1024)
+    conn = sqlite3.connect(str(out))
+    try:
+        fmt = int(dict(conn.execute("SELECT k, v FROM bundle_meta").fetchall()).get("format", 0))
+        if fmt not in READS:
+            raise ValueError(f"bundle format {fmt}; this build reads {READS}")
+        if fmt == 2:
+            streams = dict(conn.execute("SELECT name, data FROM colblob").fetchall())
+            conn.execute("CREATE TABLE sample (skey INTEGER, t_ms INTEGER, ord INTEGER, v REAL)")
+            conn.executemany("INSERT INTO sample VALUES (?, ?, ?, ?)",
+                             columns.decode_samples(streams))
+            conn.execute("CREATE TABLE sample_1s (skey INTEGER, t_s INTEGER, v_min REAL, "
+                         "v_max REAL, v_avg REAL, n INTEGER)")
+            conn.executemany("INSERT INTO sample_1s VALUES (?, ?, ?, ?, ?, ?)",
+                             columns.decode_rollup(streams))
+            conn.commit()
+    except Exception:
+        conn.close()
+        out.unlink(missing_ok=True)
+        raise
+    conn.close()
     return out
 
 
@@ -158,7 +183,7 @@ def import_bundle(db_path: Path, gz: Path, scratch: Path) -> int:
     the sync guard up, so nothing it inserts is pushed back.
     """
     db_path = Path(db_path)
-    bundle_db = gunzip(gz, scratch)
+    bundle_db = open_bundle(gz, scratch)
     conn = sqlite3.connect(str(db_path), timeout=60.0)
     try:
         conn.row_factory = sqlite3.Row
@@ -166,8 +191,6 @@ def import_bundle(db_path: Path, gz: Path, scratch: Path) -> int:
         conn.execute("ATTACH DATABASE ? AS b", (str(bundle_db),))
         conn.execute("PRAGMA foreign_keys=ON")
         meta = dict(conn.execute("SELECT k, v FROM b.bundle_meta").fetchall())
-        if int(meta.get("format", 0)) != FORMAT:
-            raise ValueError(f"bundle format {meta.get('format')} is not {FORMAT}")
         uid = meta["uid"]
         have = conn.execute("SELECT id FROM log_session WHERE uid = ?", (uid,)).fetchone()
         if have is not None:

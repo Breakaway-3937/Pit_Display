@@ -640,8 +640,10 @@ is not in this repo and is built from `home/HANDOFF.md`.
   `force`. A pit never trusts its own clock.
 - **Machine identity lives in `sync.json`, never the database** (a copied DB
   would clone it).
-- Logs travel as **bundles** (names, not ids; enum codes remapped on import)
-  plus the original file for the home archive.
+- Logs travel as **bundles** (names, not ids; enum codes remapped on import;
+  samples as columns on each series' exact quantum, zstd'd: 3.85 GB → 2.98 MB,
+  bit-exact). Everything sent is zstd'd (`codec.py`). The original log goes
+  only with `upload_raw` (off by default; the bundle is audited lossless).
 - Off with no `secrets/sync_token`; `PIT_SYNC_QUIET=1` (set by
   `--self-check`) opens nothing. The self-check's `sync` line fails if a
   synced table lost a trigger.

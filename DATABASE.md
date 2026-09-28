@@ -455,7 +455,7 @@ Every pit machine's team data meets at the hub (`sync.bh-stack.com`,
 | Team-owned rows | `led_presets`, `eq_presets`, `playlists`, `playlist_items`, `checklist`, `checklist_item` (not `done`), `admin_credential`, `device` (the CAN names) | triggers → `sync_outbox` → hub; `app/db/sync/tables.py` `SPECS` |
 | Team settings | `nexus.json`'s event and feed keys; `update.json`'s `auto_check`, `check_interval_hours` | `tbl = "setting"`, by hash (`docs.py`) |
 | Team files | `assets/judges_slides/*`, `assets/cad/*` in the data tree | `tbl = "file"` → an R2 blob by SHA-256 |
-| Machine-produced | `log_session` (hand-edited fields in the row; the data as a **bundle**, the original log as a **raw** blob) | `bundle.py` |
+| Machine-produced | `log_session` (hand-edited fields in the row; the data as a **bundle**; the original log as a zstd **raw** blob only with `upload_raw`, off by default) | `bundle.py`, `columns.py` |
 | Home-produced | `analysis_board` (read-only on a pit) | pulled only |
 | **Never** | `tracks` (paths on this disk), `checklist_item.done` (this pit's ticks), `config`'s per-screen settings, `webcast.json`, the updater's `channel`, `secrets/`, `sync.json` | |
 
@@ -493,6 +493,11 @@ Every pit machine's team data meets at the hub (`sync.bh-stack.com`,
    one pit deletes it on the others; home keeps it.
 6. **Bundle import remaps enum codes** (they're interned per machine) and
    inserts devices/signals it lacks without overwriting names.
+7. **Everything leaves compressed, losslessly.** A bundle stores samples as
+   columns on each series' exact quantum (`columns.py`), zstd'd: the 3.85 GB
+   Phoenix export is a 2.98 MB bundle (was 14.7 MB), bit-exact, checked by
+   `sync_check`. Team files go zstd'd unless that saves under 10% (the CAD
+   model: 360 → 58 MB). Bundle format 1 (gzip) still imports.
 
 ---
 

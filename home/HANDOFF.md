@@ -15,7 +15,8 @@ file doesn't. Read this file, then `sync-hub/README.md`, then
 
 * **Pit side** (`app/db/sync/`): every team-owned row is recorded by SQLite
   triggers and pushed; the hub's changes are pulled and applied. Robot log
-  sessions travel as **bundles** (gzipped SQLite, names not ids) plus the
+  sessions travel as **bundles** (zstd'd SQLite, names not ids, samples as
+  columns: the 3.85 GB test log is a 2.98 MB bundle, bit-exact), optionally plus the
   **original log file**. `tools/sync_check.py --local` proves it end to end:
   two machines, conflicts, deletes, files, a real log with enum remapping.
 * **The hub** (`sync-hub/`): orders changes, holds each row's newest state and
@@ -69,11 +70,19 @@ a checklist item on a pit shows up in `sync.row_history` within a minute.
 1. `GET /v1/blobs?unacked=1` → for each: `GET /v1/blob/{sha}` to a temp
    file, **verify the SHA-256**, move to the archive
    (`<archive>/<kind>/<sha[:2]>/<sha>`), record in `sync.blob`.
-2. `kind = "bundle"`: gunzip → it's a SQLite file → read its tables (layout
-   in `app/db/sync/bundle.py`) → insert into `telemetry.*` keyed by the
-   bundle's `uid` (from `bundle_meta`). Enum labels go in
+2. `kind = "bundle"`: **don't reimplement the format.** Copy
+   `app/db/sync/columns.py`, `codec.py` and `bundle.open_bundle()` from the
+   pit repo (standard library only; Python 3.14+ for `compression.zstd`).
+   `open_bundle(path, scratch)` turns either bundle format into a plain SQLite
+   file whose tables include `sample` and `sample_1s` → read them → insert
+   into `telemetry.*` keyed by the bundle's `uid` (from `bundle_meta`). Enum
+   labels go in
    `telemetry.session_enum` **per session** (codes differ between pits).
    Use `SqlBulkCopy`-style bulk insert for `sample`; it's millions of rows.
+   `kind = "raw"`: always a zstd frame of the original log (archive it
+   compressed; `zstd -d` restores it). `kind = "file"`: the row's `data`
+   says `codec: "zstd"` (stored compressed; `sha` is the original's) or
+   `"none"` / absent (stored as is).
 3. `POST /v1/blob/{sha}/ack`.
 4. After 30 days, `DELETE /v1/blob/{sha}` for `raw` blobs (the archive has
    them; R2's free tier is 10 GB). Keep `bundle` blobs 90 days: pits that come

@@ -652,6 +652,16 @@ def _check_sync() -> Result:
     from app.db.sync import settings as sync_settings, tables
 
     prefs = sync_settings.load()
+    try:
+        # Bundles, team files and raw logs all leave as zstd; a build that
+        # lost it can't send a log at all.
+        from app.db.sync import codec
+        packed = codec.zstd.compress(b"pit display " * 100, 19)
+        assert codec.zstd.decompress(packed) == b"pit display " * 100
+        zstd_line = f"zstd        ok ({len(packed)} B for 1200 B)"
+    except Exception as e:
+        return Result("sync", False, f"zstd        missing: {type(e).__name__}: {e} "
+                      "(Python's compression.zstd; bundles can't be built)")
     synced = [s.name for s in tables.SPECS] + [tables.LOG_SESSION]
     have = {r[0] for r in db.fetchall(
         "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'sync_%'")}
@@ -664,6 +674,7 @@ def _check_sync() -> Result:
              f"token       {credentials.source(sync_settings.TOKEN_NAME)}",
              f"tables      {len(synced)} synced, {len(have)} triggers",
              f"outbox      {outbox} change{'s' if outbox != 1 else ''} not yet sent",
+             zstd_line,
              f"last        {prefs['last_sync'] or 'never'}"
              + (f" — {prefs['last_result']}" if prefs['last_result'] else "")]
     if missing:

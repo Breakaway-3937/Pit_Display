@@ -45,9 +45,11 @@ DEFAULTS: dict[str, Any] = {
     "interval_s": 60,
     # Download other pits' robot logs. Each session is a few MB to tens of MB.
     "pull_logs": True,
-    # Upload the original log file too, not only the imported data. The home
-    # server archives it; pit machines never download it.
-    "upload_raw": True,
+    # Upload the original log file too, zstd-compressed, for the home archive.
+    # Off by default: the bundle already carries every record (audited
+    # lossless), at ~3 MB where the original is ~110 MB even compressed.
+    # Turn on for a machine that syncs over home Wi-Fi.
+    "upload_raw": False,
     # Team files (judges slides, the CAD model). The model is ~300 MB.
     "sync_files": True,
     # Written by the service, read by the panel.

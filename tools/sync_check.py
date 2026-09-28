@@ -270,6 +270,16 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     with b.env():
         got = docs.root("judges_slides") / "01 Robot.png"
         check("a judges slide travels", got.is_file() and got.read_bytes() == slide.read_bytes())
+    with a.env():
+        notes = docs.root("judges_slides") / "02 Notes.svg"
+        notes.write_text("<svg>" + "<rect x='1' y='2' width='3' height='4'/>" * 60_000 + "</svg>")
+    ra = a.sync(); b.sync(); b.sync()
+    with b.env():
+        got = docs.root("judges_slides") / "02 Notes.svg"
+        check("a compressible file travels compressed and lands exact",
+              got.is_file() and got.read_bytes() == notes.read_bytes()
+              and ra.uploaded_bytes < notes.stat().st_size / 10,
+              f"sent {ra.uploaded_bytes} for {notes.stat().st_size}")
     # A big file goes up in parts (the CAD model is ~300 MB; this is 11 MB
     # with the part size shrunk to R2's 5 MB minimum).
     from app.db.sync import client as client_mod
@@ -284,7 +294,7 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
         client_mod.SINGLE_PUT_MAX, client_mod.PART_SIZE = old
     with b.env():
         got = docs.root("cad") / "robot.glb"
-        check("a large file travels in parts", ra.ok and got.is_file() and
+        check("an incompressible large file travels in parts, uncompressed", ra.ok and got.is_file() and
               got.read_bytes() == model.read_bytes(), str(ra.errors))
     with a.env():
         slide.unlink()
@@ -310,6 +320,9 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     check("A imports the log", res.stored_rows > 0)
     ra = a.sync()
     check("A uploads its bundle", ra.uploaded_bytes > 0 and ra.ok, str(ra.errors))
+    sizes = a.db.fetchone("SELECT bundle_bytes, raw_bytes FROM sync_session_blob")
+    print(f"    log {log.stat().st_size / 1e6:.2f} MB → bundle {sizes[0] / 1e6:.2f} MB, "
+          f"original zstd'd {(sizes[1] or 0) / 1e6:.2f} MB")
     rb = b.sync()
     uid = a.one("SELECT uid FROM log_session")
     sid_b = b.one("SELECT id FROM log_session WHERE uid = ?", (uid,))
@@ -317,16 +330,24 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     if sid_b is not None:
         sid_a = a.one("SELECT id FROM log_session WHERE uid = ?", (uid,))
         q_series = "SELECT COUNT(*) FROM series WHERE session_id = ?"
-        q_samples = ("SELECT COUNT(*), ROUND(SUM(v), 3) FROM samples.sample WHERE series_id IN "
-                     "(SELECT se.id FROM series se JOIN signal g ON g.id = se.signal_id "
-                     " WHERE session_id = ? AND g.value_kind = 'num')")
-        q_1s = "SELECT COUNT(*) FROM samples.sample_1s WHERE series_id IN (SELECT id FROM series WHERE session_id = ?)"
-        q_fault = "SELECT COUNT(*) FROM fault_event WHERE session_id = ?"
         check("same series", a.one(q_series, (sid_a,)) == b.one(q_series, (sid_b,)))
-        sa = tuple(a.db.fetchone(q_samples, (sid_a,)))
-        sb = tuple(b.db.fetchone(q_samples, (sid_b,)))
-        check("same numeric samples (count and sum)", sa == sb, f"{sa} vs {sb}")
-        check("same per-second rollup", a.one(q_1s, (sid_a,)) == b.one(q_1s, (sid_b,)))
+        q_bits = ("SELECT d.device_type, d.can_id, g.device_type, g.name, s.t_ms, s.ord, "
+                  "CASE WHEN g.value_kind = 'enum' THEN NULL ELSE hex(CAST(s.v AS BLOB)) END, "
+                  "quote(s.v) FROM samples.sample s JOIN series se ON se.id = s.series_id "
+                  "JOIN device d ON d.id = se.device_id JOIN signal g ON g.id = se.signal_id "
+                  "WHERE se.session_id = ? AND g.value_kind = 'num' ORDER BY 1, 2, 3, 4, 5, 6")
+        sa = [tuple(r) for r in a.db.fetchall(q_bits, (sid_a,))]
+        sb = [tuple(r) for r in b.db.fetchall(q_bits, (sid_b,))]
+        check("every numeric sample identical, bit for bit", sa == sb and len(sa) > 0,
+              f"{len(sa)} vs {len(sb)}")
+        q_1s = ("SELECT d.device_type, d.can_id, g.name, r.t_s, quote(r.v_min), quote(r.v_max), "
+                "quote(r.v_avg), r.n FROM samples.sample_1s r JOIN series se ON se.id = r.series_id "
+                "JOIN device d ON d.id = se.device_id JOIN signal g ON g.id = se.signal_id "
+                "WHERE se.session_id = ? AND g.value_kind = 'num' ORDER BY 1, 2, 3, 4")
+        check("every per-second rollup identical",
+              [tuple(r) for r in a.db.fetchall(q_1s, (sid_a,))] ==
+              [tuple(r) for r in b.db.fetchall(q_1s, (sid_b,))])
+        q_fault = "SELECT COUNT(*) FROM fault_event WHERE session_id = ?"
         check("same faults", a.one(q_fault, (sid_a,)) == b.one(q_fault, (sid_b,)))
         q_enum = ("SELECT g.device_type || '/' || g.name, e.label, s.t_ms FROM samples.sample s "
                   "JOIN series se ON se.id = s.series_id JOIN signal g ON g.id = se.signal_id "
@@ -338,6 +359,27 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
         joy = [r for r in eb if r[0] == "Robot/DriverStation/Joystick0/Name"]
         check("…including one B coded differently", len(joy) > 0 and
               any(r[1] == "HF Joystick" for r in joy), str(joy[:3]))
+        # A format-1 bundle (gzip, samples as tables) still lands: make one
+        # from A's session and import it on a third machine.
+        import gzip as _gzip
+        import sqlite3 as _sqlite3
+        from app.db.sync import bundle as bundle_mod
+        with a.env():
+            v2 = bundle_mod.build(a.db.path, sid_a, tmp / "legacy")
+            flat = bundle_mod.open_bundle(v2, tmp / "legacy")
+        lc = _sqlite3.connect(flat)
+        lc.execute("DROP TABLE colblob")
+        lc.execute("UPDATE bundle_meta SET v = '1' WHERE k = 'format'")
+        lc.commit()
+        lc.close()
+        v1 = tmp / "legacy" / "old.pitlog.gz"
+        with open(flat, "rb") as src, _gzip.open(v1, "wb") as dst:
+            dst.write(src.read())
+        c = Machine("c", tmp, url, pit_token)
+        with c.env():
+            sid_c = bundle_mod.import_bundle(c.db.path, v1, tmp / "legacy")
+        check("a format-1 bundle still imports",
+              [tuple(r) for r in c.db.fetchall(q_bits, (sid_c,))] == sa)
         b.sql("UPDATE log_session SET match_key = 'qm14' WHERE uid = ?", (uid,))
         b.sync(); a.sync()
         check("a match key typed on B reaches A",

@@ -97,9 +97,11 @@ has data in it, or not at all.
 Durable Object storage bills a row per write, 100,000 a day across the
 account (the Nexus relay shares it). A push writes one row per change plus the
 machine's row; a pull writes the machine's row. Sixty-second cycles on five
-machines is ~15,000 a day at rest. R2's free tier is 10 GB: log bundles are a
-few MB each, raw logs up to 1 GB (`RAW_MAX_BYTES`), the CAD model ~300 MB.
-The home agent deletes raw blobs from R2 once it has archived them.
+machines is ~15,000 a day at rest. R2's free tier is 10 GB with no egress
+fees. Everything is zstd'd before it's sent: log bundles are ~1-3 MB each
+(the 3.85 GB test log is 2.98 MB), the CAD model 58 MB, raw logs (off by
+default) up to 512 MB compressed. The home agent deletes raw blobs from R2
+once it has archived them.
 
 ## Rules
 

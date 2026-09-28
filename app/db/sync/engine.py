@@ -24,6 +24,7 @@ transactions), like the log importer: it must never share the GUI's.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import tempfile
 import time
@@ -33,16 +34,17 @@ from pathlib import Path
 from typing import Callable
 
 from app import paths
-from app.db.sync import bundle, docs, tables
+from app.db.sync import bundle, codec, docs, tables
 from app.db.sync.client import HubClient, SyncError, sha256_file
 from app.db.sync.tables import LOG_SESSION, ANALYSIS_BOARD, Pending
 
 PUSH_BATCH = 100
 PULL_PAGE = 500
 FETCH_PER_CYCLE = 3
-# The original log goes up for the home archive; past this it's skipped
-# (a 4 GB Phoenix text export is not worth an event venue's uplink).
-RAW_MAX_BYTES = 1024 * 1024 * 1024
+# The original log, when it goes up at all (`upload_raw`, off by default: the
+# bundle already carries every record), goes compressed; past this compressed
+# size it's skipped. The 3.85 GB Phoenix export compresses to ~110 MB.
+RAW_MAX_BYTES = 512 * 1024 * 1024
 WAITING_FOR_FILES = ("bundle", "download")
 
 
@@ -213,11 +215,36 @@ class Engine:
             if path is None or not path.is_file():
                 return None
             sha = self.hasher.sha(path)
-            self._say(f"Uploading {path.name}…")
-            self.client.put_blob(path, sha, "file", uid)
-            rep.uploaded_bytes += path.stat().st_size
-            return {"sha": sha, "bytes": path.stat().st_size, "name": path.name}
+            size = path.stat().st_size
+            self._say(f"Compressing {path.name}…")
+            packed, blob, blob_bytes = self._pack(path)
+            try:
+                if packed is None:
+                    blob, blob_bytes, how = sha, size, "none"
+                    self._say(f"Uploading {path.name}…")
+                    self.client.put_blob(path, sha, "file", uid)
+                else:
+                    how = "zstd"
+                    self._say(f"Uploading {path.name} ({blob_bytes / 1e6:.1f} MB)…")
+                    self.client.put_blob(packed, blob, "file", uid)
+            finally:
+                if packed is not None:
+                    packed.unlink(missing_ok=True)
+            rep.uploaded_bytes += blob_bytes
+            return {"sha": sha, "bytes": size, "name": path.name,
+                    "blob": blob, "blob_bytes": blob_bytes, "codec": how}
         raise ValueError(f"unknown table {tbl}")
+
+    @staticmethod
+    def _pack(path: Path) -> tuple[Path | None, str, int]:
+        """zstd `path` to a temp file: (temp, its sha, its bytes), or (None, "", 0)
+        when compression wouldn't save `codec.MIN_SAVING` (a JPG, a PNG)."""
+        tmp = Path(tempfile.mkstemp(suffix=".zst", dir=scratch_dir())[1])
+        sha, size = codec.compress_file(path, tmp)
+        if size > path.stat().st_size * (1 - codec.MIN_SAVING):
+            tmp.unlink(missing_ok=True)
+            return None, "", 0
+        return tmp, sha, size
 
     def _session_payload(self, conn, uid: str, rep: Report) -> dict | None:
         row = conn.execute("SELECT * FROM log_session WHERE uid = ?", (uid,)).fetchone()
@@ -244,13 +271,20 @@ class Engine:
                 if cand and not str(cand).startswith("sync:") and Path(cand).is_file():
                     src = Path(cand)
                     break
-            if src is not None and src.stat().st_size <= RAW_MAX_BYTES:
-                self._say(f"Uploading original {src.name}…")
-                sha = sha256_file(src)
-                self.client.put_blob(src, sha, "raw", src.name)
-                rep.uploaded_bytes += src.stat().st_size
-                blobs.update(raw_sha=sha, raw_bytes=src.stat().st_size)
-                self._save_blobs(conn, blobs)
+            if src is not None:
+                # Raw blobs are always a zstd frame of the original file.
+                self._say(f"Compressing original {src.name}…")
+                tmp = Path(tempfile.mkstemp(suffix=".zst", dir=scratch_dir())[1])
+                try:
+                    sha, size = codec.compress_file(src, tmp)
+                    if size <= RAW_MAX_BYTES:
+                        self._say(f"Uploading original {src.name} ({size / 1e6:.1f} MB)…")
+                        self.client.put_blob(tmp, sha, "raw", src.name + ".zst")
+                        rep.uploaded_bytes += size
+                        blobs.update(raw_sha=sha, raw_bytes=size)
+                        self._save_blobs(conn, blobs)
+                finally:
+                    tmp.unlink(missing_ok=True)
         data = {c: row[c] for c in tables.SESSION_COLS}
         for k in ("bundle_sha", "bundle_bytes", "raw_sha", "raw_bytes"):
             data[k] = blobs.get(k)
@@ -568,8 +602,23 @@ class Engine:
             conn.execute("DELETE FROM sync_pending WHERE tbl = ? AND uid = ?", (ch["tbl"], uid))
             return
         self._say(f"Downloading {path.name}…")
-        self.client.get_blob(data["sha"], path)
-        rep.downloaded_bytes += path.stat().st_size
+        if data.get("codec") == "zstd":
+            tmp = Path(tempfile.mkstemp(suffix=".zst", dir=scratch_dir())[1])
+            part = path.with_name(path.name + ".part")
+            try:
+                self.client.get_blob(data["blob"], tmp)
+                rep.downloaded_bytes += tmp.stat().st_size
+                got, _size = codec.decompress_file(tmp, part)
+                if got != data["sha"]:
+                    part.unlink(missing_ok=True)
+                    raise SyncError(f"{path.name} didn't match its checksum after "
+                                    "decompressing; it will be fetched again.")
+                os.replace(part, path)
+            finally:
+                tmp.unlink(missing_ok=True)
+        else:
+            self.client.get_blob(data["sha"], path)
+            rep.downloaded_bytes += path.stat().st_size
         with self._guarded(conn):
             self._set_doc(conn, docs.FILE, uid, data["sha"])
             self._saw(conn, docs.FILE, uid, ch["seq"])
