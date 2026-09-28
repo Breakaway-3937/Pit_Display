@@ -637,6 +637,48 @@ def _check_nexus() -> Result:
     return Result("nexus", True, "\n".join(lines))
 
 
+def _check_sync() -> Result:
+    """
+    Is every team-owned table still recording its changes?
+
+    Never touches the network. The triggers are what make a local edit reach
+    the other pits; a table that lost one (a migration gone wrong, a hand-
+    edited database) would keep working here and silently never sync, which
+    is the one failure nobody would see until two pits disagree. The token is
+    reported, not required: a pit that doesn't sync is a working pit.
+    """
+    from app import credentials
+    from app.db import db
+    from app.db.sync import settings as sync_settings, tables
+
+    prefs = sync_settings.load()
+    synced = [s.name for s in tables.SPECS] + [tables.LOG_SESSION]
+    have = {r[0] for r in db.fetchall(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'sync_%'")}
+    missing = [f"sync_{t}_{k}" for t in synced for k in ("ins", "upd", "del")
+               if f"sync_{t}_{k}" not in have]
+    outbox = db.fetchone("SELECT COUNT(*) FROM sync_outbox")[0]
+    guard = db.fetchone("SELECT applying FROM sync_guard WHERE id = 1")
+    lines = [f"machine     {prefs['machine_name']} ({prefs['machine_id']})",
+             f"hub         {prefs['url']}" + ("" if prefs["enabled"] else "  (off)"),
+             f"token       {credentials.source(sync_settings.TOKEN_NAME)}",
+             f"tables      {len(synced)} synced, {len(have)} triggers",
+             f"outbox      {outbox} change{'s' if outbox != 1 else ''} not yet sent",
+             f"last        {prefs['last_sync'] or 'never'}"
+             + (f" — {prefs['last_result']}" if prefs['last_result'] else "")]
+    if missing:
+        return Result("sync", False, "\n".join(lines) + "\nmissing     "
+                      + ", ".join(missing))
+    if guard is None or guard[0] != 0:
+        return Result("sync", False, "\n".join(lines)
+                      + "\nguard       stuck on: local edits are not being recorded")
+    if not credentials.present(sync_settings.TOKEN_NAME):
+        return Result("sync", True, "\n".join(lines), critical=False,
+                      warnings=["no sync token: this machine's settings and logs "
+                                "stay on this machine"])
+    return Result("sync", True, "\n".join(lines))
+
+
 def run() -> int:
     """Run every check. Returns a process exit status."""
     # Attach first (a windowed build has no stdout until it does), then make
@@ -652,6 +694,7 @@ def run() -> int:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     os.environ.setdefault("PIT_LEDS_FAKE", "1")
     os.environ.setdefault("PIT_NEXUS_QUIET", "1")
+    os.environ.setdefault("PIT_SYNC_QUIET", "1")
 
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication
@@ -703,6 +746,8 @@ def run() -> int:
         # The control screen's Pit Network panel reads this while it builds.
         from app.webcast import init_webcast
         init_webcast()
+        from app.db.sync.service import init_sync
+        init_sync()
         app.setStyleSheet(dark_qss())
         results.append(_check_fonts())
         results.append(_check_sponsors())
@@ -712,6 +757,7 @@ def run() -> int:
         results.append(_check_network())
         results.append(_check_app_control())
         results.append(_check_nexus())
+        results.append(_check_sync())
         results.append(_check_webcast())
         results.append(_check_qt_warnings())
         results.append(_check_crash_log())

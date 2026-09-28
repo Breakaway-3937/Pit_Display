@@ -16,6 +16,7 @@ uv run main.py --self-check        # boot everything offscreen, exit 0/1
 
 No unit tests and no linter. The checks run the real thing and exit 0/1:
 `--self-check`, `tools/relay_check.py` (`--local` against `wrangler dev`),
+`tools/sync_check.py --local` (starts its own hub),
 `tools/webcast_check.py`, `tools/upgrade_check.py`, `tools/eq_check.py`,
 `tools/led_diag.py` (real LED controller). Run
 the one that covers what you touched.
@@ -25,6 +26,8 @@ the one that covers what you touched.
 | [`DATABASE.md`](DATABASE.md) | **The contract** for every table, query and invariant. Read before touching storage; update it with any table, migration or query |
 | [`NEXUS.md`](NEXUS.md) | The event feed, the relay, every Nexus field |
 | [`nexus-relay/README.md`](nexus-relay/README.md) | The Cloudflare Worker (a separate npm/TypeScript subproject) |
+| [`sync-hub/README.md`](sync-hub/README.md) | The sync hub Worker: API, deploy, budget |
+| [`home/HANDOFF.md`](home/HANDOFF.md) | The home side (SQL Server master, MCP, Ollama), built by a session with access to that server |
 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | Build, release, install, update, the `--self-check` table |
 | [`OPERATOR_GUIDE.md`](OPERATOR_GUIDE.md) | What the crew does. Operator-facing detail goes there, not here |
 
@@ -127,6 +130,7 @@ Safe to import at module level; raise if used before their `init_*()`.
 | `app.nexus.nexus` | `init_nexus()` | config only |
 | `app.nexus.alerts.alerts` | `init_alerts()` | nexus, leds |
 | `app.webcast.webcast` | `init_webcast()` | before the control screen (its Telemetry panel subscribes) |
+| `app.db.sync.service.sync` | `init_sync()` | db, and after every service it refreshes; before the control screen |
 
 **Upgrades keep what people typed, and that's tested:** `tools/upgrade_check.py`
 fills every user-owned table, runs the shipped seed DB and a migration against
@@ -619,6 +623,32 @@ server and no cloudflared, by design.**
   (set by `--self-check`) opens no socket and no timers. **Every surface
   showing this data carries `api.ATTRIBUTION`.**
 
+## Team sync (`app/db/sync/`, `sync-hub/`, `home/`)
+
+Pit machines ⇄ **the hub at `sync.bh-stack.com`** (Worker + one Durable
+Object + R2) ⇄ the **home SQL Server, the master**. DATABASE.md "Sync" is
+the contract (what syncs, the bookkeeping tables, the rules); the home side
+is not in this repo and is built from `home/HANDOFF.md`.
+
+- **Triggers record every edit** (`_v10_sync`), so no writer can forget.
+  The engine writes pulled changes with `sync_guard.applying = 1` from its own
+  connection; nothing else may raise the guard.
+- **Identity is `uid`, never an integer id.** Name-derived where the name is
+  the identity, so stock rows seeded on two machines are one row.
+  References travel as the parent's uid.
+- **The hub decides conflicts** (row-level, on its own seq); only home may
+  `force`. A pit never trusts its own clock.
+- **Machine identity lives in `sync.json`, never the database** (a copied DB
+  would clone it).
+- Logs travel as **bundles** (names, not ids; enum codes remapped on import)
+  plus the original file for the home archive.
+- Off with no `secrets/sync_token`; `PIT_SYNC_QUIET=1` (set by
+  `--self-check`) opens nothing. The self-check's `sync` line fails if a
+  synced table lost a trigger.
+- **The home pipeline's boards** (`analysis_board`, contract
+  `home/contracts/board.schema.json`) mirror `diagnostics.Dashboard`, so a
+  future Analysis face can paint them with the diagnostics painter. Not built.
+
 ## Self-update (`app/update/`)
 
 Tag → CI → private Release → pit machines. Operator side is in DEPLOYMENT.md.
@@ -640,5 +670,4 @@ Windows-only CI (macOS bills 10×).
 
 ## Empty stubs
 
-`app/db/repositories/` and `app/db/sync/` are placeholders for a future
-on-prem SQL Server sync.
+`app/db/repositories/` is a placeholder.

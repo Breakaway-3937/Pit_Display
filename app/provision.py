@@ -11,7 +11,8 @@ up with a typo in it. So the whole setup travels as **one JSON file**:
       "made": "2026-09-15T20:11:03Z",
       "secrets": {
         "nexus_relay_token": "…",             the one key a pit machine needs
-        "nexus_api_key": "…"                  optional — direct fallback
+        "nexus_api_key": "…",                 optional — direct fallback
+        "sync_token": "…"                     optional — the sync hub (app/db/sync/)
       },
       "update_token": "…",                     optional — the GitHub PAT
       "nexus": {"event_key": "2026casf"}       optional — any nexus.json key
@@ -56,7 +57,7 @@ SUFFIX = ".pitsetup.json"
 
 # What may travel in a setup file, so a typo in a hand-edited one is refused
 # rather than silently written as a credential nobody reads.
-KNOWN_SECRETS = ("nexus_relay_token", "nexus_api_key")
+KNOWN_SECRETS = ("nexus_relay_token", "nexus_api_key", "sync_token")
 # Secrets an older build carried. Skipped with a note, never refused: a setup
 # file made last month should still deliver its event key and API key.
 RETIRED_SECRETS = ("nexus_webhook_token",)

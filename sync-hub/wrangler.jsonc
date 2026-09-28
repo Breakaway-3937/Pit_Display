@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pit-sync-hub",
+  // Same account as nexus-relay. Not a secret; the API token is.
+  "account_id": "41c3e7774d59d7355f3bc75d6d5471e3",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+
+  // Deploy FAILS if a DNS record with this name already exists.
+  "routes": [{ "pattern": "sync.bh-stack.com", "custom_domain": true }],
+
+  // One instance ("team") orders every change. See README.md.
+  "durable_objects": {
+    "bindings": [{ "name": "HUB", "class_name": "SyncHub" }]
+  },
+  // Append-only. Never edit a tag once deployed; add v2, v3, …
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SyncHub"] }],
+
+  // Files: log bundles, raw logs, CAD, judges slides. Create it once:
+  //   npx wrangler r2 bucket create pit-sync
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "pit-sync" }],
+
+  // Secrets (PIT_TOKEN, HOME_TOKEN) are set with `wrangler secret put`.
+  "observability": { "enabled": true }
+}

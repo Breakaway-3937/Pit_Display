@@ -129,7 +129,8 @@ Never in the install folder. Updates and reinstalls don't touch it.
 Inside: the database (seeded on first run, **never overwritten**), the imported
 telemetry file, the uploaded CAD model, judges slides, `secrets/` (one file per
 credential), `update_token`, and the per-machine JSON settings (`update.json`,
-`nexus.json`, `webcast.json`). The JSON settings live outside the database so
+`nexus.json`, `webcast.json`, `sync.json`, which holds this machine's sync
+identity and so must never be copied to another machine). The JSON settings live outside the database so
 they're reachable when the database is the broken thing. Uninstalling *asks*
 whether to delete this folder, and defaults to no.
 
@@ -200,6 +201,7 @@ nothing fails.
 | `appcontrol` | Windows Smart App Control state | `WARN` on Evaluation or On: turn it off before an event, or it may block the app |
 | `network` | Qt TLS backend (schannel on Windows) + Python `ssl`, and that HTTPS verifies through the OS (`truststore`) | `FAIL` means the relay socket can never connect; a packaging fault (`PyQt6.QtNetwork` in the spec's `hiddenimports`) |
 | `nexus` | relay/key present, models parse the bundled examples | `WARN` with no relay token and no key means the feed is off |
+| `sync` | every synced table still has its three triggers, the guard is down, token present | `FAIL` means local edits silently stop reaching other pits; `WARN` with no token means this machine doesn't sync |
 | `webcast` | which screens are published, their exact URLs, and that the pages are in the bundle | try the printed URL from the Pi's browser |
 | `qt` | Qt's own warnings this run | full text in `qt_warnings.log` |
 | `crashlog` | the last crash recorded in `crash.log` | `WARN` quotes it; that file is the one to send |

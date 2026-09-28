@@ -13,6 +13,7 @@ somebody looks when something on a screen is wrong:
 | Event feed | which door each piece of event data came through | `nexus.sources()` / `nexus.status_source` |
 | Overhead displays | the Pis on the pit LAN | `webcast.telemetry()` |
 | LED controller | the USB serial link | `leds` |
+| Team sync | this machine ⇄ `sync.bh-stack.com` ⇄ the other pits and home | `sync.last` (the engine's `Report`), `sync.history` |
 | Robot telemetry | logs off the robot, and the CAN-id names | `RobotLogPanel`, embedded whole |
 
 Robot Logs used to be its own sidebar entry. It is embedded here unchanged —
@@ -44,6 +45,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from app import brand
 from app.config import SCREEN_LABELS, config
+from app.db.sync.service import sync
 from app.leds import leds
 from app.nexus import nexus
 from app.nexus import settings as nexus_settings
@@ -186,6 +188,32 @@ class NetworkPanel(QWidget):
         root.addWidget(divider())
         root.addSpacing(16)
 
+        # ── Team sync ─────────────────────────────────────────────────────
+        root.addWidget(eyebrow("Team sync"))
+        root.addSpacing(8)
+        sync_head = QHBoxLayout()
+        sync_head.setSpacing(10)
+        self._sync_dot = StatusDot()
+        sync_head.addWidget(self._sync_dot, alignment=Qt.AlignmentFlag.AlignTop)
+        self._sync_head = label("", "stat_value")
+        self._sync_head.setWordWrap(True)
+        self._sync_head.setStyleSheet("font-size: 15px;")
+        sync_head.addWidget(self._sync_head, stretch=1)
+        root.addLayout(sync_head)
+        root.addSpacing(6)
+        self._sync = label("", "stat_label")
+        self._sync.setWordWrap(True)
+        self._sync.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        root.addWidget(self._sync)
+        root.addSpacing(10)
+        self._sync_btn = RoundedButton("Sync now", variant="secondary")
+        self._sync_btn.clicked.connect(self._sync_now)
+        root.addWidget(self._sync_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+        root.addSpacing(16)
+        root.addWidget(divider())
+        root.addSpacing(16)
+
         # ── Recent ────────────────────────────────────────────────────────
         root.addWidget(eyebrow("Recent drops"))
         root.addSpacing(8)
@@ -211,6 +239,8 @@ class NetworkPanel(QWidget):
         leds.connection_changed.connect(self._on_leds)
         leds.telemetry_changed.connect(self._refresh)
         leds.state_changed.connect(self._refresh)
+        sync.state_changed.connect(self._refresh)
+        sync.progress.connect(self._on_sync_progress)
 
         # One slow tick, only so the ages stay honest while nothing else is
         # happening. Everything that *matters* arrives on a signal; this is
@@ -237,6 +267,12 @@ class NetworkPanel(QWidget):
     def _on_leds(self, _connected: bool, _text: str) -> None:
         self._refresh()
 
+    def _on_sync_progress(self, _text: str) -> None:
+        self._draw_sync()
+
+    def _sync_now(self) -> None:
+        sync.sync_now()
+
     def _resend(self) -> None:
         """Push current state to every connected display, now."""
         webcast.push()
@@ -258,6 +294,7 @@ class NetworkPanel(QWidget):
         self._draw_feed()
         self._draw_displays()
         self._draw_leds()
+        self._draw_sync()
         self._draw_recent()
 
     def _draw_relay(self) -> None:
@@ -570,6 +607,64 @@ class NetworkPanel(QWidget):
             out.append(f"The controller rebooted {t['reboots']}× while connected: "
                        "usually a brown-out when the strips draw too much from its supply.")
         return out
+
+    def _draw_sync(self) -> None:
+        state = sync.state()
+        prefs = sync.prefs
+        rep = sync.last
+        colour = {"ok": brand.STATUS_ONLINE, "syncing": brand.STATUS_PENDING,
+                  "waiting": brand.STATUS_PENDING, "error": brand.STATUS_FAULT
+                  }.get(state, brand.STATUS_IDLE)
+        self._sync_dot.set_color(colour)
+        self._sync_btn.setEnabled(sync.enabled and not sync.busy)
+
+        if state == "unconfigured":
+            self._sync_head.setText("Not set up on this machine")
+            self._sync.setText(
+                "Import a pit setup file that carries the sync token (Event "
+                "Feed → Import setup file…), or put it in secrets/sync_token. "
+                "Until then this machine's settings and logs stay here.")
+            return
+        if state in ("off", "quiet"):
+            self._sync_head.setText("Off on this machine")
+            self._sync.setText(f"{prefs['machine_name']} is not syncing "
+                               "(turned off in sync.json).")
+            return
+
+        if sync.busy:
+            head = sync.activity or "Syncing…"
+        elif rep is None:
+            head = "Starting…"
+        elif rep.ok:
+            head = f"In step · synced {_ago(time.time() - sync.last_at)} ago"
+        else:
+            head = rep.errors[0]
+        self._sync_head.setText(head)
+
+        lines = [f"This machine: {prefs['machine_name']}  ({prefs['machine_id']})",
+                 f"Hub: {prefs['url']}"]
+        if rep is not None:
+            waiting = []
+            if rep.outbox:
+                waiting.append(f"{rep.outbox} change{'s' if rep.outbox != 1 else ''} to send")
+            if rep.waiting:
+                waiting.append(f"{rep.waiting} file{'s' if rep.waiting != 1 else ''} to download")
+            if rep.pending:
+                waiting.append(f"{rep.pending} waiting on something this machine "
+                               "doesn't have (a track, a parent)")
+            lines.append("Waiting: " + (", ".join(waiting) if waiting else "nothing"))
+            lines.append(f"Last cycle: {rep.pushed} sent, {rep.pulled} received"
+                         + (f", {_bytes(rep.uploaded_bytes)} up" if rep.uploaded_bytes else "")
+                         + (f", {_bytes(rep.downloaded_bytes)} down" if rep.downloaded_bytes else "")
+                         + f" · {rep.seconds:.1f}s · at {rep.cursor} of {rep.head}")
+            others = [m for m in rep.machines if m.get("id") != prefs["machine_id"]]
+            for m in others[:6]:
+                role = " (home)" if m.get("role") == "home" else ""
+                lines.append(f"  {m.get('name') or m.get('id')}{role} · last seen "
+                             f"{_ago_ms(m.get('last_seen'))}")
+        for when, line in sync.history[:4]:
+            lines.append(f"{self._clock(when * 1000)}  {line}")
+        self._sync.setText("\n".join(lines))
 
     def _draw_recent(self) -> None:
         lines: list[tuple[float, str]] = []

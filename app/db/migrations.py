@@ -353,3 +353,182 @@ def _v9_seed_eq_presets(conn: sqlite3.Connection) -> None:
         "INSERT OR IGNORE INTO eq_presets (name, preamp, gains, built_in) "
         "VALUES (?, ?, ?, 1)", stock)
 
+
+@register_migration
+def _v10_sync(conn: sqlite3.Connection) -> None:
+    """
+    Sync bookkeeping: every team-owned row gets a `uid`, and every change to
+    one is recorded by a trigger into `sync_outbox`.
+
+    Triggers, not calls in each writer, because a writer that forgets to
+    record its change is a setting that silently never leaves this machine,
+    and there are writers on two connections (the GUI's and the log
+    importer's). The triggers stand down while `sync_guard.applying` is 1,
+    which is how the sync engine writes what it pulled without echoing it
+    back. See app/db/sync/ and DATABASE.md "Sync".
+
+    uids are derived from the name where the name *is* the identity (EQ
+    presets, LED presets, playlists, checklists, CAN devices), so the stock
+    "Flat" preset seeded on two machines is one row at the hub, not two.
+    Anything else gets a random one. A snapshot of the synced tables as of
+    this migration, deliberately not imported from app.db.sync: a migration
+    must do the same thing forever.
+    """
+    import uuid
+
+    # table -> (name-derived uid expression over NEW, or None; watched columns)
+    tables = {
+        "led_presets":      ("'led:' || lower(NEW.name)",
+                             "name, mode, speed, brightness, color"),
+        "eq_presets":       ("'eq:' || lower(NEW.name)",
+                             "name, preamp, gains, built_in"),
+        "playlists":        ("'pl:' || lower(NEW.name)", "name, app_mode"),
+        "playlist_items":   (None, "playlist_id, track_id, position"),
+        "checklist":        ("'cl:' || lower(NEW.name)", "name, position"),
+        # `done` is deliberately not watched: ticks are this pit's live state.
+        "checklist_item":   (None, "checklist_id, text, position"),
+        "admin_credential": ("'admin'",
+                             "algo, iterations, salt, hash, is_default"),
+        "device":           ("'dev:' || NEW.device_type || ':' || NEW.can_id",
+                             "label, subsystem, notes"),
+        # Only the hand-edited fields; the importer's own UPDATE of the row
+        # counts at the end of an import is not a change anyone made.
+        "log_session":      (None, "match_key, notes, keep"),
+    }
+
+    conn.executescript(
+        """
+        CREATE TABLE sync_guard (
+            id       INTEGER PRIMARY KEY CHECK (id = 1),
+            applying INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO sync_guard (id, applying) VALUES (1, 0);
+
+        -- One entry per row with a change not yet accepted by the hub. `rev`
+        -- moves on every re-edit, so a push that raced an edit keeps it.
+        CREATE TABLE sync_outbox (
+            tbl TEXT    NOT NULL,
+            uid TEXT    NOT NULL,
+            op  TEXT    NOT NULL,           -- 'upsert' | 'delete'
+            at  TEXT    NOT NULL DEFAULT (datetime('now')),
+            rev INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (tbl, uid)
+        );
+
+        -- The hub's seq for each row as this machine last saw it: the `base`
+        -- a push is judged against.
+        CREATE TABLE sync_row (
+            tbl TEXT    NOT NULL,
+            uid TEXT    NOT NULL,
+            seq INTEGER NOT NULL,
+            PRIMARY KEY (tbl, uid)
+        ) WITHOUT ROWID;
+
+        -- Pulled changes that couldn't land yet: a parent not here, a track
+        -- this machine doesn't have, a log bundle still to download.
+        CREATE TABLE sync_pending (
+            tbl    TEXT    NOT NULL,
+            uid    TEXT    NOT NULL,
+            seq    INTEGER NOT NULL,
+            op     TEXT    NOT NULL,
+            data   TEXT,
+            reason TEXT,
+            tries  INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (tbl, uid)
+        );
+
+        -- Cursor and epoch. Machine identity is NOT here: a copied database
+        -- would clone it. It lives in sync.json beside the database.
+        CREATE TABLE sync_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+
+        -- A session's files at the hub, once uploaded or downloaded.
+        CREATE TABLE sync_session_blob (
+            uid          TEXT PRIMARY KEY,
+            bundle_sha   TEXT,
+            bundle_bytes INTEGER,
+            raw_sha      TEXT,
+            raw_bytes    INTEGER
+        );
+
+        -- Team settings documents and team files (judges slides, CAD), by
+        -- the hub's key: what this machine last pushed or applied.
+        CREATE TABLE sync_doc (
+            tbl  TEXT NOT NULL,             -- 'setting' | 'file'
+            uid  TEXT NOT NULL,
+            hash TEXT NOT NULL,
+            PRIMARY KEY (tbl, uid)
+        ) WITHOUT ROWID;
+
+        -- Boards written by the home analysis pipeline. Read-only here.
+        CREATE TABLE analysis_board (
+            id         INTEGER PRIMARY KEY,
+            uid        TEXT    NOT NULL UNIQUE,
+            title      TEXT    NOT NULL DEFAULT '',
+            spec       TEXT    NOT NULL,     -- JSON, home/contracts/board.schema.json
+            session_uid TEXT,
+            created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+        """
+    )
+
+    guard = "(SELECT applying FROM sync_guard WHERE id = 1) = 0"
+    random_uid = "lower(hex(randomblob(16)))"
+    for table, (derived, watched) in tables.items():
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN uid TEXT")
+
+        # Backfill: the derived uid where free, a random one otherwise (an old
+        # install can hold "Pit Display" and "PIT DISPLAY" side by side).
+        taken: set[str] = set()
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        for row in conn.execute(f"SELECT rowid, * FROM {table}").fetchall():
+            record = dict(zip(["rowid", *cols], row))
+            uid = None
+            if derived is not None:
+                uid = conn.execute(
+                    "SELECT " + derived.replace("NEW.", ":"), record).fetchone()[0]
+            if not uid or uid in taken:
+                uid = uuid.uuid4().hex
+            taken.add(uid)
+            conn.execute(f"UPDATE {table} SET uid = ? WHERE rowid = ?",
+                         (uid, record["rowid"]))
+            # Everything already here is news to the hub.
+            conn.execute("INSERT INTO sync_outbox (tbl, uid, op) VALUES (?, ?, 'upsert')",
+                         (table, uid))
+        conn.execute(f"CREATE UNIQUE INDEX idx_{table}_uid ON {table}(uid)")
+
+        if derived is None:
+            new_uid = random_uid
+        else:
+            # The derived uid unless a renamed row already holds it.
+            new_uid = (f"CASE WHEN EXISTS (SELECT 1 FROM {table} WHERE uid = {derived}) "
+                       f"THEN {random_uid} ELSE {derived} END")
+        conn.executescript(
+            f"""
+            CREATE TRIGGER sync_{table}_ins AFTER INSERT ON {table}
+            WHEN {guard}
+            BEGIN
+                UPDATE {table} SET uid = {new_uid}
+                 WHERE rowid = NEW.rowid AND NEW.uid IS NULL;
+                INSERT INTO sync_outbox (tbl, uid, op)
+                     SELECT '{table}', uid, 'upsert' FROM {table} WHERE rowid = NEW.rowid
+                ON CONFLICT (tbl, uid) DO UPDATE
+                     SET op = 'upsert', at = excluded.at, rev = rev + 1;
+            END;
+
+            CREATE TRIGGER sync_{table}_upd AFTER UPDATE OF {watched} ON {table}
+            WHEN {guard} AND NEW.uid IS NOT NULL
+            BEGIN
+                INSERT INTO sync_outbox (tbl, uid, op) VALUES ('{table}', NEW.uid, 'upsert')
+                ON CONFLICT (tbl, uid) DO UPDATE
+                     SET op = 'upsert', at = excluded.at, rev = rev + 1;
+            END;
+
+            CREATE TRIGGER sync_{table}_del AFTER DELETE ON {table}
+            WHEN {guard} AND OLD.uid IS NOT NULL
+            BEGIN
+                INSERT INTO sync_outbox (tbl, uid, op) VALUES ('{table}', OLD.uid, 'delete')
+                ON CONFLICT (tbl, uid) DO UPDATE
+                     SET op = 'delete', at = excluded.at, rev = rev + 1;
+            END;
+            """
+        )

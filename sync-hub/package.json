@@ -1,0 +1,25 @@
+{
+  "name": "pit-sync-hub",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Breakaway's sync hub — pit machines and the home server meet here.",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "~5.20260923.1",
+    "typescript": "~7.0.2",
+    "wrangler": "~4.137.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "workerd@1.20260921.1": true
+  }
+}

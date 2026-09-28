@@ -101,6 +101,7 @@ CHECK_URLS = (
     ("GitHub (updates)", "https://api.github.com/"),
     ("frc.nexus (event feed)", "https://frc.nexus/api/v1/events"),
     ("Nexus relay", "https://nexus.bh-stack.com/healthz"),
+    ("Sync hub", "https://sync.bh-stack.com/healthz"),
 )
 
 

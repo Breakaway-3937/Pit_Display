@@ -166,6 +166,41 @@ def main() -> int:
     check("every row is still there", all(again.values()),
           ", ".join(k for k, v in again.items() if not v))
 
+    print("\n── Sync bookkeeping over a used v9 database ───────────────", flush=True)
+    # _v10_sync adds a uid to every team-owned table of a database that
+    # already has rows. Build one at v9, fill it the way an older install
+    # could be filled (two EQ presets differing only in case), then upgrade.
+    v10 = next(i for i, fn in enumerate(database._MIGRATIONS) if fn.__name__ == "_v10_sync")
+    full = list(database._MIGRATIONS)
+    old_path = scratch / "v9" / "pit_display.db"
+    database._MIGRATIONS[:] = full[:v10]
+    try:
+        old = database._Database(old_path)
+        plant(old._conn)
+        old._conn.execute("INSERT INTO eq_presets (name, gains) VALUES ('Pit Display', '0,0,0,0,0,0,0,0,0,0')")
+        old._conn.execute("INSERT INTO eq_presets (name, gains) VALUES ('PIT DISPLAY', '0,0,0,0,0,0,0,0,0,0')")
+        old._conn.commit()
+        rows_before = {t: old.fetchone(f"SELECT COUNT(*) FROM {t}")[0]
+                       for t in ("checklist", "checklist_item", "device", "eq_presets", "led_presets")}
+        old.close()
+    finally:
+        database._MIGRATIONS[:] = full
+    up = database._Database(old_path)
+    check("the v9 database upgrades", up.version > v10,
+          f"v{up.version}")
+    check("its rows all survive", all(survivors(up._conn).values()) and all(
+        up.fetchone(f"SELECT COUNT(*) FROM {t}")[0] == n for t, n in rows_before.items()))
+    no_uid = sum(up.fetchone(f"SELECT COUNT(*) FROM {t} WHERE uid IS NULL")[0] for t in rows_before)
+    check("every team-owned row got a uid", no_uid == 0, f"{no_uid} without")
+    queued = up.fetchone("SELECT COUNT(*) FROM sync_outbox")[0]
+    check("and is queued for its first sync", queued >= sum(rows_before.values()),
+          f"{queued} queued for {sum(rows_before.values())} rows")
+    check("case-twins keep separate identities",
+          up.fetchone("SELECT COUNT(DISTINCT uid) FROM eq_presets WHERE name = 'Pit Display' COLLATE NOCASE")[0] == 2)
+    done = up.fetchone("SELECT done FROM checklist_item WHERE text = ?", (MARKERS["checklist_item"],))[0]
+    check("a ticked item is still ticked", done == 1)
+    up.close()
+
     print("\n── The disposable half ────────────────────────────────────", flush=True)
     samples = paths.data("data", "pit_display_samples.db")
     check("telemetry lives in its own file", samples.exists(), str(samples.name))
@@ -186,6 +221,7 @@ def main() -> int:
     for label, path in (("nexus.json", nset.path()),
                         ("webcast.json", wset.path()),
                         ("update.json", paths.data("update.json")),
+                        ("sync.json", paths.data("sync.json")),
                         ("secrets/", paths.data_root() / "secrets")):
         print(f"  (file) {label:<14} {path}", flush=True)
     print("  (memory) per-screen settings — theme, screen content, slide index,\n"

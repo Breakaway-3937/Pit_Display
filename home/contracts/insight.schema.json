@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sync.bh-stack.com/contracts/insight.schema.json",
+  "title": "Analyst findings",
+  "description": "What the analyst agent hands the designer: findings, each tied to the MCP tool calls that produced its numbers. The designer model sees only this, never the database, so it cannot invent a figure that isn't here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "session_uids", "findings"],
+  "properties": {
+    "schema": { "const": 1 },
+    "session_uids": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "question": { "type": "string", "description": "What the run was asked, e.g. 'What should the pit look at after qm14?'" },
+    "findings": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "claim", "metric", "severity", "evidence"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9_]{1,40}$" },
+          "claim": { "type": "string", "maxLength": 200, "description": "One sentence a pit crew member can act on." },
+          "metric": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value"],
+            "properties": {
+              "name": { "type": "string" },
+              "value": { "type": "number" },
+              "unit": { "type": "string" },
+              "compare_to": { "type": ["number", "null"], "description": "The previous match, the season median, a limit." },
+              "compare_label": { "type": "string" }
+            }
+          },
+          "severity": { "enum": ["ok", "warn", "fault", "idle"] },
+          "subsystem": { "type": ["string", "null"] },
+          "series": {
+            "type": ["object", "null"],
+            "description": "The series behind the metric, if one draws it. Same shape as board.schema.json reading.series.",
+            "properties": {
+              "session_uid": { "type": "string" },
+              "device_type": { "type": "string" },
+              "can_id": { "type": "integer" },
+              "signal": { "type": "string" },
+              "column": { "enum": ["v_min", "v_max", "v_avg"] }
+            },
+            "required": ["session_uid", "device_type", "can_id", "signal"]
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["tool", "args", "value"],
+              "properties": {
+                "tool": { "type": "string" },
+                "args": { "type": "object" },
+                "value": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

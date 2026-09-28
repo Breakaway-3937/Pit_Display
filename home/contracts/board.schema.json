@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sync.bh-stack.com/contracts/board.schema.json",
+  "title": "Analysis board",
+  "description": "What the home pipeline publishes for a pit screen to paint. It mirrors app/robot/diagnostics.py's Dashboard (Reading, Subsystem, fault Reading) field for field, so the pit renders it with the diagnostics board's own painter: nothing here is layout. Travels as the `data` of a hub row {tbl: 'analysis_board', uid, op: 'upsert'}. Every number in a string field must also appear in `evidence` (the pit's 'every number is real' rule); the publisher checks that, not the model.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "title", "headline", "vitals", "evidence"],
+  "properties": {
+    "schema": { "const": 1 },
+    "title": { "type": "string", "maxLength": 60, "description": "Picker label on the control screen, e.g. 'qm14 · battery'." },
+    "session_uid": { "type": ["string", "null"], "description": "log_session uid the board is about, or null for a multi-match board." },
+    "generated_at": { "type": "string", "description": "ISO-8601 UTC." },
+    "models": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "analyst": { "type": "string" },
+        "designer": { "type": "string" }
+      }
+    },
+    "headline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "title", "sentence"],
+      "properties": {
+        "status": { "$ref": "#/$defs/status" },
+        "title": { "type": "string", "maxLength": 40, "description": "The 108px line. A mechanism by name: 'Battery sag', 'All clear'." },
+        "sentence": { "type": "string", "maxLength": 200, "description": "One plain sentence under it." }
+      }
+    },
+    "vitals": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "KPI cards, worst first. Each is a Reading.",
+      "items": { "$ref": "#/$defs/reading" }
+    },
+    "subsystems": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "status"],
+        "properties": {
+          "name": { "type": "string", "maxLength": 24 },
+          "stator_a": { "type": ["number", "null"] },
+          "supply_a": { "type": ["number", "null"] },
+          "pdh_a": { "type": ["number", "null"] },
+          "temp_f": { "type": ["number", "null"] },
+          "status": { "$ref": "#/$defs/status" },
+          "note": { "type": "string", "maxLength": 60 }
+        }
+      }
+    },
+    "faults": {
+      "type": "array",
+      "maxItems": 6,
+      "items": { "$ref": "#/$defs/reading" }
+    },
+    "footer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "left": { "type": "string", "maxLength": 80 },
+        "right": { "type": "string", "maxLength": 80 }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Where every figure came from: the MCP tool call and the value it returned. Filled by the pipeline, not written by the designer model.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tool", "args", "value"],
+        "properties": {
+          "tool": { "type": "string" },
+          "args": { "type": "object" },
+          "value": {}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "status": {
+      "enum": ["ok", "warn", "fault", "idle"],
+      "description": "The robot's own fault flags decide 'fault' (CLAUDE.md, Diagnostics boards). A model may not invent one: 'fault' requires a fault_event in evidence. Red appears only for 'fault'; zero red is allowed, two red regions never."
+    },
+    "reading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "value", "status"],
+      "properties": {
+        "label": { "type": "string", "maxLength": 28 },
+        "value": { "type": "string", "maxLength": 12, "description": "Already formatted: '7.9', '312', 'Yes'." },
+        "unit": { "type": "string", "maxLength": 8 },
+        "status": { "$ref": "#/$defs/status" },
+        "detail": { "type": "string", "maxLength": 80 },
+        "series": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "Which per-second series draws this card's trace. The publisher fetches it and fills `shape`; a model never writes the points.",
+          "properties": {
+            "session_uid": { "type": "string" },
+            "device_type": { "type": "string" },
+            "can_id": { "type": "integer" },
+            "signal": { "type": "string" },
+            "column": { "enum": ["v_min", "v_max", "v_avg"] }
+          },
+          "required": ["session_uid", "device_type", "can_id", "signal"]
+        },
+        "shape": {
+          "type": "array",
+          "maxItems": 120,
+          "items": { "type": "number" },
+          "description": "Filled by the publisher from `series`."
+        }
+      }
+    }
+  }
+}

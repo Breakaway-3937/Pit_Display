@@ -218,6 +218,29 @@ if an API key was also pasted.
 
 ---
 
+## Team sync
+
+Every pit machine shares the team's settings and robot logs through
+`sync.bh-stack.com`, and a copy of everything is kept on the team's server at
+home. Checklists, EQ presets, CAN names, the admin password, the event key,
+judges slides, the CAD model and imported logs all follow automatically,
+about once a minute and a few seconds after any change. **Checklist ticks
+don't**: each pit ticks its own. Neither do the music library, which screens
+are on which monitor, or anything on the Pi cabling.
+
+**Setup:** the pit setup file carries the sync token (made on the dev Mac,
+as for the relay token). With no token the machine works exactly as before
+and keeps everything to itself.
+
+**If two machines change the same thing** before either syncs, the first to
+reach the hub wins and the other shows the change it lost under **Telemetry →
+Team sync**. Make the edit again if it mattered.
+
+**Without internet** everything keeps working; changes wait and go out when
+the machine is back online. Telemetry → Team sync says what's waiting.
+
+---
+
 ## Screens over Ethernet
 
 The overhead panels can be driven by a Raspberry Pi on the pit switch instead of
@@ -281,6 +304,8 @@ key the night before.
 - [ ] Robot `.glb` uploaded; every subsystem isolates
 - [ ] Latest robot log imported; **every CAN id named**
 - [ ] Relay token on the machine; event key set; Event Feed dot green
+- [ ] Sync token on the machine; **Telemetry → Team sync** says "In step", and
+      every other pit machine is listed as seen recently
 - [ ] Each screen on its monitor (or its Pi), filling it
 - [ ] LED box switch in the middle; strips follow the app
 - [ ] Whole setup run **with the internet unplugged** for ten minutes: everything

@@ -48,3 +48,7 @@ vlc/
 
 # Scratch tree for tools/upgrade_check.py — wiped and rebuilt each run
 .upgrade_check/
+
+# Sync identity and preferences — per machine, never shared (app/db/sync/)
+sync.json
+/sync/

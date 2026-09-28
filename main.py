@@ -212,6 +212,7 @@ def _boot(app: QApplication, splash):
         from app import admin, cad_assets, checklist, config, db, judges_slides
         from app import leds, music, nexus, rotation, theme, touch, update, webcast
         from app.nexus import alerts
+        from app.db.sync import service as sync_service
         from app.windows.control_screen import ControlScreen
         from app.windows.presentation_a import PresentationScreenA
         from app.windows.presentation_b import PresentationScreenB
@@ -264,6 +265,10 @@ def _boot(app: QApplication, splash):
         # Queue and inspection alerts: reads the feed, drives the strips, and
         # hands the overhead screens their banner. After both of those.
         mods["alerts"].init_alerts()
+        # Sync after every service it refreshes when a pull lands, and before
+        # the control screen (its Telemetry panel subscribes). Off with no
+        # token. See app/db/sync/.
+        mods["sync_service"].init_sync()
         # Before the control screen, because its Telemetry panel subscribes to
         # this service while it is being built.
         services["webcast"] = mods["webcast"].init_webcast()

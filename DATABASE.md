@@ -104,6 +104,7 @@ side effect. `main.py` does this at the top.
 | 7 | `_v7_robot_logs` | `log_session`, `device`, `signal`, `signal_enum`, `series`, `session_constant`, `fault_event` |
 | 8 | `_v8_checklists` | `checklist`, `checklist_item` |
 | 9 | `_v9_seed_eq_presets` | the five stock `eq_presets` rows, once (was every launch) |
+| 10 | `_v10_sync` | `uid` on every synced table + its triggers; `sync_guard`, `sync_outbox`, `sync_row`, `sync_pending`, `sync_meta`, `sync_session_blob`, `sync_doc`, `analysis_board`. See [Sync](#sync) |
 
 **Never edit a migration that has shipped.** Add a new one. A migration must be
 safe to run against a database that already has data — `_v5` checks
@@ -440,6 +441,61 @@ import — and they are the most diagnostically useful content in the file.
 
 ---
 
+## Sync
+
+Every pit machine's team data meets at the hub (`sync.bh-stack.com`,
+[`sync-hub/`](sync-hub/README.md)); the home SQL Server is the master copy
+([`home/HANDOFF.md`](home/HANDOFF.md)). Code: `app/db/sync/`. Proof:
+`uv run tools/sync_check.py --local`.
+
+### What syncs
+
+| Scope | What | How |
+|---|---|---|
+| Team-owned rows | `led_presets`, `eq_presets`, `playlists`, `playlist_items`, `checklist`, `checklist_item` (not `done`), `admin_credential`, `device` (the CAN names) | triggers → `sync_outbox` → hub; `app/db/sync/tables.py` `SPECS` |
+| Team settings | `nexus.json`'s event and feed keys; `update.json`'s `auto_check`, `check_interval_hours` | `tbl = "setting"`, by hash (`docs.py`) |
+| Team files | `assets/judges_slides/*`, `assets/cad/*` in the data tree | `tbl = "file"` → an R2 blob by SHA-256 |
+| Machine-produced | `log_session` (hand-edited fields in the row; the data as a **bundle**, the original log as a **raw** blob) | `bundle.py` |
+| Home-produced | `analysis_board` (read-only on a pit) | pulled only |
+| **Never** | `tracks` (paths on this disk), `checklist_item.done` (this pit's ticks), `config`'s per-screen settings, `webcast.json`, the updater's `channel`, `secrets/`, `sync.json` | |
+
+### The bookkeeping tables
+
+| Table | Holds |
+|---|---|
+| `uid` column (each synced table) | the row's identity everywhere. **Name-derived** where the name is the identity (`eq:pit default`, `cl:load out`, `dev:TalonFX:11`, `admin`) so two machines' stock rows are one row; random otherwise. Never an integer id: those differ per machine |
+| `sync_guard` | one row; `applying = 1` inside the engine's transactions so the triggers stay quiet. **Committed value is always 0**; `--self-check` fails otherwise |
+| `sync_outbox` | `(tbl, uid)` with an unsent change, its `op`, and `rev` (bumped on every re-edit, so a push that raced an edit keeps it) |
+| `sync_row` | the hub's `seq` for each row as this machine last saw it: the `base` a push is judged on |
+| `sync_pending` | pulled changes that can't land yet: a parent not here, a track not in this library, a bundle or file to download |
+| `sync_meta` | `cursor` (hub seq read up to) and `epoch` (a new one = the hub was rebuilt: re-read from 0) |
+| `sync_session_blob` | a session's `bundle_sha` / `raw_sha` at the hub |
+| `sync_doc` | hash of each setting document / team file as last pushed or applied |
+| `analysis_board` | boards from the home pipeline: `uid`, `title`, `spec` (JSON, `home/contracts/board.schema.json`) |
+
+**Machine identity is not in the database.** `sync.json` beside it holds
+`machine_id`; a copied database must not bring another machine's identity.
+
+### Rules
+
+1. **The hub decides.** A push is rejected if another machine wrote that row
+   since this one last saw it; the pit applies the hub's version and says so
+   in Telemetry. Only home may `force`.
+2. **Writes that came from the hub run with the guard up**, from the engine's
+   own connection. Never write a synced table with the guard up anywhere else:
+   that edit would never leave the machine.
+3. **Adding a synced table:** a `Spec` in `tables.py`, and a new migration
+   with its `uid` column, backfill and three triggers (copy `_v10_sync`).
+   References travel as the parent's uid, never an id.
+4. **A trigger watches only hand-edited columns** (`UPDATE OF …`). The
+   importer's end-of-import `UPDATE log_session SET raw_rows…` is not an edit.
+5. **Deletes are tombstones, kept forever** at the hub. Deleting a session on
+   one pit deletes it on the others; home keeps it.
+6. **Bundle import remaps enum codes** (they're interned per machine) and
+   inserts devices/signals it lacks without overwriting names.
+
+---
+
 ## Queries
 
 Every query lives in a module, not inline in a widget. Add new ones here.
@@ -703,4 +759,6 @@ thread.
   ~4 GB. The plan calls for evicting `samples.sample` on a rolling window while
   keeping `sample_1s`, `series`, `session_constant` and `fault_event` forever.
   `log_session.keep` exists for this and is not yet honoured by anything.
-- **Nightly SQL Server sync.** `app/db/sync/` is an empty stub.
+- **Rendering `analysis_board` on a screen.** Boards arrive and are stored;
+  nothing paints them yet (the plan: an Analysis face built from a
+  `diagnostics.Dashboard`, `home/HANDOFF.md` M6).
