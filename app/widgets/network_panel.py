@@ -653,6 +653,9 @@ class NetworkPanel(QWidget):
                 waiting.append(f"{rep.pending} waiting on something this machine "
                                "doesn't have (a track, a parent)")
             lines.append("Waiting: " + (", ".join(waiting) if waiting else "nothing"))
+            if rep.adopted:
+                lines.append(f"First sync: took the team's version of {rep.adopted} "
+                             "setting(s) this machine had from install")
             lines.append(f"Last cycle: {rep.pushed} sent, {rep.pulled} received"
                          + (f", {_bytes(rep.uploaded_bytes)} up" if rep.uploaded_bytes else "")
                          + (f", {_bytes(rep.downloaded_bytes)} down" if rep.downloaded_bytes else "")

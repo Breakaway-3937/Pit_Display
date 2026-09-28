@@ -187,6 +187,8 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     ra = a.sync()
     rb = b.sync()
     check("both machines reach the hub", ra.ok and rb.ok, str(ra.errors + rb.errors))
+    check("B's first sync adopts the team's stock rows without calling it a conflict",
+          rb.adopted > 0 and not rb.conflicts, f"adopted {rb.adopted}, conflicts {rb.conflicts}")
     check("B merges the stock rows instead of duplicating",
           b.one("SELECT COUNT(*) FROM eq_presets") == 5 and
           b.one("SELECT COUNT(*) FROM checklist WHERE name = 'Pit Checklist'") == 1)
@@ -369,6 +371,19 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     status = home.status()
     check("the hub lists both machines",
           {"check-a", "check-b"} <= {m["id"] for m in status.get("machines", [])})
+    import urllib.error
+    req = urllib.request.Request(url + "/v1/machine/check-b", method="DELETE", headers={
+        "Authorization": f"Bearer {pit_token}", "X-Pit-Machine": "check-a"})
+    try:
+        urllib.request.urlopen(req, timeout=10)
+        refused = False
+    except urllib.error.HTTPError as e:
+        refused = e.code == 403
+    check("a pit may not forget a machine", refused)
+    req = urllib.request.Request(url + "/v1/machine/check-b", method="DELETE", headers={
+        "Authorization": f"Bearer {home_token}", "X-Pit-Machine": "home"})
+    urllib.request.urlopen(req, timeout=10).close()
+    check("home may", "check-b" not in {m["id"] for m in home.status().get("machines", [])})
 
 
 if __name__ == "__main__":

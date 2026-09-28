@@ -52,6 +52,8 @@ class Report:
     pulled: int = 0
     applied: set[str] = field(default_factory=set)
     conflicts: list[str] = field(default_factory=list)
+    # Rows a machine's first sync took from the team instead of its own.
+    adopted: int = 0
     errors: list[str] = field(default_factory=list)
     uploaded_bytes: int = 0
     downloaded_bytes: int = 0
@@ -265,6 +267,9 @@ class Engine:
             {"bundle_sha": None, "bundle_bytes": None, "raw_sha": None, "raw_bytes": None, **b})
 
     def _push(self, conn, rep: Report) -> None:
+        # Never pulled yet: everything here is this machine's install defaults
+        # or its pre-sync data, and the team's copy winning isn't news.
+        first_contact = not self._meta(conn, "epoch")
         entries = [dict(r) for r in conn.execute("SELECT tbl, uid, op, rev FROM sync_outbox")]
         entries.sort(key=lambda e: tables.order_key(e["tbl"]))
         for i in range(0, len(entries), PUSH_BATCH):
@@ -307,9 +312,16 @@ class Engine:
                 elif r["status"] == "conflict":
                     conn.execute(done, (tbl, uid, rev))
                     cur = r.get("current") or {}
-                    rep.conflicts.append(
-                        f"{_label(tbl, uid, data)} was changed on another machine first; "
-                        f"kept that version")
+                    if first_contact:
+                        # A new machine's stock rows and default settings
+                        # meeting the team's: adopting them is the point.
+                        rep.adopted += 1
+                    elif cur.get("op") == op and cur.get("data") == data:
+                        pass        # both machines made the same change
+                    else:
+                        rep.conflicts.append(
+                            f"{_label(tbl, uid, data)} was changed on another machine "
+                            f"first; kept that version")
                     self._apply(conn, cur, rep)
                 else:
                     conn.execute(done, (tbl, uid, rev))

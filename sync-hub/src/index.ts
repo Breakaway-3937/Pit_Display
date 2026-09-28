@@ -285,6 +285,11 @@ export class SyncHub extends DurableObject<Env> {
     this.sql.exec("DELETE FROM blob WHERE sha = ?", sha);
   }
 
+  /** A machine retired or a test run: off every pit's Telemetry list. Its rows stay. */
+  async forgetMachine(id: string): Promise<boolean> {
+    return this.sql.exec("DELETE FROM machine WHERE id = ?", id).rowsWritten > 0;
+  }
+
   async status(): Promise<Record<string, unknown>> {
     const one = (q: string) => Number(this.sql.exec(q).toArray()[0]?.n ?? 0);
     return {
@@ -460,6 +465,10 @@ export default {
       const unacked = url.searchParams.get("unacked") === "1";
       const limit = Number(url.searchParams.get("limit") ?? "500") || 500;
       return json({ blobs: await stub.blobs(unacked, limit) });
+    }
+    if (parts[0] === "machine" && parts.length === 2 && request.method === "DELETE") {
+      if (role !== "home") return json({ error: "only home may forget a machine" }, 403);
+      return json({ ok: await stub.forgetMachine(parts[1]) });
     }
     if (parts[0] === "blob" && parts.length >= 2) {
       return handleBlob(request, env, parts.slice(1), machine, role);

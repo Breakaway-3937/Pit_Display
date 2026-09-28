@@ -60,6 +60,7 @@ Every `/v1/` call carries `Authorization: Bearer <PIT_TOKEN or HOME_TOKEN>` and
 | `GET /v1/blobs` | `?unacked=1&limit=` | `{blobs: [{sha, bytes, kind, name, origin, created, home_acked}]}` |
 | `POST /v1/blob/{sha}/ack` | home only | `{ok}`: home has archived it |
 | `DELETE /v1/blob/{sha}` | home only | removes it from R2 |
+| `DELETE /v1/machine/{id}` | home only | forgets a retired or test machine (its rows stay) |
 
 `kind` is `bundle` (a log session, `app/db/sync/bundle.py`), `raw` (the
 original log file, for the archive) or `file` (judges slides, CAD).
