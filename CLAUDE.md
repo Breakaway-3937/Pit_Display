@@ -65,6 +65,10 @@ the one that covers what you touched.
 - **`crash.log`** (`app/crash_log.py`, installed first thing in `main.py`)
   records unhandled exceptions and native crashes; `--self-check` prints the
   last one. The app has no console, so it's the only record of a failed start.
+- **Python is pinned to 3.14** (`.python-version`, `requires-python`), so CI
+  builds on it too: sync's bundles and uploads use the standard library's
+  `compression.zstd`, which older Pythons lack (the self-check's `sync` line
+  fails without it).
 - **The version is stamped by CI from the tag, never edited.** `app/version.py`
   holds a sentinel that `version.is_release()` refuses.
 - **Python HTTPS goes through `app/net.py`, verified by the OS (`truststore`),
