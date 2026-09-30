@@ -17,6 +17,7 @@ uv run main.py --self-check        # boot everything offscreen, exit 0/1
 No unit tests and no linter. The checks run the real thing and exit 0/1:
 `--self-check`, `tools/relay_check.py` (`--local` against `wrangler dev`),
 `tools/webcast_check.py`, `tools/upgrade_check.py`, `tools/eq_check.py`,
+`tools/battery_check.py` (BFG decoder, simulated cart, panel),
 `tools/led_diag.py` (real LED controller). Run
 the one that covers what you touched.
 
@@ -126,6 +127,7 @@ Safe to import at module level; raise if used before their `init_*()`.
 | `app.admin.admin` | `init_admin()` | db |
 | `app.nexus.nexus` | `init_nexus()` | config only |
 | `app.nexus.alerts.alerts` | `init_alerts()` | nexus, leds |
+| `app.batteries.batteries` | `init_batteries()` | nothing; before the control screen (its Batteries panel subscribes) |
 | `app.webcast.webcast` | `init_webcast()` | before the control screen (its Telemetry panel subscribes) |
 
 **Upgrades keep what people typed, and that's tested:** `tools/upgrade_check.py`
@@ -321,8 +323,8 @@ Clarity under a six-minute clock. Settings are a ruled list (`SettingRow`,
 Touch targets ≥ 46px. **The body scrolls as one** (`_body_scroll`, sidebar and
 settings together) under a fixed top bar.
 
-**Pit Systems:** LED Strips, Music, **Telemetry** (sidebar id `network`), Event
-Feed, Software Updates.
+**Pit Systems:** LED Strips, Music, Batteries (mock-up), **Telemetry** (sidebar
+id `network`), Event Feed, Software Updates.
 
 **Telemetry (`network_panel.py`) is the home of all telemetry.** It has the
 event relay (this machine's socket *and* the relay's own counters), which route
@@ -500,6 +502,33 @@ static), queued ~0.2 ms, 0 redraws/s while static.
   refreshes. STATUS `shows` counts real writes.
 
 Tools: `firmware/pit_probe`, `tools/led_probe.py`, `tools/led_color_check.py`.
+
+## Battery cart (`app/batteries/`, `battery_panel.py`), a mock-up
+
+Live charge state of the batteries on the charging cart, from each one's
+Playing With Fusion **BFG** over CAN: BFGs → USB-CAN adapter → this machine.
+**Nothing touches the robot.** Control → Pit Systems → Batteries.
+
+- **`bfg.py` follows PWF's published spec** (BFG FRC User Manual rev
+  2026-02-27, pp. 22-28): 29-bit ids `0x0A0B<api><dev>`, heartbeat
+  `0x1F0B01<dev>`, little-endian. Current is **+ for discharge**; the panel
+  shows charging as "A in". Known manual ambiguity: Battery Health's
+  capacity/cycles bytes overlap at byte 6 (read as 4-5 / 6-7; verify on a
+  real BFG). Device ID ships as **0**: two new BFGs collide until renumbered
+  (`Battery.clash`, from their serials).
+- **The only command sent is Identify.** Never unlock, calibrate, rename or
+  reset statistics from here; that's PWF's tooling.
+- **Transport is unverified on Windows.** `python-can` (not a dependency
+  yet): a CANivore is SocketCAN on Linux (CTRE's `canivore-usb`), but CTRE
+  documents no raw-frame access on Windows; a generic USB-CAN adapter
+  (`gs_usb`, `slcan`) works there. Proven only against python-can's virtual
+  bus. `PIT_BATTERY_CAN=<interface>:<channel>`.
+- `PIT_BATTERIES_FAKE=1` or the panel's button: a simulated cart (30×
+  speed) that emits real BFG frames through the same decoder. Every line it
+  touches says "simulated". No source → no timer.
+- Next battery is PWF's rule: most charge remaining, then most effective
+  capacity. The bar is the BFG's own charge indicator (solid = remaining,
+  outline = effective capacity, both against design capacity).
 
 ## Music (`app/music/`, `eq_field.py`)
 

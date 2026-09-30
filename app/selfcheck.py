@@ -698,6 +698,8 @@ def run() -> int:
         from app import qt_log
         qt_log.install()
         init_leds()
+        from app.batteries import init_batteries
+        init_batteries()
         init_music()
         init_alerts()
         # The control screen's Pit Network panel reads this while it builds.

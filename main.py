@@ -209,7 +209,7 @@ def _boot(app: QApplication, splash):
     def load_modules():
         # Imported here, not at the top, so the boot screen is already up.
         import app.db.migrations  # noqa: F401 — registers migrations before init_db()
-        from app import admin, cad_assets, checklist, config, db, judges_slides
+        from app import admin, batteries, cad_assets, checklist, config, db, judges_slides
         from app import leds, music, nexus, rotation, theme, touch, update, webcast
         from app.nexus import alerts
         from app.windows.control_screen import ControlScreen
@@ -256,6 +256,9 @@ def _boot(app: QApplication, splash):
         # LEDs after cad_assets — the service subscribes to subsystem_focused
         # so the strips can echo whichever subsystem the CAD viewer flies to.
         services["leds"] = mods["leds"].init_leds()
+        # The charging cart's BFGs (mock-up): idle unless a bus or the
+        # simulation is configured. Before the control screen, which subscribes.
+        services["batteries"] = mods["batteries"].init_batteries()
 
     def services_music():
         services["music"] = mods["music"].init_music()
@@ -307,6 +310,7 @@ def _boot(app: QApplication, splash):
         # (the firmware watchdog takes over from there) and audio released.
         app.aboutToQuit.connect(control.shutdown_managed)
         app.aboutToQuit.connect(services["leds"].shutdown)
+        app.aboutToQuit.connect(services["batteries"].shutdown)
         app.aboutToQuit.connect(services["music"].shutdown)
         app.aboutToQuit.connect(services["nexus"].shutdown)
         app.aboutToQuit.connect(webcast_service.stop)
