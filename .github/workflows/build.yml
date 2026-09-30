@@ -55,10 +55,10 @@ jobs:
       PYTHONIOENCODING: "utf-8"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v10.2.0   # exact: setup-uv publishes no moving v10 tag
         with:
           enable-cache: true
 
@@ -133,7 +133,7 @@ jobs:
           mv "dist/Breakaway Pit Display.zip" \
              "dist/Breakaway-Pit-Display-${VERSION}-windows.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pit-display-windows
           path: |
@@ -158,9 +158,9 @@ jobs:
       PYTHONIOENCODING: "utf-8"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: assets
           merge-multiple: true
