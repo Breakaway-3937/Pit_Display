@@ -39,6 +39,7 @@ from app.widgets.admin_bar import AdminBar
 from app.widgets.helpers import clear_layout, divider, label
 from app.widgets.led_panel import LEDPanel
 from app.widgets.music_panel import MusicPanel
+from app.widgets.battery_panel import BatteryPanel
 from app.widgets.network_panel import NetworkPanel
 from app.widgets.robot_panel import RobotLogPanel
 from app.widgets.update_panel import UpdatePanel
@@ -52,14 +53,14 @@ from app.webcast import settings as webcast_settings
 # the pit owns, so they get their own sidebar group and their own panels.
 # Robot Logs is not its own entry any more: it is a section of Telemetry,
 # which is the home of every kind of telemetry the pit has — robot and link.
-SYSTEMS = ["leds", "music", "network", "nexus", "updates"]
+SYSTEMS = ["leds", "music", "batteries", "network", "nexus", "updates"]
 
 # A window kept alive only for the pit network is laid out and painted but
 # never mapped to a display. Measured: a presentation screen renders its whole
 # chassis correctly this way with no monitor attached, which is the entire
 # basis of publishing a screen from a machine that has no spare video output.
 _NO_SCREEN = Qt.WidgetAttribute.WA_DontShowOnScreen
-SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music",
+SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music", "batteries": "Batteries",
                  "network": "Telemetry", "robot": "Robot Logs",
                  "nexus": "Event Feed", "updates": "Software Updates"}
 
@@ -1315,6 +1316,9 @@ class SystemSettingsPanel(QWidget):
                 "running its animation if this app closes.",
         "music": "Local music for the overhead speakers, with a ten-band "
                  "equaliser for tuning the pit.",
+        "batteries": "The charging cart, live from each battery's fuel gauge: "
+                     "which one to grab next and how long the rest have to go. "
+                     "Mock-up.",
         "network": "Every link the pit depends on — the event relay, the "
                    "overhead displays, the LED controller — and the robot's "
                    "own logs. Where to look first when a screen is wrong.",
@@ -1341,7 +1345,7 @@ class SystemSettingsPanel(QWidget):
             self._BLURBS.get(system_id, "")))
         outer.addSpacing(16)
 
-        self.body = {"leds": LEDPanel, "music": MusicPanel,
+        self.body = {"leds": LEDPanel, "music": MusicPanel, "batteries": BatteryPanel,
                      "network": NetworkPanel, "robot": RobotLogPanel,
                      "nexus": NexusPanel, "updates": UpdatePanel}[system_id]()
         outer.addWidget(self.body)
