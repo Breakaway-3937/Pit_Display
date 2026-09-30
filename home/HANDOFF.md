@@ -10,7 +10,7 @@ Once built, running it is `home/OPERATIONS.md`.
 ## Getting the code
 
 The pit repo is `https://github.com/Breakaway-3937/Pit_Display` (private).
-The sync work is on the **`team-sync`** branch until it's merged into `main`;
+The sync work is on the **`beta`** branch (the future line; `main` stays the stable build) until it's merged into `main`;
 check out whichever holds `app/db/sync/`. Keep this checkout beside the home
 project and **import from it** rather than copying files (see M3): the pit
 repo owns the formats. Python **3.14+** (the bundle reader uses the standard

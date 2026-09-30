@@ -11,7 +11,7 @@ never holds the server's details.
    will live, and check out the branch that has `app/db/sync/`:
    ```bash
    git clone https://github.com/Breakaway-3937/Pit_Display.git
-   cd Pit_Display && git checkout team-sync     # or main, once it's merged
+   cd Pit_Display && git checkout beta          # or main, once it's merged
    ```
 2. Install Python 3.14+ and `uv`. For M6, Ollama with at least one model pulled.
 3. Carry `secrets/sync_home_token` from the dev Mac to the home machine,
@@ -25,7 +25,7 @@ never holds the server's details.
 ---
 
 I'm building the home side of my FRC team's pit data system. The pit display
-repo is checked out at [path to Pit_Display checkout] on the `team-sync`
+repo is checked out at [path to Pit_Display checkout] on the `beta`
 branch. Start by reading, in order: `home/HANDOFF.md`, `home/OPERATIONS.md`,
 `sync-hub/README.md`, the docstrings of `app/db/sync/bundle.py` and
 `app/db/sync/columns.py`, `home/schema.sql`, and the two schemas in
