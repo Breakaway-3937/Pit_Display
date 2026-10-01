@@ -106,6 +106,13 @@ jobs:
       - name: Fetch the VLC runtime
         run: uv run tools/fetch_vlc.py
 
+      # The analysis engine: llama.cpp's server (Vulkan build, ~85 MB unpacked),
+      # so a pit machine needs nothing installed. The model is not bundled; the
+      # Analysis panel downloads it once into the data tree. Pinned build, checked
+      # against GitHub's SHA-256 for the archive.
+      - name: Fetch the analysis engine
+        run: uv run tools/fetch_llama.py
+
       - name: Build
         run: uv run tools/build_app.py --no-model --zip --installer
 

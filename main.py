@@ -121,6 +121,13 @@ def _cli(argv: list[str]) -> int | None:
         print("\n".join(lines))
         return 0 if ok else 1
 
+    if "--mcp" in argv:
+        # This machine's robot logs and analysis runs as an MCP server over
+        # stdio, for Claude Desktop / Claude Code. Read-only. See app/ai/mcp_server.py.
+        from app.ai.mcp_server import serve
+        _close_launcher_splash()        # it serves for as long as the host is connected
+        return serve()
+
     if "--provision" in argv:
         # Apply a pit setup file — keys and the event — from a script or a
         # prompt. The GUI build has no console of its own; borrow the caller's
@@ -213,6 +220,7 @@ def _boot(app: QApplication, splash):
         from app import leds, music, nexus, rotation, theme, touch, update, webcast
         from app.nexus import alerts
         from app.db.sync import service as sync_service
+        from app.ai import service as ai_service
         from app.windows.control_screen import ControlScreen
         from app.windows.presentation_a import PresentationScreenA
         from app.windows.presentation_b import PresentationScreenB
@@ -272,6 +280,10 @@ def _boot(app: QApplication, splash):
         # the control screen (its Telemetry panel subscribes). Off with no
         # token. See app/db/sync/.
         mods["sync_service"].init_sync()
+        # Robot-log analysis by a local model: reads the database, flashes the
+        # strips when a board is published. Before the control screen (its
+        # Analysis panel subscribes). See app/ai/.
+        services["analysis"] = mods["ai_service"].init_analysis()
         # Before the control screen, because its Telemetry panel subscribes to
         # this service while it is being built.
         services["webcast"] = mods["webcast"].init_webcast()
@@ -318,6 +330,7 @@ def _boot(app: QApplication, splash):
         app.aboutToQuit.connect(services["batteries"].shutdown)
         app.aboutToQuit.connect(services["music"].shutdown)
         app.aboutToQuit.connect(services["nexus"].shutdown)
+        app.aboutToQuit.connect(services["analysis"].shutdown)
         app.aboutToQuit.connect(webcast_service.stop)
         # Closing the control panel is quitting the app: it is the only window
         # an operator can reach, and the audience screens have no chrome.

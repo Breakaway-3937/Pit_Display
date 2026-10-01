@@ -21,6 +21,7 @@ rather than by the global mode:
 | `"checklist"` | the pit checklist, pinned |
 | `"diagnostics"` | the diagnostics board, pinned |
 | `"robot_info"` | the robot-info board, pinned |
+| `"analysis"` | the newest analysis board (app/ai/), pinned |
 | `"next_match"` | the next-match board off the Nexus feed, pinned |
 
 Per-screen and not more global modes, on purpose — the useful arrangement in a
@@ -54,6 +55,7 @@ from app.slides import Slide, BOARD, coerce
 from app.theme import apply_theme
 from app.widgets.cad_viewer import CADViewerWidget
 from app.widgets.checklist_overlay import ChecklistOverlay
+from app.widgets.analysis_overlay import AnalysisOverlay
 from app.widgets.diagnostics_overlay import DiagnosticsOverlay
 from app.widgets.robot_info_overlay import RobotInfoOverlay
 from app.widgets.lunch_overlay import LunchOverlay
@@ -80,12 +82,14 @@ class PresentationScreen(QMainWindow):
     _PAGE_DIAGNOSTICS = 5
     _PAGE_ROBOT_INFO  = 6
     _PAGE_NEXT_MATCH  = 7
+    _PAGE_ANALYSIS    = 8
 
     _CONTENT_PAGES = {
         "checklist":   _PAGE_CHECKLIST,
         "diagnostics": _PAGE_DIAGNOSTICS,
         "robot_info":  _PAGE_ROBOT_INFO,
         "next_match":  _PAGE_NEXT_MATCH,
+        "analysis":    _PAGE_ANALYSIS,
     }
 
     BOARD_LABELS = {
@@ -242,6 +246,11 @@ class PresentationScreen(QMainWindow):
         # countdown to the next queue call. Pinned only; never in the rotation.
         self._next_match = NextMatchOverlay(screen_id=self.SCREEN_ID)
         self._stack.addWidget(self._next_match)             # 7
+
+        # The newest analysis board (app/ai/): the local model's read of the
+        # last log, on the diagnostics painter. Pinned only.
+        self._analysis = AnalysisOverlay(screen_id=self.SCREEN_ID)
+        self._stack.addWidget(self._analysis)               # 8
 
         self._board_idx = (len(self.rotation_slides())
                            if self.board_entry() is not None else None)

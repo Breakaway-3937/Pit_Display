@@ -188,7 +188,7 @@ def face_for(screen_id: str) -> str:
         return "judges"
     content = str(config.get(screen_id, "content", "rotation") or "rotation")
     return content if content in (
-        "rotation", "next_match", "checklist", "diagnostics", "robot_info"
+        "rotation", "next_match", "checklist", "diagnostics", "robot_info", "analysis"
     ) else "rotation"
 
 
@@ -242,6 +242,8 @@ def screen_state(screen_id: str, on: bool = True) -> dict[str, Any]:
             state["judges"] = _judges_face()
         elif face in ("diagnostics", "robot_info"):
             state["board"] = board_state(face)
+        elif face == "analysis":
+            state["board"] = analysis_board_state()
         elif face == "next_match":
             state["next_match"] = next_match_state()
     except Exception as e:                    # never let one face kill a page
@@ -283,6 +285,44 @@ def board_state(which: str) -> dict[str, Any]:
                     "status": m.status} for m in board.motors],
         "faults": [{"label": f.label, "value": f.value, "detail": f.detail,
                     "status": f.status} for f in board.faults],
+    }
+
+
+def analysis_board_state() -> dict[str, Any]:
+    """
+    The newest analysis board, in `board_state()`'s shape plus its own
+    headline and charts. Every figure is the stored board's, which passed the
+    pipeline's checks (app/ai/checks.py); the page computes nothing.
+    """
+    from app.ai import boards
+    b = boards.latest()
+    if b is None:
+        return {"which": "analysis", "empty": True}
+    d = b.dashboard
+    charts = []
+    for c in b.charts[:2]:
+        data = c.get("data") or {}
+        charts.append({"kind": c.get("kind"), "title": c.get("title", ""),
+                       "unit": c.get("unit") or "",
+                       "points": [v for _t, v in data.get("points") or []],
+                       "bars": [{"label": x["label"], "value": x["value"]}
+                                for x in (data.get("bars") or [])[:8]]})
+    return {
+        "which": "analysis",
+        "empty": False,
+        "worst": b.headline.get("status") or d.worst,
+        "source": b.spec.get("title", ""),
+        "headline": {"title": b.headline.get("title", ""),
+                     "sentence": b.headline.get("sentence", "")},
+        "vitals": [{"label": r.label, "value": r.value, "unit": r.unit,
+                    "status": r.status, "detail": r.detail,
+                    "shape": list(r.shape)} for r in d.vitals],
+        "subsystems": [{"name": s.name, "status": s.status, "note": s.note,
+                        "stator_a": s.stator_a, "temp_f": s.temp_f}
+                       for s in d.subsystems],
+        "faults": [{"label": f.label, "value": f.value, "detail": f.detail,
+                    "status": f.status} for f in d.faults],
+        "charts": charts,
     }
 
 

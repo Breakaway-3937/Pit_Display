@@ -114,9 +114,16 @@ def main() -> int:
 
     global _APP
     _APP = QApplication(["pit-display"])
+    os.environ.setdefault("PIT_SYNC_QUIET", "1")
+    os.environ.setdefault("PIT_AI_QUIET", "1")
+    from app.ai.service import init_analysis
+    from app.batteries import init_batteries
+    from app.db.sync.service import init_sync
+    # Every service the control screen subscribes to, in main()'s order.
     for fn in (init_config, init_update, init_db, init_rotation,
-               init_judges_slides, init_cad_assets, init_leds, init_music,
-               init_admin, init_checklist, init_nexus, init_alerts):
+               init_judges_slides, init_cad_assets, init_leds, init_batteries,
+               init_music, init_admin, init_checklist, init_nexus, init_alerts,
+               init_sync, init_analysis):
         fn()
 
     from app.windows.control_screen import ControlScreen

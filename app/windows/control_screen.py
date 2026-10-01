@@ -39,6 +39,7 @@ from app.widgets.admin_bar import AdminBar
 from app.widgets.helpers import clear_layout, divider, label
 from app.widgets.led_panel import LEDPanel
 from app.widgets.music_panel import MusicPanel
+from app.widgets.analysis_panel import AnalysisPanel
 from app.widgets.battery_panel import BatteryPanel
 from app.widgets.network_panel import NetworkPanel
 from app.widgets.robot_panel import RobotLogPanel
@@ -53,7 +54,7 @@ from app.webcast import settings as webcast_settings
 # the pit owns, so they get their own sidebar group and their own panels.
 # Robot Logs is not its own entry any more: it is a section of Telemetry,
 # which is the home of every kind of telemetry the pit has — robot and link.
-SYSTEMS = ["leds", "music", "batteries", "network", "nexus", "updates"]
+SYSTEMS = ["leds", "music", "batteries", "network", "analysis", "nexus", "updates"]
 
 # A window kept alive only for the pit network is laid out and painted but
 # never mapped to a display. Measured: a presentation screen renders its whole
@@ -61,7 +62,7 @@ SYSTEMS = ["leds", "music", "batteries", "network", "nexus", "updates"]
 # basis of publishing a screen from a machine that has no spare video output.
 _NO_SCREEN = Qt.WidgetAttribute.WA_DontShowOnScreen
 SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music", "batteries": "Batteries",
-                 "network": "Telemetry", "robot": "Robot Logs",
+                 "network": "Telemetry", "robot": "Robot Logs", "analysis": "Analysis",
                  "nexus": "Event Feed", "updates": "Software Updates"}
 
 # One muted line under each panel's title — where the thing physically is and
@@ -705,7 +706,7 @@ class _StandardSlideRow(QFrame):
         event.accept()
 
 
-# The five faces of Standard mode, in the order an operator would reach for
+# The six faces of Standard mode, in the order an operator would reach for
 # them. Values match `PresentationScreen._CONTENT_PAGES` plus "rotation".
 _CONTENT_CHOICES = [
     ("rotation",    "Slide rotation"),
@@ -713,6 +714,7 @@ _CONTENT_CHOICES = [
     ("checklist",   "Pit checklist"),
     ("diagnostics", "Robot diagnostics"),
     ("robot_info",  "Robot info"),
+    ("analysis",    "Analysis board"),
 ]
 
 
@@ -1322,6 +1324,8 @@ class SystemSettingsPanel(QWidget):
         "network": "Every link the pit depends on — the event relay, the "
                    "overhead displays, the LED controller — and the robot's "
                    "own logs. Where to look first when a screen is wrong.",
+        "analysis": "A local model reads each robot log and writes the crew a "
+                    "board. Rate what it found: the ratings are how it gets better.",
         "robot": "Import telemetry exported off the robot, and name the CAN "
                  "ids so every screen can say “Front-Left Drive” instead of "
                  "“TalonFX 11”.",
@@ -1347,6 +1351,7 @@ class SystemSettingsPanel(QWidget):
 
         self.body = {"leds": LEDPanel, "music": MusicPanel, "batteries": BatteryPanel,
                      "network": NetworkPanel, "robot": RobotLogPanel,
+                     "analysis": AnalysisPanel,
                      "nexus": NexusPanel, "updates": UpdatePanel}[system_id]()
         outer.addWidget(self.body)
         outer.addStretch()

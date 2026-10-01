@@ -532,3 +532,158 @@ def _v10_sync(conn: sqlite3.Connection) -> None:
             END;
             """
         )
+
+
+@register_migration
+def _v11_analysis_run(conn: sqlite3.Connection) -> None:
+    """
+    This machine's log of analysis runs (app/ai/), one row per run, including
+    the rejected and failed ones: that record is how models get judged. Mirrors
+    home's `analysis.run`. Machine-local for now; it doesn't sync.
+    """
+    conn.execute(
+        """
+        CREATE TABLE analysis_run (
+            id            INTEGER PRIMARY KEY,
+            session_uids  TEXT    NOT NULL,          -- JSON array, even for one
+            question      TEXT,
+            analyst       TEXT    NOT NULL,          -- model tag
+            designer      TEXT,
+            status        TEXT    NOT NULL DEFAULT 'running'
+                          CHECK (status IN ('running', 'published', 'rejected', 'failed')),
+            reject_reason TEXT,
+            insights      TEXT,                      -- JSON, insight.schema.json
+            board         TEXT,                      -- JSON, board.schema.json
+            board_uid     TEXT,                      -- analysis_board.uid when published
+            transcript    TEXT,                      -- JSON: both conversations
+            stats         TEXT,                      -- JSON: turns, tokens, seconds
+            started_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            finished_at   TEXT
+        )
+        """
+    )
+
+
+@register_migration
+def _v12_analysis_feedback(conn: sqlite3.Connection) -> None:
+    """
+    The crew's verdict on each analysis run, and analysis joining sync.
+
+    `analysis_feedback`: one row per finding (`finding_id`) and one for the
+    run as a whole (`finding_id` = ''). `rating` is useful / not_useful /
+    wrong, `acted` says the crew did something because of it, and `score`
+    (1–5, run row only) is the run's rank. This is the record that steers
+    model and prompt choices: a run is good when its findings are useful, not
+    when it finds problems.
+
+    **All of it syncs** (DATABASE.md, "Sync"), so a run rated from a Mac in a
+    hotel counts everywhere: `analysis_run` (random uid), `analysis_feedback`
+    (uid = its run's uid + '#' + finding, so the same finding rated on two
+    machines is one row) and the boards this machine makes. Triggers as in
+    `_v10_sync`, written out here because a migration must do the same thing
+    forever.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE analysis_feedback (
+            run_id     INTEGER NOT NULL REFERENCES analysis_run(id) ON DELETE CASCADE,
+            finding_id TEXT    NOT NULL DEFAULT '',   -- '' = the whole run
+            rating     TEXT    CHECK (rating IN ('useful', 'not_useful', 'wrong')),
+            acted      INTEGER NOT NULL DEFAULT 0,
+            score      INTEGER CHECK (score BETWEEN 1 AND 5),
+            note       TEXT,
+            rated_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+            uid        TEXT,
+            PRIMARY KEY (run_id, finding_id)
+        );
+        CREATE UNIQUE INDEX idx_analysis_feedback_uid ON analysis_feedback(uid);
+
+        ALTER TABLE analysis_run ADD COLUMN uid TEXT;
+        UPDATE analysis_run SET uid = lower(hex(randomblob(16))) WHERE uid IS NULL;
+        CREATE UNIQUE INDEX idx_analysis_run_uid ON analysis_run(uid);
+        INSERT INTO sync_outbox (tbl, uid, op)
+             SELECT 'analysis_run', uid, 'upsert' FROM analysis_run;
+        INSERT INTO sync_outbox (tbl, uid, op)
+             SELECT 'analysis_board', uid, 'upsert' FROM analysis_board
+              WHERE uid NOT IN (SELECT uid FROM sync_row WHERE tbl = 'analysis_board');
+        """
+    )
+    guard = "(SELECT applying FROM sync_guard WHERE id = 1) = 0"
+    uids = {
+        "analysis_run": "lower(hex(randomblob(16)))",
+        "analysis_feedback": "(SELECT uid FROM analysis_run WHERE id = NEW.run_id)"
+                             " || '#' || NEW.finding_id",
+        "analysis_board": None,             # always written with its uid
+    }
+    watched = {
+        "analysis_run": "status, designer, reject_reason, insights, board, board_uid, "
+                        "transcript, stats, finished_at",
+        "analysis_feedback": "rating, acted, score, note",
+        "analysis_board": "title, spec",
+    }
+    for table, new_uid in uids.items():
+        set_uid = (f"UPDATE {table} SET uid = {new_uid} "
+                   f"WHERE rowid = NEW.rowid AND NEW.uid IS NULL;" if new_uid else "")
+        conn.executescript(
+            f"""
+            CREATE TRIGGER sync_{table}_ins AFTER INSERT ON {table}
+            WHEN {guard}
+            BEGIN
+                {set_uid}
+                INSERT INTO sync_outbox (tbl, uid, op)
+                     SELECT '{table}', uid, 'upsert' FROM {table} WHERE rowid = NEW.rowid
+                ON CONFLICT (tbl, uid) DO UPDATE
+                     SET op = 'upsert', at = excluded.at, rev = rev + 1;
+            END;
+
+            CREATE TRIGGER sync_{table}_upd AFTER UPDATE OF {watched[table]} ON {table}
+            WHEN {guard} AND NEW.uid IS NOT NULL
+            BEGIN
+                INSERT INTO sync_outbox (tbl, uid, op) VALUES ('{table}', NEW.uid, 'upsert')
+                ON CONFLICT (tbl, uid) DO UPDATE
+                     SET op = 'upsert', at = excluded.at, rev = rev + 1;
+            END;
+
+            CREATE TRIGGER sync_{table}_del AFTER DELETE ON {table}
+            WHEN {guard} AND OLD.uid IS NOT NULL
+            BEGIN
+                INSERT INTO sync_outbox (tbl, uid, op) VALUES ('{table}', OLD.uid, 'delete')
+                ON CONFLICT (tbl, uid) DO UPDATE
+                     SET op = 'delete', at = excluded.at, rev = rev + 1;
+            END;
+            """
+        )
+
+
+@register_migration
+def _v13_tba(conn: sqlite3.Connection) -> None:
+    """
+    TheBlueAlliance data, as home serves it (home/REQUESTS.md R5): the events
+    3937 attends and their matches. **Home-produced and pulled only**, like
+    `analysis_board`: the home server is TBA's proxy and cache and pushes these
+    through the hub, so a pit at an event needs no internet route to TBA. The
+    row is the hub's `data`, kept whole as JSON (`data`), with the columns a
+    query needs pulled out beside it. No triggers: a pit never edits them.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE tba_event (
+            uid        TEXT PRIMARY KEY,          -- event key, e.g. '2026arli'
+            name       TEXT,
+            start_date TEXT,                      -- local calendar date
+            end_date   TEXT,
+            data       TEXT NOT NULL,             -- the whole row as home sent it
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE tba_match (
+            uid         TEXT PRIMARY KEY,         -- match key, e.g. '2026arli_qm14'
+            event_key   TEXT NOT NULL,
+            comp_level  TEXT,
+            match_key   TEXT,                     -- the pit's short form: 'qm14', 'sf1m1'
+            actual_ms   INTEGER,                  -- Unix ms; NULL until played
+            data        TEXT NOT NULL,
+            updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_tba_match_event ON tba_match(event_key, match_key);
+        """
+    )

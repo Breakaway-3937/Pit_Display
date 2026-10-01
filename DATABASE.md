@@ -105,6 +105,9 @@ side effect. `main.py` does this at the top.
 | 8 | `_v8_checklists` | `checklist`, `checklist_item` |
 | 9 | `_v9_seed_eq_presets` | the five stock `eq_presets` rows, once (was every launch) |
 | 10 | `_v10_sync` | `uid` on every synced table + its triggers; `sync_guard`, `sync_outbox`, `sync_row`, `sync_pending`, `sync_meta`, `sync_session_blob`, `sync_doc`, `analysis_board`. See [Sync](#sync) |
+| 11 | `_v11_analysis_run` | `analysis_run`: the log of analysis runs (`app/ai/`). See [Analysis](#analysis) |
+| 12 | `_v12_analysis_feedback` | `analysis_feedback` (the crew's ratings); `uid` on `analysis_run`; sync triggers on `analysis_run`, `analysis_feedback`, `analysis_board` |
+| 13 | `_v13_tba` | `tba_event`, `tba_match`: TheBlueAlliance rows home pushes; pulled only. See [Analysis](#analysis) |
 
 **Never edit a migration that has shipped.** Add a new one. A migration must be
 safe to run against a database that already has data — `_v5` checks
@@ -441,6 +444,58 @@ import — and they are the most diagnostically useful content in the file.
 
 ---
 
+## Analysis
+
+`app/ai/` (the local-model pipeline) reads the log tables only through the
+ten tools in `app/ai/tools.py`, and writes `analysis_run` and
+`analysis_board`; the crew's ratings go in `analysis_feedback`.
+
+#### `analysis_run`
+One row per run, **rejected and failed ones too**: that record is how models
+get judged. Mirrors home's `analysis.run`. `session_uids`, `insights`,
+`board`, `transcript` and `stats` are JSON. `status` is `running` /
+`published` / `rejected` / `failed`; `reject_reason` says which check refused
+it. **Syncs** (random `uid`); runs from other machines arrive here too, so
+`id` is local and `uid` is the identity. `transcript` travels packed
+(zstd + base64, `Spec.packed`): a run's can pass the hub's 256 KB row cap.
+
+#### `analysis_feedback`
+The crew's verdict, entered on Control → Analysis: **the reward signal**.
+Primary key `(run_id, finding_id)`; `finding_id = ''` is the run as a whole.
+`rating` useful / not_useful / wrong (or NULL), `acted` 0/1, `score` 1–5 on
+the run row only. **`uid` = the run's uid + `#` + finding_id**, set by the
+insert trigger, so the same finding rated on two machines is one row and the
+hub's last write wins. Syncs (parent `analysis_run` by `run_uid`).
+
+#### `analysis_board` (written here too)
+Besides the boards home pushes, a pit's own published boards land here, with
+uid **`<session_uid>:<machine_id>-<run id>`** (`multi:…` for several
+sessions). Home's are `<session_uid>:<analysis.run id>`; without the machine
+in it a pit's run 1 would replace home's board 1 on every pit. A pit's own
+boards push up (triggers since `_v12`); pulled ones are written under the
+guard, so they never echo.
+
+#### `tba_event`, `tba_match`
+TheBlueAlliance data, **home-produced, pulled only** (no triggers; a pit never
+edits them): home is TBA's proxy and cache and pushes rows through the hub
+(`home/REQUESTS.md` R5 is the row spec). `data` is the hub row whole (JSON);
+beside it the keys a query needs: `tba_event(uid = event key, name,
+start_date, end_date)`, `tba_match(uid = match key, event_key, comp_level,
+match_key = the short 'qm14' a crew types, actual_ms = Unix ms or NULL)`.
+`app/ai/tools.py` `match_context()` reads them: the log's `match_key` first,
+else the played match within 15 minutes of the log's start.
+
+**Rules the tools keep** (`app/ai/checks.py` enforces the rest):
+
+- Figures are chosen exactly as `app.robot.diagnostics` chooses them; the
+  check proves `session_overview` agrees with the pit board.
+- Floats are rounded to 4 places in tool results, and that rounded figure is
+  the one a model must copy: a metric that differs from every tool result is
+  a rejection, never a correction.
+- Lists cap at 200 rows; `series_1s` at 500 points.
+
+---
+
 ## Sync
 
 Every pit machine's team data meets at the hub (`sync.bh-stack.com`,
@@ -456,7 +511,8 @@ Every pit machine's team data meets at the hub (`sync.bh-stack.com`,
 | Team settings | `nexus.json`'s event and feed keys; `update.json`'s `auto_check`, `check_interval_hours` | `tbl = "setting"`, by hash (`docs.py`) |
 | Team files | `assets/judges_slides/*`, `assets/cad/*` in the data tree | `tbl = "file"` → an R2 blob by SHA-256 |
 | Machine-produced | `log_session` (hand-edited fields in the row; the data as a **bundle**; the original log as a zstd **raw** blob only with `upload_raw`, off by default) | `bundle.py`, `columns.py` |
-| Home-produced | `analysis_board` (read-only on a pit) | pulled only |
+| TheBlueAlliance | `tba_event`, `tba_match` (home pushes; `home/REQUESTS.md` R5) | pulled only; the engine special-cases them |
+| Analysis | `analysis_run`, `analysis_feedback` (the crew's ratings), `analysis_board` (home's and every pit's; a pit's are `<session>:<machine>-<run>`) | triggers → `sync_outbox`; `SPECS` for the first two, the engine special-cases boards |
 | **Never** | `tracks` (paths on this disk), `checklist_item.done` (this pit's ticks), `config`'s per-screen settings, `webcast.json`, the updater's `channel`, `secrets/`, `sync.json` | |
 
 ### The bookkeeping tables
@@ -667,6 +723,10 @@ imported.
 | `app.robot.ingest` | writes everything under `log_session` | `import_log()`, `delete_session()` |
 | `app.robot.wpilog` | reads a `.wpilog` into records | `Reader`, `entry_identity()` |
 | `app.robot.owlet` | shells out to CTRE's extractor | `convert()`, `find_owlet()`, `scratch_dir()` |
+| `app.ai.local` | `analysis_run`; writes its own `analysis_board` rows | `SqliteSink`, `LocalToolbox`, `ThreadDB` |
+| `app.ai.feedback` | `analysis_feedback` | `recent_runs()`, `verdicts()`, `set_rating()`, `set_acted()`, `set_score()`, `scoreboard()` |
+| `app.ai.boards` | reads `analysis_board` for the screens | `latest()`, `to_dashboard()` |
+| `app.ai.tools` | reads the log tables for a model | the nine tools, `call()` |
 
 ---
 
@@ -764,6 +824,9 @@ thread.
   ~4 GB. The plan calls for evicting `samples.sample` on a rolling window while
   keeping `sample_1s`, `series`, `session_constant` and `fault_event` forever.
   `log_session.keep` exists for this and is not yet honoured by anything.
+- **Scoring runs from the ratings.** The ratings sync and are stored;
+  nothing turns them into a per-model / per-prompt score yet (home,
+  `home/REQUESTS.md` R3).
 - **Rendering `analysis_board` on a screen.** Boards arrive and are stored;
   nothing paints them yet (the plan: an Analysis face built from a
   `diagnostics.Dashboard`, `home/HANDOFF.md` M6).

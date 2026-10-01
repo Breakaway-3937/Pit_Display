@@ -20,7 +20,9 @@ a new migration (copy `_v10_sync`'s).
 
 from __future__ import annotations
 
+import base64
 import sqlite3
+from compression import zstd
 from dataclasses import dataclass
 
 
@@ -37,6 +39,9 @@ class Spec:
     update_cols: tuple[str, ...] | None = None
     # Text naturals compare ignoring case, as the panels do (eq.find_preset()).
     nocase: bool = True
+    # Large text columns sent zstd'd and base64'd ({"zstd": …}), to stay well
+    # inside the hub's 256 KB row limit (a run's transcript).
+    packed: tuple[str, ...] = ()
 
 
 # Parents before children: push and apply both walk this order.
@@ -52,6 +57,14 @@ SPECS: tuple[Spec, ...] = (
     Spec("device", ("device_type", "can_id", "label", "subsystem", "notes"),
          natural=("device_type", "can_id"), update_cols=("label", "subsystem", "notes"),
          nocase=False),
+    # Analysis (app/ai/): every machine's runs and the crew's verdicts, so a
+    # run can be rated from anywhere and the record of what was useful is one
+    # record. Runs are machine-produced (only their own machine edits one).
+    Spec("analysis_run", ("session_uids", "question", "analyst", "designer", "status",
+                          "reject_reason", "insights", "board", "board_uid", "transcript",
+                          "stats", "started_at", "finished_at"), packed=("transcript",)),
+    Spec("analysis_feedback", ("finding_id", "rating", "acted", "score", "note", "rated_at"),
+         parent=("run_id", "analysis_run", "run_uid")),
 )
 BY_NAME = {s.name: s for s in SPECS}
 
@@ -62,11 +75,22 @@ SESSION_COLS = ("source_name", "source_kind", "device_serial", "started_at",
                 "match_key", "notes", "keep", "imported_at")
 SESSION_EDITABLE = ("match_key", "notes", "keep")
 
-# Written by the home pipeline, read-only on a pit.
+# Boards from the analysis pipeline: home's arrive, a pit's own are pushed
+# (uid `<session>:<machine>-<run>`, so they never collide with home's).
 ANALYSIS_BOARD = "analysis_board"
 
+# TheBlueAlliance data from home (home/REQUESTS.md R5): pulled only, never
+# pushed. The hub row's `data` is kept whole, keys beside it.
+TBA_EVENT, TBA_MATCH = "tba_event", "tba_match"
+
+
+def short_match_key(match_key: str) -> str:
+    """'2026arli_qm14' → 'qm14', the form a crew types on a log."""
+    return match_key.partition("_")[2] or match_key
+
+
 # Push order for everything the outbox can hold.
-ORDER = [s.name for s in SPECS] + [LOG_SESSION, "setting", "file"]
+ORDER = [s.name for s in SPECS] + [LOG_SESSION, "setting", "file", ANALYSIS_BOARD]
 
 
 def order_key(tbl: str) -> int:
@@ -100,7 +124,20 @@ def serialize(conn: sqlite3.Connection, spec: Spec, uid: str) -> dict | None:
         data[key] = p[0] if p else None
     if spec.name == "playlist_items":
         data["track_key"] = _track_key(conn, row["track_id"])
+    for c in spec.packed:
+        if isinstance(data.get(c), str):
+            data[c] = {"zstd": base64.b64encode(
+                zstd.compress(data[c].encode("utf-8"), 19)).decode("ascii")}
     return data
+
+
+def _unpack(spec: Spec, data: dict) -> dict:
+    out = dict(data)
+    for c in spec.packed:
+        v = out.get(c)
+        if isinstance(v, dict) and "zstd" in v:
+            out[c] = zstd.decompress(base64.b64decode(v["zstd"])).decode("utf-8")
+    return out
 
 
 def apply_upsert(conn: sqlite3.Connection, spec: Spec, uid: str, data: dict) -> str | None:
@@ -110,6 +147,7 @@ def apply_upsert(conn: sqlite3.Connection, spec: Spec, uid: str, data: dict) -> 
     Raises `Pending` when a parent or track isn't here yet. Call with the
     guard up.
     """
+    data = _unpack(spec, data)
     values = {c: data[c] for c in spec.cols if c in data}
     if spec.parent:
         col, parent, key = spec.parent

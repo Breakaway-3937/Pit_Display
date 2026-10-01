@@ -259,6 +259,21 @@ body[data-side="right"] .ledger { flex-direction: row-reverse; }
 .vital svg path { fill: none; stroke: var(--faint); stroke-width: 2; }
 .vital.fault { border-color: var(--red); }
 .vital.fault svg path { stroke: var(--red); }
+/* Analysis charts: the designer picked them, the pipeline filled them. Never red. */
+.charts { display: grid; grid-template-columns: repeat(2, 1fr); gap: calc(22 * var(--u)); margin-top: calc(22 * var(--u)); }
+.chart {
+  border: calc(1.5 * var(--u)) solid var(--rule);
+  border-radius: calc(14 * var(--u));
+  padding: calc(22 * var(--u));
+}
+.chart .label { font-family: var(--mono); font-size: calc(18 * var(--u)); letter-spacing: .12em; color: var(--muted); margin-bottom: calc(12 * var(--u)); }
+.chart svg { width: 100%; height: calc(120 * var(--u)); }
+.chart svg path { fill: none; stroke: var(--faint); stroke-width: 2; }
+.bar { display: grid; grid-template-columns: 38% 1fr calc(110 * var(--u)); align-items: center; gap: calc(12 * var(--u)); font-size: calc(20 * var(--u)); color: var(--body); margin: calc(6 * var(--u)) 0; }
+.bar-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bar-track { height: calc(18 * var(--u)); border-radius: calc(9 * var(--u)); background: var(--rule); overflow: hidden; }
+.bar-fill { display: block; height: 100%; border-radius: calc(9 * var(--u)); background: var(--faint); }
+.bar-value { font-family: var(--mono); color: var(--ink); text-align: right; }
 .motors { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: calc(24 * var(--u)); color: var(--body); }
 .motors th { text-align: left; color: var(--muted); font-size: calc(18 * var(--u)); letter-spacing: .12em; padding-bottom: calc(10 * var(--u)); }
 .motors td { padding: calc(8 * var(--u)) 0; border-top: calc(1 * var(--u)) solid var(--rule); }

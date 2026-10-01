@@ -252,6 +252,9 @@ class _SyncService(QObject):
             attempt(cad_assets.config_changed.emit)
         if "analysis_board" in applied:
             self.boards_changed.emit()
+        if applied & {"analysis_run", "analysis_feedback", "analysis_board"}:
+            from app.ai.service import analysis
+            attempt(analysis.runs_changed.emit)
 
     @staticmethod
     def _reapply_nexus() -> None:

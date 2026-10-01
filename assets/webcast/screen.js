@@ -207,10 +207,18 @@
       return box;
     }
     box.appendChild(h("div", "eyebrow", data.source || "Latest log"));
-    box.appendChild(h("div", "board-status",
-      data.worst === "fault" ? "Fault latched"
-        : data.worst === "warn" ? "Check before the next match"
-        : "Nothing to report"));
+    if (data.headline) {
+      // An analysis board brings its own words; the status set them, not us.
+      box.appendChild(h("div", "board-status", data.headline.title || ""));
+      if (data.headline.sentence) {
+        box.appendChild(h("div", "subline", data.headline.sentence));
+      }
+    } else {
+      box.appendChild(h("div", "board-status",
+        data.worst === "fault" ? "Fault latched"
+          : data.worst === "warn" ? "Check before the next match"
+          : "Nothing to report"));
+    }
     var grid = h("div", "vitals");
     (data.vitals || []).slice(0, 4).forEach(function (v) {
       // Red marks the fault and its origin only — never a second region.
@@ -224,6 +232,34 @@
       grid.appendChild(tile);
     });
     box.appendChild(grid);
+    if ((data.charts || []).length) {
+      // Charts are never red: the board's one red is its fault, if any.
+      var row = h("div", "charts");
+      data.charts.forEach(function (c) {
+        var card = h("div", "chart");
+        card.appendChild(h("div", "label", c.title + (c.unit ? " · " + c.unit : "")));
+        if (c.kind === "bars" && (c.bars || []).length) {
+          var top = Math.max.apply(null, c.bars.map(function (b) {
+            return Math.abs(b.value); })) || 1;
+          c.bars.forEach(function (b) {
+            var line = h("div", "bar");
+            line.appendChild(h("span", "bar-label", b.label));
+            var track = h("span", "bar-track");
+            var fill = h("span", "bar-fill");
+            fill.style.width = (100 * Math.abs(b.value) / top).toFixed(1) + "%";
+            track.appendChild(fill);
+            line.appendChild(track);
+            line.appendChild(h("span", "bar-value", String(+b.value.toPrecision(4))));
+            card.appendChild(line);
+          });
+        } else {
+          var spark = sparkline(c.points, 480, 120);
+          if (spark) card.appendChild(spark);
+        }
+        row.appendChild(card);
+      });
+      box.appendChild(row);
+    }
     return box;
   }
 
@@ -330,6 +366,9 @@
     } else if (s.face === "diagnostics" || s.face === "robot_info") {
       node = faceBoard(s.board || { which: s.face, empty: true });
       el.ledgerLeft.textContent = "LIVE BOARD";
+    } else if (s.face === "analysis") {
+      node = faceBoard(s.board || { which: "analysis", empty: true });
+      el.ledgerLeft.textContent = "ANALYSIS · CHECKED AGAINST THE LOG";
     } else if (s.face === "next_match") {
       node = faceNextMatch(s.next_match || { empty: true });
       el.ledgerLeft.textContent = "NEXT MATCH";

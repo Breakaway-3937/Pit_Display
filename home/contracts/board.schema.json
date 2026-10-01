@@ -49,6 +49,7 @@
           "pdh_a": { "type": ["number", "null"] },
           "temp_f": { "type": ["number", "null"] },
           "status": { "$ref": "#/$defs/status" },
+          "finding": { "type": ["string", "null"], "description": "As reading.finding." },
           "note": { "type": "string", "maxLength": 60 }
         }
       }
@@ -57,6 +58,12 @@
       "type": "array",
       "maxItems": 6,
       "items": { "$ref": "#/$defs/reading" }
+    },
+    "charts": {
+      "type": "array",
+      "maxItems": 4,
+      "description": "Graphs the designer chose, most telling first. The designer picks the kind and names the data (`source`); the publisher fetches it through the same tools into `data`. A chart can't show a figure the database didn't return.",
+      "items": { "$ref": "#/$defs/chart" }
     },
     "footer": {
       "type": "object",
@@ -96,6 +103,7 @@
         "value": { "type": "string", "maxLength": 12, "description": "Already formatted: '7.9', '312', 'Yes'." },
         "unit": { "type": "string", "maxLength": 8 },
         "status": { "$ref": "#/$defs/status" },
+        "finding": { "type": ["string", "null"], "description": "The id of the finding this card shows. The pipeline sets `status` from that finding's severity; a model never chooses a colour." },
         "detail": { "type": "string", "maxLength": 80 },
         "series": {
           "type": ["object", "null"],
@@ -115,6 +123,78 @@
           "maxItems": 120,
           "items": { "type": "number" },
           "description": "Filled by the publisher from `series`."
+        }
+      }
+    },
+    "chart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "title", "source"],
+      "properties": {
+        "kind": {
+          "enum": ["line", "bars", "sessions"],
+          "description": "line: one device's signal across the match (series_1s; source needs device_type, can_id, column v_min/v_max/v_avg). bars: one signal compared across devices (series_stats; column min/max/mean/last). sessions: one signal across matches (compare_sessions; source.session_uids)."
+        },
+        "title": { "type": "string", "maxLength": 48 },
+        "unit": { "type": "string", "maxLength": 8 },
+        "finding": { "type": ["string", "null"], "description": "The id of the finding it illustrates." },
+        "why": { "type": "string", "maxLength": 120, "description": "The designer's reason for this chart and kind. Kept for judging models; not painted." },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["signal"],
+          "properties": {
+            "session_uid": { "type": ["string", "null"] },
+            "session_uids": { "type": "array", "maxItems": 10, "items": { "type": "string" } },
+            "signal": { "type": "string" },
+            "device_type": { "type": ["string", "null"] },
+            "can_id": { "type": ["integer", "null"] },
+            "column": { "enum": ["v_min", "v_max", "v_avg", "min", "max", "mean", "last"] }
+          }
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Filled by the publisher from `source`; a model never writes it. One of points / bars / sessions, by kind, plus the tool call it came from.",
+          "properties": {
+            "tool": { "type": "string" },
+            "args": { "type": "object" },
+            "points": {
+              "type": "array",
+              "maxItems": 120,
+              "items": { "type": "array", "items": { "type": "number" } },
+              "description": "[t_s, value], evenly downsampled."
+            },
+            "bars": {
+              "type": "array",
+              "maxItems": 24,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["label", "value"],
+                "properties": {
+                  "label": { "type": "string" },
+                  "device_type": { "type": "string" },
+                  "can_id": { "type": "integer" },
+                  "value": { "type": "number" }
+                }
+              }
+            },
+            "sessions": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["session_uid"],
+                "properties": {
+                  "session_uid": { "type": "string" },
+                  "min": { "type": ["number", "null"] },
+                  "max": { "type": ["number", "null"] }
+                }
+              }
+            }
+          }
         }
       }
     }

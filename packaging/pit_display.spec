@@ -56,11 +56,24 @@ datas += tree("assets/nexus")
 # `--self-check` looks for all three by name for exactly that reason.
 datas += tree("assets/webcast")
 
+# The analysis contracts: the pipeline validates every model's output against
+# them, so a bundle without them can't publish a board (app/ai/schema.py).
+datas += tree("home/contracts")
+
 # The owlet extractors. Without these a `.hoot` cannot be imported at all, and
 # "no owlet for your platform" is the one failure an operator can neither
 # diagnose nor fix from the error text — so both platforms' binaries ship,
 # always, regardless of which one we are building on.
 datas += tree("tools/owlet")
+
+# llama.cpp's server, the analysis engine (app/ai/runtime.py), on Windows:
+# `tools/fetch_llama.py` puts the pinned Vulkan build in `llama/`. Optional
+# here so a local build without it still succeeds (Ollama then stands in);
+# CI always fetches it, and --self-check's `ai` line fails a frozen Windows
+# build that lost it. The 5 GB model is never bundled: it lives in the data
+# tree, downloaded once from the Analysis panel.
+if sys.platform == "win32":
+    datas += tree("llama", optional=True)
 
 # The VLC runtime, on Windows only. Windows ships no libVLC and a pit machine
 # has none, so without this the music player and the entire equaliser are dead

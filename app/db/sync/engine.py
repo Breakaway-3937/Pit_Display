@@ -208,6 +208,10 @@ class Engine:
             return tables.serialize(conn, spec, uid)
         if tbl == LOG_SESSION:
             return self._session_payload(conn, uid, rep)
+        if tbl == ANALYSIS_BOARD:
+            row = conn.execute("SELECT spec FROM analysis_board WHERE uid = ?",
+                               (uid,)).fetchone()
+            return json.loads(row[0]) if row else None
         if tbl == docs.SETTING:
             return docs.setting_data(uid)
         if tbl == docs.FILE:
@@ -401,7 +405,7 @@ class Engine:
     def _reconcile(self, conn) -> None:
         """Queue every local row the (new) hub doesn't know about."""
         conn.execute("BEGIN")
-        for tbl in [s.name for s in tables.SPECS] + [LOG_SESSION]:
+        for tbl in [s.name for s in tables.SPECS] + [LOG_SESSION, ANALYSIS_BOARD]:
             for (uid,) in conn.execute(
                     f"SELECT uid FROM {tbl} WHERE uid IS NOT NULL AND uid NOT IN "
                     f"(SELECT uid FROM sync_row WHERE tbl = ?)", (tbl,)).fetchall():
@@ -489,6 +493,35 @@ class Engine:
                     self._saw(conn, tbl, uid, seq)
                 else:
                     self._pend(conn, ch, "download")
+            return
+
+        if tbl in (tables.TBA_EVENT, tables.TBA_MATCH):
+            with self._guarded(conn):
+                if op == "delete":
+                    conn.execute(f"DELETE FROM {tbl} WHERE uid = ?", (uid,))
+                elif tbl == tables.TBA_EVENT:
+                    conn.execute(
+                        """INSERT INTO tba_event (uid, name, start_date, end_date, data)
+                           VALUES (?, ?, ?, ?, ?)
+                           ON CONFLICT (uid) DO UPDATE SET name = excluded.name,
+                             start_date = excluded.start_date, end_date = excluded.end_date,
+                             data = excluded.data, updated_at = datetime('now')""",
+                        (uid, data.get("name"), data.get("start_date"), data.get("end_date"),
+                         json.dumps(data)))
+                else:
+                    conn.execute(
+                        """INSERT INTO tba_match (uid, event_key, comp_level, match_key,
+                                                  actual_ms, data)
+                           VALUES (?, ?, ?, ?, ?, ?)
+                           ON CONFLICT (uid) DO UPDATE SET event_key = excluded.event_key,
+                             comp_level = excluded.comp_level, match_key = excluded.match_key,
+                             actual_ms = excluded.actual_ms, data = excluded.data,
+                             updated_at = datetime('now')""",
+                        (uid, data.get("event_key") or uid.partition("_")[0],
+                         data.get("comp_level"), tables.short_match_key(uid),
+                         data.get("actual_time"), json.dumps(data)))
+                self._saw(conn, tbl, uid, seq)
+            rep.applied.add(tbl)
             return
 
         if tbl == ANALYSIS_BOARD:

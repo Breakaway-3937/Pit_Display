@@ -19,6 +19,8 @@ No unit tests and no linter. The checks run the real thing and exit 0/1:
 `tools/sync_check.py --local` (starts its own hub),
 `tools/webcast_check.py`, `tools/upgrade_check.py`, `tools/eq_check.py`,
 `tools/battery_check.py` (BFG decoder, simulated cart, panel),
+`tools/ai_check.py` (analysis pipeline, panel, face, `--mcp`; `--engine llama`
+for a real run on the bundled engine, `--model <tag>` on Ollama),
 `tools/led_diag.py` (real LED controller). Run
 the one that covers what you touched.
 
@@ -29,6 +31,7 @@ the one that covers what you touched.
 | [`nexus-relay/README.md`](nexus-relay/README.md) | The Cloudflare Worker (a separate npm/TypeScript subproject) |
 | [`sync-hub/README.md`](sync-hub/README.md) | The sync hub Worker: API, deploy, budget |
 | [`home/HANDOFF.md`](home/HANDOFF.md) | The home side (SQL Server master, MCP, Ollama), built by a session with access to that server; `home/OPERATIONS.md` runs it, `home/KICKOFF.md` starts it |
+| [`home/REQUESTS.md`](home/REQUESTS.md) | **The channel to the home Claude session**: dated asks, each with a check. The home repo's `CLAUDE.md` imports it. The other direction is `../Database_Robotics_Pipeline/docs/INTEGRATION_GUIDE.md`. A change to a contract home implements gets a request here |
 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | Build, release, install, update, the `--self-check` table |
 | [`OPERATOR_GUIDE.md`](OPERATOR_GUIDE.md) | What the crew does. Operator-facing detail goes there, not here |
 
@@ -109,7 +112,7 @@ A screen is rebuilt from scratch each time it's powered on.
 follows the chassis), `lunch` (`LunchOverlay`, one auto-fitted line, the Trace
 is its red). **Per-screen content** in standard mode
 (`config.get(screen, "content")`): `rotation`, `next_match`, `checklist`,
-`diagnostics`, `robot_info`.
+`diagnostics`, `robot_info`, `analysis`.
 
 **`config`'s per-screen settings are memory-only and reset every launch**
 (theme, content, slide index, `checklist_id`). Anything that must survive a
@@ -137,6 +140,7 @@ Safe to import at module level; raise if used before their `init_*()`.
 | `app.batteries.batteries` | `init_batteries()` | nothing; before the control screen (its Batteries panel subscribes) |
 | `app.webcast.webcast` | `init_webcast()` | before the control screen (its Telemetry panel subscribes) |
 | `app.db.sync.service.sync` | `init_sync()` | db, and after every service it refreshes; before the control screen |
+| `app.ai.service.analysis` | `init_analysis()` | db, leds; after sync (which signals it), before the control screen (its Analysis panel subscribes) |
 
 **Upgrades keep what people typed, and that's tested:** `tools/upgrade_check.py`
 fills every user-owned table, runs the shipped seed DB and a migration against
@@ -332,7 +336,8 @@ Touch targets ≥ 46px. **The body scrolls as one** (`_body_scroll`, sidebar and
 settings together) under a fixed top bar.
 
 **Pit Systems:** LED Strips, Music, Batteries (mock-up), **Telemetry** (sidebar
-id `network`), Event Feed, Software Updates.
+id `network`), **Analysis** (runs and the crew's ratings), Event Feed,
+Software Updates.
 
 **Telemetry (`network_panel.py`) is the home of all telemetry.** It has the
 event relay (this machine's socket *and* the relay's own counters), which route
@@ -656,6 +661,79 @@ server and no cloudflared, by design.**
   (set by `--self-check`) opens no socket and no timers. **Every surface
   showing this data carries `api.ATTRIBUTION`.**
 
+## Robot-log analysis (`app/ai/`)
+
+A local model reads a session through **ten read-only tools** (the home MCP
+server's nine plus `match_context`) and a board comes out: analyst (tool calls → findings, `insight.schema.json`) →
+check → designer (board, `board.schema.json`) → check → publish into
+`analysis_board`. The same `pipeline.analyse()` runs at home with a different
+toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
+`app/ai/`, so home imports it from a checkout.
+
+- **The tools are the home MCP server's contract**: names, arguments, result
+  keys, `args` echoed, floats rounded to 4. Figures chosen as
+  `diagnostics.py` chooses them. No free-form SQL tool, ever.
+- **Models choose and word; `checks.py` decides.** A metric must equal a
+  tool result exactly; prose may display-round; `fault` needs a latched
+  fault cited; one red region. A failure goes back to the model (twice), then
+  the run is rejected and logged (`analysis_run`). Never "fix" a figure.
+- **Charts: the designer picks the kind and source, code fetches the data**
+  (`line` = `series_1s`, `bars` = `series_stats`, `sessions` =
+  `compare_sessions`), only from `chart_options()`: the signals the
+  findings stand on. A model never writes a chart's data or a card's shape.
+- **Code sets every colour**: a card names its finding, `assign_status()`
+  gives it that finding's severity and the headline the worst; one card per
+  finding. The designer only picks and words.
+- **In the app** (`service.py`, `init_analysis()` after sync): a worker
+  thread on its own connection (`tools.using(ThreadDB())`), one run at a
+  time, on each new import (`auto_run`) or the panel's button. The model is
+  unloaded `keep_alive` (1 min) after a run: **16 GB pit machines are the
+  constraint** (qwen3:8b is 6.7 GB loaded; the 30B took ~20 GB and swapped
+  a 24 GB Mac). Preferences in `ai.json`. `PIT_AI_QUIET=1` in `--self-check`.
+- **A published board flashes the strips purple** (sides violet, centre
+  white, 2 s + 1 s). Judges and lunch suppress it like every alert.
+- **The crew's ratings are the reward signal** (`feedback.py`, Control →
+  Analysis): per finding useful / not useful / wrong / acted on, a 1–5 rank
+  per run. Never reward finding problems: a trusted all-clear is useful.
+- **Runs, ratings and a pit's own boards sync** (`analysis_run`,
+  `analysis_feedback`, `analysis_board`), so rating from a Mac anywhere
+  counts everywhere. A transcript is packed (`Spec.packed`, zstd) under the
+  hub's 256 KB row cap. Pit board uids are `<session>:<machine_id>-<run>`,
+  never `<session>:<run>` (home's).
+- **The engine is bundled** (`runtime.py`): llama.cpp's `llama-server`
+  (Windows Vulkan build in `llama/`, `tools/fetch_llama.py`, pinned tag and
+  SHA-256), started for a run on a free local port and stopped `keep_alive`
+  after it. **The model is never in the build**: the panel downloads
+  `Qwen3-8B-Q4_K_M.gguf` once into `models/` in the data tree, resumable,
+  verified against its pinned SHA-256 (`PIT_AI_MODELS` overrides the folder).
+  `-np 1 -cram 256 -fa on -ctk/-ctv q8_0` took it from 9.0 to **6.5 GB**;
+  keep them. `engine: auto` falls back to Ollama (`ollama.py`); both clients
+  return the same `Reply`, and a tool result carries its call's `id`.
+- **The scoreboard** (`feedback.scoreboard()`, top of the panel): per model
+  and `PROMPT_VERSION`, share of rated findings useful / wrong, acted on, mean
+  rank. **Bump `PROMPT_VERSION`** when a prompt, check or tool result changes
+  what a run can say.
+- **The Analysis face** (`analysis_overlay.py`, content `"analysis"`, pinned
+  only): the newest `analysis_board`, converted by `boards.to_dashboard()` and
+  painted by the diagnostics painter, plus a charts band (line across the
+  match, bars across devices; never red). The webcast serves it through
+  `state.analysis_board_state()`.
+- **`--mcp`** (`mcp_server.py`): MCP over stdio, written by hand (no SDK in
+  the bundle), the ten tools plus `analysis_runs` / `analysis_scoreboard`,
+  read-only, from this machine's synced copy. Proven against the official
+  client (mcp 2.2.0). The windowed exe has no `sys.stdin`; `_stdio()` opens
+  the host's pipe handles.
+- **TBA data** (`tba_event`, `tba_match`, `_v13`): home-produced, pulled only;
+  `match_context` names the match a log was (tagged, else nearest start time
+  within 15 min). Home pushes them (`home/REQUESTS.md` R5).
+- **What trials taught the checker** (keep the tests in `ai_check`): a count
+  from `faults` must be the count of the fault (else device) the finding
+  names; `fault` severity follows the named fault's own status; a card's value
+  is only a figure; an evidence value may come from any of the finding's
+  cited results; a retry says where a figure really is (two retries).
+- **Not built:** syncing the scoreboard's prompt text (only its version),
+  multi-session (match-to-match) runs, `breakdown_json` from TBA.
+
 ## Team sync (`app/db/sync/`, `sync-hub/`, `home/`)
 
 Pit machines ⇄ **the hub at `sync.bh-stack.com`** (Worker + one Durable
@@ -680,9 +758,9 @@ is not in this repo and is built from `home/HANDOFF.md`.
 - Off with no `secrets/sync_token`; `PIT_SYNC_QUIET=1` (set by
   `--self-check`) opens nothing. The self-check's `sync` line fails if a
   synced table lost a trigger.
-- **The home pipeline's boards** (`analysis_board`, contract
-  `home/contracts/board.schema.json`) mirror `diagnostics.Dashboard`, so a
-  future Analysis face can paint them with the diagnostics painter. Not built.
+- **Analysis boards** (`analysis_board`, contract
+  `home/contracts/board.schema.json`) mirror `diagnostics.Dashboard`; the
+  Analysis face paints them with the diagnostics painter (`app/ai/`).
 
 ## Self-update (`app/update/`)
 

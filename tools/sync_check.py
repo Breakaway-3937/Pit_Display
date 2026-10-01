@@ -29,6 +29,7 @@ What it proves:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import socket
@@ -396,6 +397,44 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
         a.sync(); b.sync()
         check("deleting a session travels", b.one("SELECT COUNT(*) FROM log_session WHERE uid = ?", (uid,)) == 0)
 
+    print("\nAnalysis: runs, the crew's verdicts, a pit's own boards")
+    transcript = json.dumps({"analyst": [{"role": "tool", "content": "x" * 64}] * 6000})
+    a.sql("""INSERT INTO analysis_run (session_uids, question, analyst, status, insights,
+             transcript, stats) VALUES ('["s1"]', 'q', 'qwen3:8b', 'published',
+             '{"findings": [{"id": "sag"}]}', ?, '{}')""", (transcript,))
+    run_uid = a.one("SELECT uid FROM analysis_run ORDER BY id DESC LIMIT 1")
+    run_a = a.one("SELECT id FROM analysis_run WHERE uid = ?", (run_uid,))
+    a.sql("INSERT INTO analysis_feedback (run_id, finding_id, rating) VALUES (?, 'sag', 'useful')",
+          (run_a,))
+    a.sql("""INSERT INTO analysis_board (uid, title, spec, session_uid)
+             VALUES ('s1:pit-check-a-1', 'A board', '{"title": "A board", "schema": 1}', 's1')""")
+    a.sync(); b.sync()
+    run_b = b.one("SELECT id FROM analysis_run WHERE uid = ?", (run_uid,))
+    check("a run made on A reaches B", run_b is not None)
+    check(f"its transcript survives the trip, packed ({len(transcript) // 1024} KB > the "
+          f"hub's 256 KB row limit unpacked)",
+          b.one("SELECT transcript FROM analysis_run WHERE uid = ?", (run_uid,)) == transcript)
+    check("A's rating reaches B, on B's own copy of the run",
+          b.one("SELECT rating FROM analysis_feedback WHERE run_id = ? AND finding_id = 'sag'",
+                (run_b,)) == "useful")
+    check("a pit's own board reaches the other pit",
+          b.one("SELECT title FROM analysis_board WHERE uid = 's1:pit-check-a-1'") == "A board")
+    b.sql("""INSERT INTO analysis_feedback (run_id, finding_id, score) VALUES (?, '', 5)
+             ON CONFLICT (run_id, finding_id) DO UPDATE SET score = excluded.score""", (run_b,))
+    b.sql("UPDATE analysis_feedback SET rating = 'wrong', acted = 1 "
+          "WHERE run_id = ? AND finding_id = 'sag'", (run_b,))
+    b.sync(); a.sync()
+    check("B's rank for the run reaches A",
+          a.one("SELECT score FROM analysis_feedback WHERE run_id = ? AND finding_id = ''",
+                (run_a,)) == 5)
+    check("B's change of mind reaches A (one row per finding, everywhere)",
+          a.one("SELECT rating || acted FROM analysis_feedback WHERE run_id = ? "
+                "AND finding_id = 'sag'", (run_a,)) == "wrong1"
+          and a.one("SELECT COUNT(*) FROM analysis_feedback WHERE run_id = ?", (run_a,)) == 2)
+    ra, rb = a.sync(), b.sync()
+    check("and then nothing more to move", ra.pushed == rb.pushed == 0,
+          f"A {ra.pushed}, B {rb.pushed}")
+
     print("\nHome")
     home = HubClient(url, home_token, "home", "home", "check")
     target = b.one("SELECT uid FROM checklist WHERE name = 'Load Out'")
@@ -411,6 +450,21 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     a.sync()
     check("home's edit lands", a.one("SELECT COUNT(*) FROM checklist WHERE name = 'Load Out (home)'") == 1)
     check("an analysis board lands", a.one("SELECT title FROM analysis_board WHERE uid = 'board-check'") == "Check board")
+    home.push([
+        {"tbl": "tba_event", "uid": "2026check", "op": "upsert", "base": 0,
+         "data": {"name": "Check Regional", "start_date": "2026-10-07",
+                  "end_date": "2026-10-09", "timezone": "America/Chicago"}},
+        {"tbl": "tba_match", "uid": "2026check_qm14", "op": "upsert", "base": 0,
+         "data": {"event_key": "2026check", "comp_level": "qm", "match_number": 14,
+                  "red_teams": ["3937", "16", "118"], "blue_teams": ["254", "1678", "971"],
+                  "red_score": 120, "blue_score": 98, "winning_alliance": "red",
+                  "actual_time": 1791398400000}}], force=True)
+    a.sync()
+    check("home's TBA event and match land on a pit",
+          a.one("SELECT name FROM tba_event WHERE uid = '2026check'") == "Check Regional"
+          and a.one("SELECT match_key FROM tba_match WHERE uid = '2026check_qm14'") == "qm14")
+    check("…and a pit never sends them back (pulled only)",
+          a.one("SELECT COUNT(*) FROM sync_outbox WHERE tbl LIKE 'tba_%'") == 0)
     status = home.status()
     check("the hub lists both machines",
           {"check-a", "check-b"} <= {m["id"] for m in status.get("machines", [])})

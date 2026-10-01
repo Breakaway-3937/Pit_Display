@@ -690,6 +690,47 @@ def _check_sync() -> Result:
     return Result("sync", True, "\n".join(lines))
 
 
+def _check_ai() -> Result:
+    """
+    Can the analysis pipeline validate a board?
+
+    The contracts in home/contracts/ are data files: a bundle that lost them
+    starts fine and rejects every run. Ollama is reported, not required (no
+    model yet means no analysis, not a broken pit), and only on this machine.
+    """
+    from app import paths
+    from app.ai import runtime, schema, tools
+    from app.ai.ollama import Ollama
+    from app.db import db
+    try:
+        board, insight = schema.load("board"), schema.load("insight")
+        schema.designer_format()
+    except Exception as e:
+        return Result("ai", False, f"contracts   unreadable: {type(e).__name__}: {e}")
+    runs = db.fetchone("SELECT COUNT(*) FROM analysis_run")[0]
+    exe = runtime.binary()
+    model = runtime.model_ready()
+    llm = Ollama()
+    version = llm.version()
+    lines = [f"contracts   board v{board['properties']['schema']['const']}, "
+             f"insight v{insight['properties']['schema']['const']}",
+             f"tools       {len(tools.SPECS)}",
+             f"runs        {runs} logged",
+             f"engine      {exe if exe else 'not bundled'}",
+             f"model       {runtime.MODEL['file']} "
+             + ("downloaded, verified" if model else "not downloaded (Analysis panel)"),
+             f"ollama      {('v' + version) if version else 'not running'} at {llm.url}"]
+    if paths.is_frozen() and sys.platform == "win32" and exe is None:
+        # A packaging fault: CI fetches llama/ (tools/fetch_llama.py).
+        return Result("ai", False, "\n".join(lines) + "\nmissing     llama/llama-server.exe "
+                      "in the bundle: tools/fetch_llama.py, `tree(\"llama\")` in the spec")
+    if not (exe and model) and not version:
+        return Result("ai", True, "\n".join(lines), critical=False,
+                      warnings=["no engine ready: download the model from Control → "
+                                "Analysis to analyse logs on this machine"])
+    return Result("ai", True, "\n".join(lines))
+
+
 def run() -> int:
     """Run every check. Returns a process exit status."""
     # Attach first (a windowed build has no stdout until it does), then make
@@ -706,6 +747,7 @@ def run() -> int:
     os.environ.setdefault("PIT_LEDS_FAKE", "1")
     os.environ.setdefault("PIT_NEXUS_QUIET", "1")
     os.environ.setdefault("PIT_SYNC_QUIET", "1")
+    os.environ.setdefault("PIT_AI_QUIET", "1")
 
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication
@@ -761,6 +803,8 @@ def run() -> int:
         init_webcast()
         from app.db.sync.service import init_sync
         init_sync()
+        from app.ai.service import init_analysis
+        init_analysis()
         app.setStyleSheet(dark_qss())
         results.append(_check_fonts())
         results.append(_check_sponsors())
@@ -771,6 +815,7 @@ def run() -> int:
         results.append(_check_app_control())
         results.append(_check_nexus())
         results.append(_check_sync())
+        results.append(_check_ai())
         results.append(_check_webcast())
         results.append(_check_qt_warnings())
         results.append(_check_crash_log())

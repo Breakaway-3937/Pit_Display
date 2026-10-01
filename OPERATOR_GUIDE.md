@@ -183,6 +183,38 @@ way to re-import.
 
 ---
 
+## Analysis
+
+**Control → Pit Systems → Analysis**
+
+A model on this machine reads each newly imported log and writes the crew a
+board: what to look at before the next match. It takes a few minutes; the
+LED strips **flash purple** when a board is ready. Nothing leaves the pit to
+do it. Every figure on a board is checked against the log before it's shown;
+a run that invents a number is thrown out, and the panel says why.
+
+The engine is built into the app; it needs its model once: **Download the
+model (5.0 GB)** on the panel, on a good connection, before the event. It
+resumes if interrupted and stays through every update. The top line says what
+it's doing or what's missing.
+
+**Put a board on an overhead screen:** pick the screen in the sidebar →
+Content → **Analysis board**. It shows the newest board, with its charts, and
+updates by itself when the next one is ready.
+
+**The scoreboard** at the top shows, for each model, what share of rated
+findings the crew called useful or wrong, how many it acted on, and the mean
+rank. That's how to tell whether a change made it better.
+
+**Rate what it found.** Under each run, mark every finding **Useful**,
+**Not useful** or **Wrong**, tap **Acted on** if the crew did something
+because of it, and rank the run **1–5**. Tap again to undo. Ratings sync to
+every machine, so they can be done later from anywhere. **"All clear" is a
+useful finding when it's right**: rate what saved the crew time, not what
+found the most problems.
+
+---
+
 ## Checklists
 
 Control → Presentation A or B → **Standard content → Checklist** puts a list on

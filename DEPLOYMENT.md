@@ -60,6 +60,11 @@ health check), about a minute of Linux runner time; see
    token** if you have it (below); you can also add it later.
 4. Set the machine up (music, monitors, CAD model, relay token, event):
    [`OPERATOR_GUIDE.md`](OPERATOR_GUIDE.md).
+5. **Download the analysis model once:** Control → Pit Systems → Analysis →
+   **Download the model (5.0 GB)**. Do it on a good connection before the
+   event; it resumes if interrupted, is checked against its published
+   fingerprint, and survives every update. Without it the app runs normally
+   and simply doesn't analyse logs.
 
 **Moving keys without typing them.** On the Mac, with the keys in `secrets/`:
 
@@ -128,8 +133,9 @@ Never in the install folder. Updates and reinstalls don't touch it.
 
 Inside: the database (seeded on first run, **never overwritten**), the imported
 telemetry file, the uploaded CAD model, judges slides, `secrets/` (one file per
-credential), `update_token`, and the per-machine JSON settings (`update.json`,
-`nexus.json`, `webcast.json`, `sync.json`, which holds this machine's sync
+credential), `update_token`, the analysis model (`models/`, 5 GB, downloaded
+once), and the per-machine JSON settings (`update.json`, `nexus.json`,
+`webcast.json`, `ai.json`, `sync.json`, which holds this machine's sync
 identity and so must never be copied to another machine). The JSON settings live outside the database so
 they're reachable when the database is the broken thing. Uninstalling *asks*
 whether to delete this folder, and defaults to no.
@@ -170,8 +176,12 @@ uv run tools/build_app.py --zip --installer    # on Windows: the release artefac
 (Chromium) for the CAD viewer; QtNetwork's TLS plugin and QtWebSockets for the
 relay's `wss://`; the bundled fonts; the CAD viewer and `subsystems.json`; owlet
 for Windows and macOS; on Windows, the libVLC runtime (`tools/fetch_vlc.py`,
-SHA-256-checked); the seed database. **Not in it:** the music (paths only), the
-CAD model in CI builds, the telemetry file, and the relay. About 1.1 GB
+SHA-256-checked) and llama.cpp's `llama-server`, the analysis engine
+(`tools/fetch_llama.py`, Vulkan build, pinned and SHA-256-checked, ~85 MB);
+the analysis contracts (`home/contracts/`); the seed database. **Not in it:**
+the music (paths only), the CAD model in CI builds, **the analysis model**
+(5 GB, downloaded once into the data directory), the telemetry file, and the
+relay. About 1.1 GB
 installed without the model, ~400 MB as the update zip.
 
 ---
@@ -202,12 +212,31 @@ nothing fails.
 | `network` | Qt TLS backend (schannel on Windows) + Python `ssl`, and that HTTPS verifies through the OS (`truststore`) | `FAIL` means the relay socket can never connect; a packaging fault (`PyQt6.QtNetwork` in the spec's `hiddenimports`) |
 | `nexus` | relay/key present, models parse the bundled examples | `WARN` with no relay token and no key means the feed is off |
 | `sync` | every synced table still has its three triggers, the guard is down, token present | `FAIL` means local edits silently stop reaching other pits; `WARN` with no token means this machine doesn't sync |
+| `ai` | the analysis contracts load, the run log, the bundled engine (`llama/llama-server`), the model downloaded and verified, whether Ollama answers | `FAIL` is a packaging fault: contracts missing (`tree("home/contracts")`) or, on a Windows build, no `llama/` (`fetch_llama.py`); `WARN` means no engine is ready yet: download the model from Control → Analysis |
 | `webcast` | which screens are published, their exact URLs, and that the pages are in the bundle | try the printed URL from the Pi's browser |
 | `qt` | Qt's own warnings this run | full text in `qt_warnings.log` |
 | `crashlog` | the last crash recorded in `crash.log` | `WARN` quotes it; that file is the one to send |
 | `windows` | all four built and rendered | |
 
 ---
+
+## Claude on a pit machine (`--mcp`)
+
+Any machine running the pit app can serve its robot logs and analysis runs to
+Claude Desktop or Claude Code over MCP, read-only, from its own synced copy:
+no tunnel, works offline. Claude Desktop → Settings → Developer → Edit Config:
+
+```json
+{ "mcpServers": { "breakaway-pit": {
+    "command": "C:\\Users\\<you>\\AppData\\Local\\Programs\\Breakaway Pit Display\\current\\Breakaway Pit Display.exe",
+    "args": ["--mcp"] } } }
+```
+
+From a checkout (the dev Mac): `"command": "uv"`, `"args": ["run",
+"--directory", "/path/to/Pit_Display", "main.py", "--mcp"]`. Twelve tools: the
+ten the analyst uses, `analysis_runs` (findings and the crew's verdicts) and
+`analysis_scoreboard`. If the host can't start it, `mcp.log` in the data
+directory says why.
 
 ## "Certificate verify failed"
 

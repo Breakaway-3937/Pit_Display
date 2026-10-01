@@ -160,13 +160,45 @@ LLM's context is the budget):
 | `device_names` | | device_type, can_id, label, subsystem (from `team.device`) |
 
 Every tool result must include the arguments it ran with, so the pipeline can
-copy them into `evidence`. **No free-form SQL tool** for a local model: the
+copy them into `evidence`.
+
+**Two additions from the first real trials (2026-09-30); home's server must
+match, `app/ai/tools.py` is the reference:**
+
+* `faults` also returns `summary` (latched faults grouped by fault:
+  `fault`, `status` fault/warn as the pit board ranks them, `n_devices`,
+  `devices`) and `by_device` (`device`, `device_type`, `can_id`, `n_faults`,
+  `faults`). Without them the model counts rows itself, which the checks
+  reject; and a count is only accepted when it is the count of the fault or
+  device the finding names.
+* each `session_overview` vital carries `signal` and `column`: the series
+  the figure was read from (None for a derived figure such as CAN errors).
+  The pipeline uses them to offer the designer a chart of that figure. **No free-form SQL tool** for a local model: the
 tools *are* the safety rail.
 
 **Check:** `npx @modelcontextprotocol/inspector uv run home_mcp.py` opens the
 MCP Inspector in a browser; call each tool by hand.
 
 ### M6. The two-agent pipeline (Ollama)
+
+**Built in the pit repo (2026-09-30): import it, don't write a second one.**
+`app/ai/pipeline.py`'s `analyse(toolbox, sink, llm, session_uids, analyst=…,
+designer=…)` is the whole run below, with no Qt, importable from the checkout
+like `bundle.py`. Home supplies the two ends (`pipeline.Toolbox`,
+`pipeline.Sink`):
+
+* **Toolbox:** `specs()` returns the MCP server's tools as
+  `{name, description, input_schema}`; `call(name, args)` returns a tool's
+  `structured_content`. A thin wrapper over the MCP `ClientSession`.
+* **Sink:** `start_run` inserts `analysis.run` (status `running`) and returns
+  its id; `finish_run(id, status, designer, reject_reason, insights, board,
+  board_uid, transcript, stats)` updates it; `board_uid` returns
+  `<session_uid>:<run id>` (pits use `<session_uid>:<machine_id>-<run>`, so
+  the two never collide); `publish(uid, board)` inserts into
+  `sync.push_queue`.
+
+`uv run tools/ai_check.py` in the pit checkout proves the checks without a
+model; `--model <tag>` runs it for real. The steps it implements:
 
 Runs after M3 ingests a new session (or on demand):
 
@@ -175,17 +207,25 @@ Runs after M3 ingests a new session (or on demand):
    the next match?"), calls MCP tools, and must answer in
    `insight.schema.json`. Pass that schema as Ollama's `format` (structured
    output) on the final turn. Store the whole transcript in `analysis.run`.
-2. **Validate the insights** in code: schema-valid; every `metric.value`
-   equals a number in its `evidence`; `severity: fault` only with a `faults`
-   tool result behind it. Reject → record why, stop. Never "fix" a figure.
-3. **Designer** (can be a smaller model, no tools): given *only* the
-   insights JSON and the board schema, fills `board.schema.json` via
-   `format`. Its job is choosing and wording: which findings become cards,
-   worst first, the headline, short labels. It never sees the database.
+   Code runs `session_overview` first and hands it over, to ground the run.
+2. **Validate the insights** in code (`app/ai/checks.py`): schema-valid;
+   every evidence item names a call actually made; every `metric.value`
+   equals a number in a cited result; `severity: fault` only with a latched
+   fault cited. Problems go back to the model once; a second failure is
+   rejected, recorded, stopped. Never "fix" a figure.
+3. **Designer** (no tools; one model for both roles is fine): given *only*
+   the insights JSON and the **chart options** (the signals the findings
+   stand on), fills `board.schema.json` via `format`. Its job is choosing
+   and wording: which findings become cards, worst first, the headline,
+   short labels, and **which graph tells each finding best** (`charts`:
+   `line` across the match, `bars` across devices, `sessions` across
+   matches). It names a chart's source; it never writes data and never sees
+   the database.
 4. **Publisher** (plain code, no model): validates the board (schema;
    every number in a string field appears in the insights; at most one
-   `fault` region; ≤ 8 vitals), **fills each card's `shape` from
-   `telemetry.sample_1s` using its `series` ref**, adds `evidence`, then
+   `fault` region; ≤ 8 vitals), **fills each card's `shape` and each chart's
+   `data` through the same tools** (`series_1s`, `series_stats`,
+   `compare_sessions`), adds `evidence`, then
    queues `{tbl: "analysis_board", uid: "<session_uid>:<run id>", op:
    "upsert", data: board}` in `sync.push_queue`. The agent force-pushes it.
 5. Pits receive it into their `analysis_board` table.

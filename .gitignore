@@ -48,7 +48,17 @@ vlc/
 
 # Scratch tree for tools/upgrade_check.py — wiped and rebuilt each run
 .upgrade_check/
+# Scratch tree for tools/ai_check.py — a copy of the database, wiped each run
+.ai_check/
 
 # Sync identity and preferences — per machine, never shared (app/db/sync/)
 sync.json
 /sync/
+# llama.cpp's server, fetched by tools/fetch_llama.py (like vlc/)
+llama/
+# The analysis model (5 GB, downloaded once into the data tree) and the
+# engine's / MCP server's logs, from a checkout's data dir
+models/
+llama.log
+mcp.log
+ai.json
