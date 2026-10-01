@@ -16,6 +16,7 @@ credential and lives in `secrets/sync_token` (`app/credentials.py`).
 from __future__ import annotations
 
 import json
+import re
 import socket
 import uuid
 from typing import Any
@@ -30,12 +31,16 @@ TOKEN_NAME = "sync_token"
 
 MIN_INTERVAL_S = 15
 
+# What the hub accepts in `X-Pit-Machine` (sync-hub `MACHINE_RE`).
+MACHINE_ID_RE = re.compile(r"^[A-Za-z0-9:._\-]{1,80}$")
+
 DEFAULTS: dict[str, Any] = {
     # On once a token is present; this switch is for turning it off on
     # purpose (a demo laptop that must not touch the team's data).
     "enabled": True,
     "url": DEFAULT_URL,
-    # Generated once, never edited. See the module docstring.
+    # Generated once. Changed only on purpose, through `set_machine_id()`
+    # (admin, behind a warning); never by `save()`. See the module docstring.
     "machine_id": "",
     # What the hub and the home server call this machine. Defaults to the
     # computer's name, which is what the crew will recognise.
@@ -71,6 +76,7 @@ def _clamp(values: dict[str, Any]) -> dict[str, Any]:
         values["interval_s"] = DEFAULTS["interval_s"]
     for key in ("enabled", "pull_logs", "upload_raw", "sync_files"):
         values[key] = bool(values.get(key))
+    values["machine_name"] = " ".join(str(values.get("machine_name") or "").split())[:80]
     return values
 
 
@@ -111,6 +117,23 @@ def save(**changes: Any) -> dict[str, Any]:
     changes.pop("machine_id", None)         # identity is never edited
     values.update({k: v for k, v in changes.items() if k in DEFAULTS})
     values = _clamp(values)
+    _write(values)
+    return values
+
+
+def set_machine_id(new: str) -> dict[str, Any]:
+    """Give this machine a chosen id, e.g. `pit-left` after a reinstall.
+
+    The one way to change identity, and deliberately separate from `save()`.
+    Two machines must never share an id: the hub takes their pushes as one
+    machine agreeing with itself, so their edits overwrite each other with no
+    conflict ever reported. Raises ValueError for an id the hub would refuse.
+    """
+    new = new.strip()
+    if not MACHINE_ID_RE.match(new):
+        raise ValueError("An id is 1–80 letters, digits, and . _ - : (no spaces).")
+    values = load()
+    values["machine_id"] = new
     _write(values)
     return values
 

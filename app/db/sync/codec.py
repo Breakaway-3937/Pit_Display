@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
 from pathlib import Path
 
 from compression import zstd
@@ -28,6 +29,20 @@ FAST_ABOVE = 1024 * 1024 * 1024
 MIN_SAVING = 0.10
 MAGIC = b"\x28\xb5\x2f\xfd"
 _CHUNK = 4 * 1024 * 1024
+
+
+def temp_path(suffix: str, dir: Path) -> Path:
+    """A fresh, empty file in `dir`, with no handle left open.
+
+    `tempfile.mkstemp()` hands back an open descriptor as well as the name;
+    dropping it leaves the file open, and on Windows an open file can't be
+    replaced or deleted. That locked synced CAD models out of their own temp
+    file (`get_blob` renames its download onto the path) on the first
+    Windows test. Always take temp paths from here.
+    """
+    fd, name = tempfile.mkstemp(suffix=suffix, dir=dir)
+    os.close(fd)
+    return Path(name)
 
 
 def _workers() -> int:

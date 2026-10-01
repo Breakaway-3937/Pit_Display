@@ -750,7 +750,10 @@ is not in this repo and is built from `home/HANDOFF.md`.
 - **The hub decides conflicts** (row-level, on its own seq); only home may
   `force`. A pit never trusts its own clock.
 - **Machine identity lives in `sync.json`, never the database** (a copied DB
-  would clone it).
+  would clone it). The Telemetry panel's admin block renames, switches, takes
+  the token and changes the id (`set_machine_id()` only, behind a warning).
+- **Temp files come from `codec.temp_path()`, never a bare `mkstemp()`**: its
+  open handle locks the file on Windows, and synced CAD models couldn't land.
 - Logs travel as **bundles** (names, not ids; enum codes remapped on import;
   samples as columns on each series' exact quantum, zstd'd: 3.85 GB → 2.98 MB,
   bit-exact). Everything sent is zstd'd (`codec.py`). The original log goes

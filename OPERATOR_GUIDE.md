@@ -261,8 +261,15 @@ don't**: each pit ticks its own. Neither do the music library, which screens
 are on which monitor, or anything on the Pi cabling.
 
 **Setup:** the pit setup file carries the sync token (made on the dev Mac,
-as for the relay token). With no token the machine works exactly as before
-and keeps everything to itself.
+as for the relay token), or paste it under **Telemetry → Team sync → This
+machine** (admin). With no token the machine works exactly as before and
+keeps everything to itself. The same place renames the machine (what the
+other pits and home call it), turns sync off, and picks what it downloads.
+
+**Machine id** is how the hub tells machines apart. Changing it (admin, with a
+warning) is for giving a machine an id you chose or taking back a reinstalled
+machine's old one. **Never give two running machines the same id**: the hub
+can't see their conflicts, so they silently overwrite each other.
 
 **If two machines change the same thing** before either syncs, the first to
 reach the hub wins and the other shows the change it lost under **Telemetry →

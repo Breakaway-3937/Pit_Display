@@ -136,6 +136,12 @@ class _SyncService(QObject):
         sync_settings.save(**changes)
         self._reconfigure()
 
+    def set_machine_id(self, new: str) -> None:
+        """Raises ValueError for an id the hub would refuse. The engine is
+        rebuilt on the next cycle (its key includes the id)."""
+        sync_settings.set_machine_id(new)
+        self._reconfigure()
+
     def _reconfigure(self) -> None:
         self._timer.stop()
         self._notice.stop()

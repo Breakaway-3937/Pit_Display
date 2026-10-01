@@ -531,6 +531,8 @@ Every pit machine's team data meets at the hub (`sync.bh-stack.com`,
 
 **Machine identity is not in the database.** `sync.json` beside it holds
 `machine_id`; a copied database must not bring another machine's identity.
+It changes only through `settings.set_machine_id()` (Telemetry, admin, behind a
+warning), never `save()`.
 
 ### Rules
 

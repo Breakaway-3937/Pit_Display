@@ -41,10 +41,12 @@ import time
 from datetime import datetime, timezone
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QMessageBox, QVBoxLayout, QWidget
 
-from app import brand
+from app import brand, credentials
+from app.admin import admin
 from app.config import SCREEN_LABELS, config
+from app.db.sync import settings as sync_settings
 from app.db.sync.service import sync
 from app.leds import leds
 from app.nexus import nexus
@@ -54,6 +56,15 @@ from app.webcast import settings as webcast_settings
 from app.widgets.brand_widgets import RoundedButton, StatusDot, eyebrow
 from app.widgets.helpers import divider, label
 from app.widgets.robot_panel import RobotLogPanel
+from app.widgets.toggle_switch import ToggleSwitch
+
+# (pref key, what the switch says). `enabled` first: it's the one people want.
+_SYNC_SWITCHES = (
+    ("enabled", "Sync on this machine"),
+    ("pull_logs", "Download other pits' robot logs"),
+    ("sync_files", "Team files: judges slides, the CAD model (~300 MB)"),
+    ("upload_raw", "Also upload original log files (home Wi-Fi only)"),
+)
 
 _RELAY_COLOR = {
     "live":         brand.STATUS_ONLINE,
@@ -211,6 +222,7 @@ class NetworkPanel(QWidget):
         self._sync_btn.clicked.connect(self._sync_now)
         root.addWidget(self._sync_btn, alignment=Qt.AlignmentFlag.AlignLeft)
         root.addSpacing(16)
+        self._build_sync_settings(root)
         root.addWidget(divider())
         root.addSpacing(16)
 
@@ -241,6 +253,8 @@ class NetworkPanel(QWidget):
         leds.state_changed.connect(self._refresh)
         sync.state_changed.connect(self._refresh)
         sync.progress.connect(self._on_sync_progress)
+        admin.lock_state_changed.connect(self._apply_lock)
+        self._apply_lock(admin.unlocked)
 
         # One slow tick, only so the ages stay honest while nothing else is
         # happening. Everything that *matters* arrives on a signal; this is
@@ -266,6 +280,197 @@ class NetworkPanel(QWidget):
 
     def _on_leds(self, _connected: bool, _text: str) -> None:
         self._refresh()
+
+    # ── Team sync settings (admin) ────────────────────────────────────────
+
+    def _build_sync_settings(self, root: QVBoxLayout) -> None:
+        """Name, switches, token and id. Hidden, not disabled, while locked."""
+        self._sync_block = QWidget()
+        sb = QVBoxLayout(self._sync_block)
+        sb.setContentsMargins(0, 0, 0, 0)
+        sb.setSpacing(0)
+        sb.addWidget(eyebrow("This machine"))
+        sb.addSpacing(8)
+
+        name_row = QHBoxLayout()
+        name_row.setSpacing(8)
+        self._name_edit = QLineEdit()
+        self._name_edit.setPlaceholderText("What the other pits and home call it")
+        self._name_edit.setMaxLength(80)
+        self._name_edit.returnPressed.connect(self._save_name)
+        name_row.addWidget(self._name_edit, stretch=1)
+        name_btn = RoundedButton("Rename", variant="secondary")
+        name_btn.setFixedWidth(110)
+        name_btn.clicked.connect(self._save_name)
+        name_row.addWidget(name_btn)
+        sb.addLayout(name_row)
+        sb.addSpacing(12)
+
+        self._switches: dict[str, ToggleSwitch] = {}
+        for key, text in _SYNC_SWITCHES:
+            row = QHBoxLayout()
+            row.setSpacing(12)
+            words = label(text, "stat_value")
+            words.setWordWrap(True)
+            words.setStyleSheet("font-size: 15px;")
+            row.addWidget(words, stretch=1)
+            switch = ToggleSwitch()
+            switch.setProperty("pref", key)
+            switch.toggled.connect(self._on_switch)
+            row.addWidget(switch, alignment=Qt.AlignmentFlag.AlignVCenter)
+            self._switches[key] = switch
+            sb.addLayout(row)
+            sb.addSpacing(10)
+        sb.addSpacing(6)
+
+        help_ = label(
+            "The sync token is the hub's pit token. It goes to the secret "
+            "folder beside the database, never the database.", "stat_label")
+        help_.setWordWrap(True)
+        sb.addWidget(help_)
+        sb.addSpacing(8)
+        tok_row = QHBoxLayout()
+        tok_row.setSpacing(8)
+        self._sync_token_edit = QLineEdit()
+        self._sync_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._sync_token_edit.setPlaceholderText("Sync token")
+        tok_row.addWidget(self._sync_token_edit, stretch=1)
+        tok_save = RoundedButton("Save", variant="secondary")
+        tok_save.setFixedWidth(90)
+        tok_save.clicked.connect(self._save_sync_token)
+        tok_row.addWidget(tok_save)
+        tok_clear = RoundedButton("Clear", variant="ghost")
+        tok_clear.setFixedWidth(80)
+        tok_clear.clicked.connect(self._clear_sync_token)
+        tok_row.addWidget(tok_clear)
+        sb.addLayout(tok_row)
+        sb.addSpacing(4)
+        self._sync_token_state = label("", "stat_label")
+        self._sync_token_state.setWordWrap(True)
+        sb.addWidget(self._sync_token_state)
+        sb.addSpacing(14)
+
+        id_help = label(
+            "Machine id: how the hub tells this machine's edits from every "
+            "other's. Change it only to give a machine a name you chose, or "
+            "to take back a reinstalled machine's old id. No two machines may "
+            "ever share one.", "stat_label")
+        id_help.setWordWrap(True)
+        sb.addWidget(id_help)
+        sb.addSpacing(8)
+        id_row = QHBoxLayout()
+        id_row.setSpacing(8)
+        self._id_edit = QLineEdit()
+        self._id_edit.setMaxLength(80)
+        id_row.addWidget(self._id_edit, stretch=1)
+        id_btn = RoundedButton("Change id…", variant="secondary")
+        id_btn.setFixedWidth(130)
+        id_btn.clicked.connect(self._change_machine_id)
+        id_row.addWidget(id_btn)
+        sb.addLayout(id_row)
+        sb.addSpacing(4)
+        self._id_state = label("", "stat_label")
+        self._id_state.setWordWrap(True)
+        sb.addWidget(self._id_state)
+        root.addWidget(self._sync_block)
+
+        self._sync_locked = label(
+            "Sync settings are admin-only — unlock with the Breakaway mark, "
+            "top left.", "stat_label")
+        self._sync_locked.setWordWrap(True)
+        root.addWidget(self._sync_locked)
+        root.addSpacing(16)
+        self._fill_sync_form()
+
+    def _fill_sync_form(self) -> None:
+        """Put the stored values in the text fields (only on build and after a
+        save, so a refresh never overwrites what someone is typing)."""
+        prefs = sync.prefs
+        self._name_edit.setText(prefs["machine_name"])
+        self._id_edit.setText(prefs["machine_id"])
+        self._draw_sync_form()
+
+    def _draw_sync_form(self) -> None:
+        prefs = sync.prefs
+        for key, switch in self._switches.items():
+            if switch.isChecked() != bool(prefs[key]):
+                switch.blockSignals(True)
+                switch.setChecked(bool(prefs[key]))
+                switch.blockSignals(False)
+                switch.update()
+        where = credentials.source(sync_settings.TOKEN_NAME)
+        self._sync_token_state.setText({
+            "file": "Token saved on this machine.",
+            "env": "Token set by the environment (PIT_SECRET_SYNC_TOKEN); "
+                   "it overrides anything saved here.",
+        }.get(where, "No token: sync is off until one is saved."))
+
+    def _apply_lock(self, unlocked: bool) -> None:
+        self._sync_block.setVisible(unlocked)
+        self._sync_locked.setVisible(not unlocked)
+        if not unlocked:
+            self._sync_token_edit.clear()
+            self._fill_sync_form()
+
+    def _on_switch(self, on: bool) -> None:
+        key = self.sender().property("pref")
+        if key == "enabled":
+            sync.set_enabled(on)
+        else:
+            sync.set_prefs(**{key: on})
+
+    def _save_name(self) -> None:
+        name = self._name_edit.text().strip()
+        if name:
+            sync.set_prefs(machine_name=name)
+        self._fill_sync_form()
+
+    def _save_sync_token(self) -> None:
+        value = self._sync_token_edit.text().strip()
+        if not value:
+            return
+        sync.set_token(value)
+        self._sync_token_edit.clear()
+        self._draw_sync_form()
+
+    def _clear_sync_token(self) -> None:
+        sync.set_token("")
+        self._sync_token_edit.clear()
+        self._draw_sync_form()
+
+    def _change_machine_id(self) -> None:
+        new = self._id_edit.text().strip()
+        current = sync.prefs["machine_id"]
+        if new == current:
+            self._id_state.setText("That's already this machine's id.")
+            return
+        if not sync_settings.MACHINE_ID_RE.match(new):
+            self._id_state.setText("An id is 1–80 letters, digits, and . _ - : "
+                                   "(no spaces).")
+            return
+        warning = (f"Change this machine's id from {current} to {new}?\n\n"
+                   "If another machine already uses this id, the hub can't tell "
+                   "the two apart: their edits overwrite each other and no "
+                   "conflict is ever shown.")
+        seen = next((m for m in (sync.last.machines if sync.last else [])
+                     if m.get("id") == new), None)
+        if seen is not None:
+            warning += (f"\n\nThe hub already knows {new} as "
+                        f"\u201c{seen.get('name') or new}\u201d, last seen "
+                        f"{_ago_ms(seen.get('last_seen'))}. Only go ahead if that "
+                        "was this machine (before a reinstall) and it's no longer "
+                        "running anywhere else.")
+        answer = QMessageBox.warning(
+            self, "Change machine id", warning,
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
+            QMessageBox.StandardButton.Cancel)
+        if answer != QMessageBox.StandardButton.Yes:
+            self._id_edit.setText(current)
+            return
+        sync.set_machine_id(new)
+        self._id_state.setText(f"Now {new}. The hub will list {current} as a "
+                               "machine that stopped checking in.")
+        self._fill_sync_form()
 
     def _on_sync_progress(self, _text: str) -> None:
         self._draw_sync()
@@ -363,11 +568,21 @@ class NetworkPanel(QWidget):
             f"held data as of {self._clock(stats.get('dataAsOfTime'))} "
             f"via {stats.get('lastSource') or '—'}",
         ]
-        if stats.get("refused"):
+        # `refused` counts for the life of the event's room, so one refusal
+        # (say, while the relay's secret was still a placeholder) would warn
+        # forever. It's only a live problem if no good webhook came after it.
+        refused_at = stats.get("lastRefusedAt") or 0
+        if stats.get("refused") and refused_at > (stats.get("lastWebhookAt") or 0):
             side.append(
-                f"{stats['refused']} webhook(s) REFUSED, last "
-                f"{_ago_ms(stats.get('lastRefusedAt'))} — the Nexus-Token at "
-                "frc.nexus/api does not match the relay's NEXUS_WEBHOOK_TOKEN.")
+                f"Webhooks are being refused (last {_ago_ms(refused_at)}): the "
+                "token Nexus sends doesn't match the relay's. Nothing on this "
+                "machine causes or fixes it, and the data stays current through "
+                "the relay's 30s pull. Fix it on the relay — see "
+                "nexus-relay/README.md, Registering with Nexus.")
+        elif stats.get("refused"):
+            side.append(
+                f"{stats['refused']} webhook(s) refused earlier, last "
+                f"{_ago_ms(refused_at)}; webhooks have been accepted since.")
         elif not stats.get("webhooks") and stats.get("pulls"):
             side.append("No webhooks have arrived for this event — the data is "
                         "current (the relay is pulling every 30s), but the "
@@ -617,18 +832,20 @@ class NetworkPanel(QWidget):
                   }.get(state, brand.STATUS_IDLE)
         self._sync_dot.set_color(colour)
         self._sync_btn.setEnabled(sync.enabled and not sync.busy)
+        self._draw_sync_form()
 
         if state == "unconfigured":
             self._sync_head.setText("Not set up on this machine")
             self._sync.setText(
-                "Import a pit setup file that carries the sync token (Event "
-                "Feed → Import setup file…), or put it in secrets/sync_token. "
+                "Paste the sync token below (admin), or import a pit setup "
+                "file that carries it (Event Feed → Import setup file…). "
                 "Until then this machine's settings and logs stay here.")
             return
         if state in ("off", "quiet"):
             self._sync_head.setText("Off on this machine")
-            self._sync.setText(f"{prefs['machine_name']} is not syncing "
-                               "(turned off in sync.json).")
+            why = ("PIT_SYNC_QUIET is set" if state == "quiet"
+                   else "turned off below, admin")
+            self._sync.setText(f"{prefs['machine_name']} is not syncing ({why}).")
             return
 
         if sync.busy:

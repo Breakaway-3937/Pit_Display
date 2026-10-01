@@ -26,7 +26,6 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -243,7 +242,7 @@ class Engine:
     def _pack(path: Path) -> tuple[Path | None, str, int]:
         """zstd `path` to a temp file: (temp, its sha, its bytes), or (None, "", 0)
         when compression wouldn't save `codec.MIN_SAVING` (a JPG, a PNG)."""
-        tmp = Path(tempfile.mkstemp(suffix=".zst", dir=scratch_dir())[1])
+        tmp = codec.temp_path(".zst", scratch_dir())
         sha, size = codec.compress_file(path, tmp)
         if size > path.stat().st_size * (1 - codec.MIN_SAVING):
             tmp.unlink(missing_ok=True)
@@ -278,7 +277,7 @@ class Engine:
             if src is not None:
                 # Raw blobs are always a zstd frame of the original file.
                 self._say(f"Compressing original {src.name}…")
-                tmp = Path(tempfile.mkstemp(suffix=".zst", dir=scratch_dir())[1])
+                tmp = codec.temp_path(".zst", scratch_dir())
                 try:
                     sha, size = codec.compress_file(src, tmp)
                     if size <= RAW_MAX_BYTES:
@@ -608,7 +607,7 @@ class Engine:
     def _fetch_bundle(self, conn, ch: dict, data: dict, rep: Report) -> None:
         sha = data["bundle_sha"]
         self._say(f"Downloading log {data.get('source_name', '')}…")
-        tmp = Path(tempfile.mkstemp(suffix=bundle.SUFFIX, dir=scratch_dir())[1])
+        tmp = codec.temp_path(bundle.SUFFIX, scratch_dir())
         try:
             self.client.get_blob(sha, tmp)
             rep.downloaded_bytes += tmp.stat().st_size
@@ -636,7 +635,7 @@ class Engine:
             return
         self._say(f"Downloading {path.name}…")
         if data.get("codec") == "zstd":
-            tmp = Path(tempfile.mkstemp(suffix=".zst", dir=scratch_dir())[1])
+            tmp = codec.temp_path(".zst", scratch_dir())
             part = path.with_name(path.name + ".part")
             try:
                 self.client.get_blob(data["blob"], tmp)

@@ -40,7 +40,6 @@ from __future__ import annotations
 import gzip
 import shutil
 import sqlite3
-import tempfile
 from pathlib import Path
 
 from app.db.sync import codec, columns
@@ -58,7 +57,7 @@ def build(db_path: Path, session_id: int, out_dir: Path) -> Path:
     """Write the session's bundle into `out_dir`. Returns the .zst path."""
     db_path = Path(db_path)
     out_dir.mkdir(parents=True, exist_ok=True)
-    raw = Path(tempfile.mkstemp(suffix=".db", dir=out_dir)[1])
+    raw = codec.temp_path(".db", out_dir)
     raw.unlink()
     conn = sqlite3.connect(str(raw))
     try:
@@ -147,7 +146,7 @@ def open_bundle(path: Path, out_dir: Path) -> Path:
     tables. The caller deletes it. Format 1 was gzip with the tables in it;
     format 2 is zstd with the samples as columns.
     """
-    out = Path(tempfile.mkstemp(suffix=".db", dir=out_dir)[1])
+    out = codec.temp_path(".db", out_dir)
     if codec.is_zstd(path):
         codec.decompress_file(path, out)
     else:
