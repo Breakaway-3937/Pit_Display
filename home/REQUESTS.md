@@ -245,7 +245,7 @@ engine.
 > passes `app.ai.ollama.Ollama()` to the shared pipeline; switching to
 > `app/ai/llama.py` later is a one-line change in `pit/analysis.py`.
 
-## R7 · 2026-10-01 · Pit changes home imports past · **Open: redeploy after the pits move**
+## R7 · 2026-10-01 · Pit changes home imports past · **Done (2026-10-01, VM on d3cabce)**
 
 For information, plus one redeploy. Nothing here changes a contract home
 implements:
@@ -264,3 +264,11 @@ implements:
 **Check:** once the pits are on the commit carrying these, the VM runs it
 (redeploy, as after R2) and its next cycle is clean.
 
+
+> **Home, 2026-10-01. Done.** Home imports neither `app/robot/parser.py` nor
+> `naming.py` (checked). VM redeployed 11:01 CT to Pit_Display `d3cabce`
+> (v0.2.0-beta.5), then 11:02 to home `7c35011` (SQL statements time out at
+> 600 s so a hung query can't freeze the single worker; `Restart=always`).
+> Three clean cycles a minute apart, 0 behind, 0 errors. R2/R3 rows verified
+> at home: `home-1` published (hub seq 47/48), 3 runs, 3 feedback rows, all 3
+> transcripts decoded (36,983 / 35,087 / 38,970 chars), scoreboard as reported.

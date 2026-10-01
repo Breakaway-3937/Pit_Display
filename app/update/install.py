@@ -315,7 +315,7 @@ def verify(folder: Path,
         progress("Checking the new version on this machine", 0.0)
 
     with tempfile.TemporaryDirectory(prefix=".pit_verify_") as scratch:
-        env = dict(os.environ)
+        env = child_env()
         env["PIT_DISPLAY_DATA"] = scratch
         env["PIT_CAD_PORT"] = "0"          # 0 = pick any free port
         env["PIT_LEDS_FAKE"] = "1"
@@ -334,13 +334,44 @@ def verify(folder: Path,
                            f"{VERIFY_TIMEOUT}s")
         except OSError as e:
             return False, f"the new version would not start: {e}"
+        # The build is windowed: it prints by borrowing its parent's console,
+        # and the running app has none, so stdout comes back empty. The report
+        # is in the scratch tree, which goes when this block ends. Read it (and
+        # a crash, if it died before reporting) now, and keep a copy.
+        report = _read(Path(scratch) / "selfcheck.log")
+        crash = _read(Path(scratch) / "crash.log")
 
-    output = (result.stdout or "") + (result.stderr or "")
+    output = (result.stdout or "") + (result.stderr or "") + "\n" + report
     if result.returncode != 0:
-        failed = [ln.strip() for ln in output.splitlines() if ln.startswith("[FAIL]")]
-        detail = "; ".join(failed) or f"exit status {result.returncode}"
-        return False, f"the new version failed its self-check — {detail}"
+        kept = _keep_report(result.returncode, output, crash)
+        failed = list(dict.fromkeys(
+            ln.strip() for ln in output.splitlines() if ln.startswith("[FAIL]")))
+        detail = ("; ".join(failed)
+                  or (crash.strip().splitlines()[-1] if crash.strip() else "")
+                  or f"exit status {result.returncode}")
+        return False, (f"the new version failed its self-check — {detail}"
+                       + (f" (full report: {kept})" if kept else ""))
     return True, output.strip().splitlines()[-1] if output.strip() else "self-check passed"
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _keep_report(status: int, output: str, crash: str) -> str:
+    """Save a failed check's report beside the live data as `update_check.log`;
+    return its path, or "" if it couldn't be written."""
+    path = paths.data("update_check.log")
+    try:
+        path.write_text(f"exit status {status}\n\n{output.strip()}\n"
+                        + (f"\n--- crash.log ---\n{crash.strip()}\n" if crash.strip() else ""),
+                        encoding="utf-8")
+    except OSError:
+        return ""
+    return str(path)
 
 
 # ── Going live ───────────────────────────────────────────────────────────────
@@ -431,6 +462,22 @@ def running_version() -> str:
     return ""
 
 
+def child_env() -> dict[str, str]:
+    """This process's environment, made safe for starting *another* build.
+
+    A frozen app's bootloader leaves `_PYI_*` variables in its environment
+    (its install folder, its archive, a process level, its splash's socket) so
+    its own helper processes can find it. A different build that inherits them
+    takes itself for that helper and runs against the parent's install: the
+    updater's self-check of beta.5, started from a running beta.4, checked a
+    mix of the two and failed with a bare exit status 1. Drop them and say so
+    (`PYINSTALLER_RESET_ENVIRONMENT`, PyInstaller >= 6.10).
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("_PYI_")}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
+
+
 def relaunch() -> bool:
     """Start the current launcher and let the caller quit. Best effort."""
     link = link_path()
@@ -440,7 +487,7 @@ def relaunch() -> bool:
     if exe is None:
         return False
     try:
-        subprocess.Popen([str(exe)], cwd=str(link),
+        subprocess.Popen([str(exe)], cwd=str(link), env=child_env(),
                          creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
                          start_new_session=(sys.platform != "win32"))
         return True

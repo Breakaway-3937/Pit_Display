@@ -36,6 +36,7 @@ from __future__ import annotations
 import os
 import platform
 import sys
+from pathlib import Path
 import traceback
 from dataclasses import dataclass, field
 
@@ -125,6 +126,16 @@ def _check_paths() -> Result:
         f"resources   {paths.resource_root()}",
         f"data        {paths.data_root()}",
     ]
+    if paths.is_frozen():
+        # A build started with another build's `_PYI_*` environment runs from
+        # *that* build's files: the check would then vouch for the wrong one.
+        exe_dir = Path(sys.executable).resolve().parent
+        res = Path(paths.resource_root()).resolve()
+        if exe_dir != res and exe_dir not in res.parents:
+            return Result("paths", False, "\n".join(lines) + (
+                f"\nthis exe is in {exe_dir} but is running another build's files "
+                f"({res}): it was started with that build's environment "
+                "(_PYI_* variables; see update.install.child_env)"))
     try:
         probe = paths.data("data", ".writetest")
         probe.write_text("ok", encoding="utf-8")

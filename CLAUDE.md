@@ -323,7 +323,9 @@ disabled `primary` still paints red, so drop it to `secondary`.
 
 **Fonts:** `main._load_fonts` loads `assets/fonts/*.ttf` (Chakra Petch,
 Roboto, JetBrains Mono). The dev Mac also has the first two installed, so a
-missing bundled copy only shows on Windows.
+missing or broken bundled copy only shows on Windows: the Roboto files were
+EOT web fonts named `.ttf` until 2026-10-01 and never loaded there. Check the
+self-check's `fonts` line on a Windows build, not the Mac.
 
 **Teams:** add an entry to `app/teams.py`.
 
@@ -777,6 +779,12 @@ Windows-only CI (macOS bills 10×).
   target), use `os.rmdir`. The installer does the same in Pascal.
 - **The staged build self-checks** with `PIT_DISPLAY_DATA`, `PIT_CAD_PORT` and
   `PIT_LEDS_FAKE` set, so it can't touch the live DB, port or serial.
+- **Start another build only with `install.child_env()`**: no `_PYI_*`, plus
+  `PYINSTALLER_RESET_ENVIRONMENT=1`. Inherited, they make the new build run
+  the parent's files (beta.4's updater "checked" beta.5 against beta.4 and
+  failed with a bare exit 1). The `paths` line fails if it ever happens. A
+  windowed child prints nowhere, so `verify()` reads the scratch
+  `selfcheck.log` / `crash.log` and keeps `update_check.log`.
 - Prune at startup, not at swap. An install not of this shape is left alone.
 - **Checking is automatic; downloading never is.**
 - Private repo: fetch assets by id; **drop `Authorization` on the redirect to
