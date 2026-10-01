@@ -120,8 +120,11 @@ jobs:
       # failures that only exist in a bundle — a missing QtWebEngineProcess, an
       # unwritable data directory, an asset that never got collected. No
       # release is published if this fails.
+      # A tag push has no inputs: `inputs.run_self_check` is null, and null
+      # compares equal to false in Actions expressions, so the old
+      # `inputs.run_self_check != false` skipped this on every tag build.
       - name: Self-check the packaged app
-        if: inputs.run_self_check != false
+        if: github.event_name != 'workflow_dispatch' || inputs.run_self_check
         shell: pwsh
         env:
           # No launcher splash window on a headless runner.
