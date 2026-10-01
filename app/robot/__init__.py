@@ -2,7 +2,7 @@
 Robot log import and query.
 
 The pipeline is `ingest.py` — read its docstring first; it explains how a
-`.hoot`, a `.wpilog` and a Phoenix `.txt` export all end up in the same tables.
+`.hoot` and a `.wpilog` both end up in the same tables.
 Storage and every query live in DATABASE.md.
 """
 

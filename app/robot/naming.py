@@ -1,32 +1,15 @@
 """
-Grammar for CTRE Phoenix 6 "detailed" hoot exports.
+What a robot log's name says, and how each signal is stored.
 
-Pure functions over strings — no database, no Qt, no I/O — so the format can be
-exercised without importing anything.
-
-Every line of the export is one sample:
-
-    [0.685s] ('TalonFX', '2', 'MotorVoltage') = 0.0
-
-The only other line in a real 62-million-row file is the `--- All Log Records ---`
-header.
-
-Two properties of this format that the storage layer has to respect:
-
-* **Timestamps are milliseconds.** Exactly three decimal places. (The
-  microsecond-looking numbers in the file are values of the device's own
-  `Timestamp` *signal*, which is a different thing and is discarded.)
-* **Timestamps collide.** One signal can report two different values in the same
-  millisecond — measured at 40,153 rows per session, 0.065%. Any storage keyed
-  on (signal, timestamp) alone silently loses them.
+Pure functions over strings — no database, no Qt, no I/O. Shared by every
+source in the pipeline (`.hoot` through owlet, and `.wpilog`): the filename
+carries the controller serial, the start time and the match, none of which is
+inside the file, and `classify()` is the Phoenix signal catalogue that decides
+which table a device signal lands in.
 """
 
 import re
 from dataclasses import dataclass
-
-LINE_RE = re.compile(r"^\[([0-9.]+)s\] \('([^']*)', '([^']*)', '([^']*)'\) = (.*)$")
-
-HEADER_RE = re.compile(r"^---.*---\s*$")
 
 # Three filename shapes reach this app, and each carries something the file
 # itself does not. Tried in this order; the first match wins.
@@ -83,15 +66,6 @@ MATCH_TYPES = {"q": "qm", "qf": "qf", "sf": "sf", "f": "f", "e": "e", "p": "p"}
 CLOCK_SIGNALS = {"Timestamp"}
 
 
-@dataclass(frozen=True)
-class Sample:
-    t_ms: int
-    device_type: str
-    can_id: int
-    signal: str
-    raw: str
-
-
 def classify(signal: str) -> str:
     """
     Storage class for a signal name. Drives which table it lands in.
@@ -131,21 +105,6 @@ def classify(signal: str) -> str:
     }:
         return "config"
     return "telemetry"
-
-
-def parse_line(line: str) -> Sample | None:
-    """One sample, or None for the header and anything unrecognised."""
-    m = LINE_RE.match(line)
-    if m is None:
-        return None
-    ts, dtype, can_id, signal, raw = m.groups()
-    try:
-        cid = int(can_id)
-    except ValueError:
-        return None
-    # round(), not int() — int(0.685 * 1000) is 684 on some values because the
-    # float is a hair under. That would shift samples into the wrong millisecond.
-    return Sample(round(float(ts) * 1000), dtype, cid, signal, raw.strip())
 
 
 @dataclass(frozen=True)
@@ -202,22 +161,3 @@ def _match_key(m: re.Match) -> str | None:
     if not mtype or not mnum:
         return None
     return f"{MATCH_TYPES.get(mtype.lower(), mtype.lower())}{int(mnum)}"
-
-
-def parse_filename(name: str) -> tuple[str | None, str | None]:
-    """('06C94CC6…', '2026-07-29 14:28:18'). Kept as the two-value shorthand."""
-    meta = parse_log_name(name)
-    return meta.serial, meta.started
-
-
-def coerce(raw: str) -> tuple[float | None, str | None]:
-    """
-    (numeric, enum_label). Exactly one is non-None.
-
-    Numeric strings become floats; everything else is an enum label the caller
-    interns to an integer code.
-    """
-    try:
-        return float(raw), None
-    except ValueError:
-        return None, raw

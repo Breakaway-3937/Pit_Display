@@ -192,7 +192,7 @@ def _check_owlet() -> Result:
         if binary is None:
             return Result("owlet", True,
                           f"{described}\nNo binary for this platform — .hoot "
-                          "import will not work here (.wpilog and .txt still will)",
+                          "import will not work here (.wpilog still will)",
                           critical=False)
         return Result("owlet", True, f"{described}")
     except Exception as e:

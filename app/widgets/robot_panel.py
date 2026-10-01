@@ -73,6 +73,18 @@ class _ImportWorker(QThread):
             self.failed.emit(f"Import failed: {exc}")
 
 
+def _origin(s) -> tuple[str, str]:
+    """(the From cell, its tooltip): which machine holds the original log."""
+    if not str(s["source_file"] or "").startswith("sync:"):
+        return "This machine", f"Imported here from {s['source_file']}"
+    if s["origin"]:
+        name = s["origin_name"] or s["origin"]
+        return name, (f"Imported on {name} ({s['origin']}); the original file "
+                      "is on that machine. This copy came through team sync.")
+    return "Team sync", ("Came through team sync; which machine imported it "
+                         "shows after the next sync cycle reaches the hub.")
+
+
 class RobotLogPanel(QWidget):
 
     def __init__(self, parent=None):
@@ -82,6 +94,9 @@ class RobotLogPanel(QWidget):
         self._build()
         admin.lock_state_changed.connect(self._apply_lock)
         config.team_changed.connect(self._on_team_changed)
+        # Sessions and CAN names also arrive by sync; without this the list
+        # stayed empty until a restart while the boards already showed the log.
+        config.logs_changed.connect(self.refresh)
         self._apply_lock(admin.unlocked)
         self.refresh()
 
@@ -117,10 +132,9 @@ class RobotLogPanel(QWidget):
 
         root.addSpacing(6)
         import_help = label(
-            "A .hoot straight off the controller, a .wpilog off the roboRIO, or "
-            "an older Phoenix “detailed” .txt export. A .hoot is extracted with "
-            "owlet first, so it takes longer than its size suggests; the app "
-            "stays usable throughout.", "stat_label")
+            "A .hoot straight off the controller or a .wpilog off the roboRIO. "
+            "A .hoot is extracted with owlet first, so it takes longer than its "
+            "size suggests; the app stays usable throughout.", "stat_label")
         import_help.setWordWrap(True)
         root.addWidget(import_help)
 
@@ -230,12 +244,12 @@ class RobotLogPanel(QWidget):
         # ── Sessions ──────────────────────────────────────────────────────
         root.addWidget(eyebrow("Imported sessions"))
         root.addSpacing(10)
-        self._sessions = QTableWidget(0, 6)
+        self._sessions = QTableWidget(0, 7)
         self._sessions.setHorizontalHeaderLabels(
-            ["Session", "Started", "Length", "Raw rows", "Stored", "Saved"])
+            ["Session", "From", "Started", "Length", "Raw rows", "Stored", "Saved"])
         sh = self._sessions.horizontalHeader()
         sh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for i in range(1, 6):
+        for i in range(1, 7):
             sh.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
         self._sessions.verticalHeader().setVisible(False)
         self._sessions.setMinimumHeight(120)
@@ -308,8 +322,10 @@ class RobotLogPanel(QWidget):
             self._sessions.setRowCount(len(rows))
             for r, s in enumerate(rows):
                 saved = (1 - s["stored_rows"] / s["raw_rows"]) * 100 if s["raw_rows"] else 0
+                origin, where = _origin(s)
                 cells = [
                     s["source_name"],
+                    origin,
                     s["started_at"] or "—",
                     f"{(s['duration_s'] or 0)/60:.1f} min",
                     f"{s['raw_rows']:,}" if s["raw_rows"] else "—",
@@ -319,7 +335,9 @@ class RobotLogPanel(QWidget):
                 for cidx, text in enumerate(cells):
                     it = QTableWidgetItem(text)
                     it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    if cidx >= 3:
+                    if cidx == 1:
+                        it.setToolTip(where)
+                    if cidx >= 4:
                         it.setFont(mono_font())
                         it.setTextAlignment(Qt.AlignmentFlag.AlignRight
                                             | Qt.AlignmentFlag.AlignVCenter)
@@ -377,9 +395,8 @@ class RobotLogPanel(QWidget):
     def _choose_file(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Choose a robot log", "",
-            "Robot logs (*.hoot *.wpilog *.txt);;"
-            "Phoenix hoot (*.hoot);;WPILib DataLog (*.wpilog);;"
-            "Phoenix detailed export (*.txt);;All files (*)")
+            "Robot logs (*.hoot *.wpilog);;"
+            "Phoenix hoot (*.hoot);;WPILib DataLog (*.wpilog)")
         if path:
             self.start_import(Path(path))
 

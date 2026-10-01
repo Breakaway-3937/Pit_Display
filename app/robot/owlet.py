@@ -126,7 +126,7 @@ def describe() -> str:
     exe = find_owlet()
     if exe is None:
         return (f"{where}: no owlet binary found — .hoot import unavailable "
-                f"(.wpilog and .txt still work)")
+                f"(.wpilog still works)")
     return f"{where}: {exe.name}"
 
 

@@ -6,7 +6,7 @@ self-check's `sync` line fails if a build lost it). Streaming, so a 4 GB log
 never sits in memory, and multi-threaded with two cores left for the UI.
 
 Measured on the dev Mac (10 cores), level 19: the 360 MB CAD model → 58 MB in
-26 s; the Phoenix text export → 35x smaller at ~5 MB/s. Level 19 is the
+26 s. Level 19 is the
 default because the uplink at an event is the scarce thing, not the CPU;
 `LEVEL_FAST` is for inputs so big that 19 would take the better part of an
 hour on a pit laptop.

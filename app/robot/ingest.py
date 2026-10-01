@@ -1,27 +1,27 @@
 """
 The robot-log data pipeline: raw file off the robot → rows in the database.
 
-Three shapes of file arrive in the pit, and all three land in the same tables:
+Two shapes of file arrive in the pit, and both land in the same tables:
 
 ```
 robot.hoot   ──owlet -f wpilog──▶  .wpilog ──┐
-robot.wpilog ───────────────────────────────┼──▶ (t_ms, device, can id, signal, value)
-…_detailed.txt ──parser.parse_line──────────┘                    │
+robot.wpilog ───────────────────────────────┴──▶ (t_ms, device, can id, signal, value)
+                                                                 │
                                                                  ▼
                              device · signal · series · sample · session_constant · fault_event
 ```
 
-`owlet.py` runs the closed-format extractor, `wpilog.py` reads the binary log,
-`parser.py` reads the text export. Each is a `_Source` here, and the storage
-code below cannot tell them apart — which is the point. Add a fourth format by
-writing a `_Source`, not by touching the loop.
+`owlet.py` runs the closed-format extractor into scratch space (deleted after
+the import) and `wpilog.py` reads the binary log. Each is a `_Source` here,
+and the storage code below cannot tell them apart — which is the point. Add a
+format by writing a `_Source`, not by touching the loop. **Nothing in this
+pipeline ever reads or writes a text file**; there is no text stage.
 
 **Which file to import.** The `.hoot` is the one to reach for: it is what the
 robot writes, it needs no preparation, and it is the only one that carries the
 controller serial. The `.wpilog` is the robot's own DataLogManager file and is
 where the team's application signals live — robot states, PDH currents, shooter
-setpoints — none of which exist in a hoot. The `.txt` is a hoot somebody already
-converted by hand, kept working because a season of them exists.
+setpoints — none of which exist in a hoot.
 
 ## What it does, and why
 
@@ -31,7 +31,7 @@ importer keeps only *changes*, moves signals that never change into
 `session_constant`, folds fault bits into intervals, and builds 1-second rollups
 in the same pass.
 
-Measured on a real 3.85 GB text export: 62,118,776 raw rows in ~60 s, producing
+Measured on a real 3.85 GB log: 62,118,776 raw rows in ~60 s, producing
 4.87 M stored rows (105 MB). This is lossless for any "what was the value at
 time T" question, which is the only question the data can answer.
 
@@ -51,7 +51,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from app.robot import owlet, wpilog
-from app.robot.parser import Sample, classify, coerce, parse_line, parse_log_name
+from app.robot.naming import classify, parse_log_name
 from app.robot.wpilog import (
     APP_CAN_ID, APP_DEVICE_LABEL, APP_DEVICE_SUBSYSTEM, APP_DEVICE_TYPE,
 )
@@ -68,7 +68,7 @@ _PROGRESS_EVERY = 250_000
 _CONVERT_SHARE = 0.20
 
 # One record from any source: (t_ms, device_type, can_id, signal, num, label).
-# Exactly one of `num` / `label` is set, matching `parser.coerce()`.
+# Exactly one of `num` / `label` is set: a number, or an enum label to intern.
 Row = tuple[int, str, int, str, "float | None", "str | None"]
 
 
@@ -112,41 +112,6 @@ class ImportResult:
 # the file it is, read only when the progress bar ticks; `close()` releases
 # whatever it holds — a file handle, an mmap, or a scratch directory holding a
 # gigabyte of converted log.
-
-class _TextSource:
-    """A Phoenix "detailed" text export, one sample per line."""
-
-    kind = "hoot"
-
-    def __init__(self, path: Path):
-        self._path = path
-        self._total = max(path.stat().st_size, 1)
-        self._read = 0
-        self._fh = None
-        self.skipped = 0
-        self.enum_overflow: set[str] = set()
-
-    def rows(self) -> Iterator[Row]:
-        # 4 MB buffer: the file is read strictly forwards and is measured in
-        # gigabytes, so the syscall count is what matters, not locality.
-        self._fh = open(self._path, "r", encoding="utf-8", errors="replace",
-                        buffering=1 << 22)
-        for line in self._fh:
-            self._read += len(line)
-            s: Sample | None = parse_line(line)
-            if s is None:
-                continue                      # the '--- All Log Records ---' header
-            num, label = coerce(s.raw)
-            yield (s.t_ms, s.device_type, s.can_id, s.signal, num, label)
-
-    def fraction(self) -> float:
-        return min(1.0, self._read / self._total)
-
-    def close(self) -> None:
-        if self._fh is not None:
-            self._fh.close()
-            self._fh = None
-
 
 class _WpilogSource:
     """A WPILib DataLog — the robot's own, or one owlet extracted from a hoot."""
@@ -240,12 +205,9 @@ def _open_source(path: Path, say: Callable[[str, float], None]):
         return _HootSource(path, say)
     if suffix == ".wpilog":
         return _WpilogSource(path)
-    if suffix in (".txt", ".log"):
-        return _TextSource(path)
     raise ImportError_(
         f"Don't know how to read {path.name}. Import a .hoot from the "
-        f"controller, a .wpilog from the roboRIO, or a Phoenix “detailed” .txt "
-        f"export.")
+        f"controller or a .wpilog from the roboRIO.")
 
 
 def _connect(main_path: Path) -> sqlite3.Connection:
@@ -268,7 +230,7 @@ def import_log(
     progress: Callable[[str, float], None] | None = None,
 ) -> ImportResult:
     """
-    Import one log — `.hoot`, `.wpilog`, or a Phoenix `.txt` export.
+    Import one log — a `.hoot` or a `.wpilog`.
 
     `progress(message, fraction)` is called periodically. Raises ImportError_ if
     the file was already imported, cannot be read, or has no parseable rows —
@@ -525,9 +487,8 @@ def import_log(
         if raw == 0:
             conn.rollback()
             raise ImportError_(
-                f"{path.name} contains no recognisable log records. A .txt has "
-                f"to be a Phoenix “detailed” export; a .wpilog has to carry "
-                f"entries the robot actually wrote.")
+                f"{path.name} contains no recognisable log records: a log has "
+                f"to carry entries the robot actually wrote.")
 
         conn.commit()
         say("Done", 1.0)

@@ -167,7 +167,7 @@ class DiagnosticsOverlay(Chassis):
                               self.ink, 1.0)
         self.draw_wrapped(
             p, rect.x(), y + self.s(24), min(self.s(1200), rect.width()),
-            "Import a .hoot, .wpilog or Phoenix text export from Control → "
+            "Import a .hoot or .wpilog from Control → "
             "Pit Systems → Telemetry → Robot telemetry and this board fills itself in.",
             self.body(32), self.body_ink, 1.4)
 

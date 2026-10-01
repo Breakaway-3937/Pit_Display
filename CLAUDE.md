@@ -567,9 +567,11 @@ so no EQ. **libVLC is the engine because it's the only one with an EQ.**
 
 ## Robot logs (`app/robot/`)
 
-`.hoot` (owlet → `.wpilog` in scratch space), `.wpilog`, and Phoenix `.txt`
-are each a `_Source` yielding `(t_ms, device_type, can_id, signal, num, label)`;
-storage can't tell them apart. **Add a format by writing a `_Source`.** Schema,
+`.hoot` (owlet → `.wpilog` in scratch space) and `.wpilog` are each a
+`_Source` yielding `(t_ms, device_type, can_id, signal, num, label)`;
+storage can't tell them apart. **Add a format by writing a `_Source`.**
+**There is no text stage and no `.txt` input**, by decision: logs go from
+`.hoot`/`.wpilog` straight to the database. Don't add one back. Schema,
 queries and the four invariants that give plausible wrong answers are in
 DATABASE.md; read them before writing a query.
 

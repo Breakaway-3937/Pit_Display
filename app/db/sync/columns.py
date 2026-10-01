@@ -7,8 +7,8 @@ nearly nothing:
 
 * **time** as the step from the previous sample (a 20 ms loop is `20, 20, 20`),
 * **ord** is almost always 0,
-* **value** on the series' own **exact quantum**. The Phoenix text export
-  prints 1-2 decimals (a quantum of 0.01); CTRE positions are fixed-point
+* **value** on the series' own **exact quantum**. Logged values
+  often carry 1-2 decimals (a quantum of 0.01); CTRE positions are fixed-point
   (`0.45263671875` is 927/2048, a quantum of 2^-11). A value that is exactly
   `k * quantum` is stored as the step in `k`, a small integer. A series with
   no exact quantum keeps its float64s, split into byte planes (all the sign

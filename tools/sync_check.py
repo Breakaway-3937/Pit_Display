@@ -329,6 +329,12 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     uid = a.one("SELECT uid FROM log_session")
     sid_b = b.one("SELECT id FROM log_session WHERE uid = ?", (uid,))
     check("the session arrives on B", sid_b is not None, str(rb.errors))
+    check("B knows A imported it (origin from the bundle's blob, A's name)",
+          b.one("SELECT origin || '|' || origin_name FROM log_session WHERE uid = ?",
+                (uid,)) == "check-a|a",
+          str(b.one("SELECT origin || '|' || origin_name FROM log_session WHERE uid = ?", (uid,))))
+    check("A's own import has no origin (it's the root)",
+          a.one("SELECT origin FROM log_session WHERE uid = ?", (uid,)) is None)
     if sid_b is not None:
         sid_a = a.one("SELECT id FROM log_session WHERE uid = ?", (uid,))
         q_series = "SELECT COUNT(*) FROM series WHERE session_id = ?"

@@ -44,7 +44,7 @@ in the pit checkout); `BridgeBrownout` has `n_devices` 8, `Pigeon2 25` has
 > `n_devices` = 8 ✓, `Pigeon2 25` `n_faults` = 5 ✓. `match_context` isn't
 > served at home while R5 is deferred, so home's toolbox offers the other nine.
 
-## R2 · 2026-09-30 · Run the pipeline by importing it · Open
+## R2 · 2026-09-30 · Run the pipeline by importing it · **Done (2026-10-01, check passed)**
 
 The analyst → designer pipeline is built in the pit repo (`app/ai/`), no Qt,
 importable from the checkout like `bundle.py`. Don't write a second one.
@@ -62,7 +62,28 @@ severity; boards may carry `charts` (the designer picks kind and source,
 **Check:** a home run for the test session publishes, and its board reaches a
 pit's `analysis_board` with `origin = home-…`.
 
-## R3 · 2026-09-30 · Mirror the analysis tables that now sync · Open
+> **Home, 2026-10-01. Built, not yet proven; the check is Brayden's to run.**
+> Home's half is in `pit/analysis.py` (ecb6409): `HomeToolbox` + `HomeSink`
+> around `app.ai.pipeline.analyse()`, `qwen3:8b` on the Mac's Ollama. Migration
+> 004 is applied. **Still open:**
+> 1. ~~The VM is behind.~~ **Redeployed 2026-10-01 10:26 CT:** the VM runs
+>    home `57481a2` + Pit_Display `20531f1`; first cycle clean, 0 behind.
+>    Redeploy again whenever the pits move to a newer commit.
+> 2. **Functional test (Brayden runs it):** on the Mac, in the home repo,
+>    `uv run python -m pit.analysis --newest` (or `--session <uid>`). It should
+>    end published; within a minute the `sync.push_queue` rows have `pushed_at`;
+>    on a pit, `analysis_board` has the board with `origin = home-breakaway` and
+>    the run shows in Control → Pit Systems → Analysis as `home-<id>`.
+> Mark Done when that passes.
+
+> **Pit, 2026-10-01. Check passed.** On the Mac: `uv run python -m
+> pit.analysis --session 7e397f4ccc4d4f2194246c2796ec48aa` → `run_id` 1,
+> `published`, 5 findings (analyst 176 s, designer 74 s, Ollama `qwen3:8b`).
+> One pit sync cycle later the Dev Mac pit (`pit-9f07bf6075f9462a`) held
+> `analysis_board` `7e397f4c…:1` ("BridgeBrownout Faults") and `analysis_run`
+> `home-1`, published, with that board uid.
+
+## R3 · 2026-09-30 · Mirror the analysis tables that now sync · **Done (2026-10-01, check passed)**
 
 Pits now push three more tables through the hub (DATABASE.md "Sync"):
 
@@ -88,6 +109,35 @@ mirrors and scores. Wanted at home:
 
 **Check:** rate a finding on one pit; within two cycles the rating is in
 home's view, attributed to the right run and model.
+
+> **Home, 2026-10-01. Built, not yet proven; the check is Brayden's to run.**
+> All three asks are in (ecb6409 + 2b7362b), and migration 004 is applied:
+> `team.analysis_run` / `team.analysis_feedback` / `team.analysis_board`,
+> `analysis.transcript` (decoded by the mirror), `analysis.vw_scoreboard`,
+> `analysis.vw_finding_ratings`; home's runs go out as `home-<id>` (see R2).
+> Nothing has exercised them: the hub holds no `analysis_*` rows yet from any
+> machine. **Still open:**
+> 1. ~~VM redeploy~~ done 2026-10-01 (see R2); the transcript fix is live.
+> 2. **Functional test (Brayden runs it):** on a pit running a build with
+>    analysis (beta.3 or later), run an analysis, then rate one finding and
+>    give the run a 1–5 score. Within two minutes, at home:
+>    `SELECT * FROM analysis.vw_finding_ratings` shows that finding with the
+>    right run uid and model, `analysis.vw_scoreboard` counts it, and
+>    `analysis.transcript` has the run's text. Rating a home run (R2) proves
+>    the other direction.
+> Mark Done when that passes.
+
+> **Pit, 2026-10-01. Check passed.** The Dev Mac pit ran an analysis on the
+> app's own path (built-in llama.cpp, run `becc2f1f…`, published in 205 s),
+> then rated two findings and scored the run 2, **as a pipeline test, not a
+> crew rating** (Brayden's call; every row's `note` says so), and synced. One
+> agent cycle later, on the read-only login: `vw_finding_ratings` had both
+> findings with the right run uid, machine, `qwen3:8b`, prompt version 2;
+> `vw_scoreboard` counted them (2 rated, useful 0, wrong 0.5, rank 2.0);
+> `analysis.transcript` had the run (36,983 chars). The scoreboard's second run
+> is the Windows test pit's own (`pit-9abdabd73c7647f4`, auto-run after its
+> beta.4 sync landed the log): the bundled engine's first run on Windows.
+> Those test ratings can be excluded by their note if they skew the board.
 
 ## R4 · 2026-09-30 · Where the MCP server lives · **Done (2026-09-30, ecb6409): decision accepted; server disabled, kept**
 
@@ -194,3 +244,23 @@ engine.
 > the same `analyst` name, so the scoreboard compares like with like. Home
 > passes `app.ai.ollama.Ollama()` to the shared pipeline; switching to
 > `app/ai/llama.py` later is a one-line change in `pit/analysis.py`.
+
+## R7 · 2026-10-01 · Pit changes home imports past · **Open: redeploy after the pits move**
+
+For information, plus one redeploy. Nothing here changes a contract home
+implements:
+
+* **No `.txt` import any more** (Brayden's decision): logs go `.hoot`/`.wpilog`
+  straight to the database. `app/robot/parser.py` became `app/robot/naming.py`
+  (filenames + `classify()`); home imports neither. Sessions imported earlier
+  from a text export (`source_kind` `hoot`) stay as data.
+* **`log_session.origin` / `origin_name`** (pit migration v14): the machine a
+  session was imported on, filled on pits from the hub's blob `origin`. Local
+  to each pit, not synced, so home needs nothing; it matches what home's
+  `list_sessions` already calls `origin`.
+* Sync temp files no longer leak `mkstemp()` handles (`codec.temp_path()`):
+  on Windows, synced files and log bundles failed to land before beta.4.
+
+**Check:** once the pits are on the commit carrying these, the VM runs it
+(redeploy, as after R2) and its next cycle is clean.
+

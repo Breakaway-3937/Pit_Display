@@ -205,7 +205,7 @@ nothing fails.
 | `webengine` | Chromium's helper process and resources | `FAIL` is a packaging fault: `_webengine_support()` in the spec |
 | `cad` | asset server answers; is there a model | upload the `.glb` |
 | `fonts` | all three families loaded | |
-| `owlet` | the extractor for this platform | `.hoot` import dead; `.wpilog`/`.txt` still work (`tools/owlet/README.md`) |
+| `owlet` | the extractor for this platform | `.hoot` import dead; `.wpilog` still works (`tools/owlet/README.md`) |
 | `audio` | libVLC **and** its plugins | "No plugins" means silent playback; the build skipped `fetch_vlc.py` |
 | `updates` | version, channel, layout, token | names which of four reasons self-update is off |
 | `appcontrol` | Windows Smart App Control state | `WARN` on Evaluation or On: turn it off before an event, or it may block the app |

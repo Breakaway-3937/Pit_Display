@@ -15,9 +15,8 @@ produced them:
 
     /Phoenix6/TalonFX-2/MotorVoltage   →  ("TalonFX", 2, "MotorVoltage")
 
-which is exactly the identity the text export writes as
-`('TalonFX', '2', 'MotorVoltage')`, so an import from either source lands on the
-same `device` row and the CAN-id names the crew typed still apply.
+so every log lands on the same `device` row for that controller and the CAN-id
+names the crew typed still apply.
 
 A DataLogManager wpilog carries **application signals** — robot states, PDH
 currents, shooter setpoints — which have no CAN address at all:
@@ -144,9 +143,8 @@ class Reader:
     """
     Streams one `.wpilog` as `(t_ms, device_type, can_id, signal, num, label)`.
 
-    Exactly one of `num` / `label` is set, matching `parser.coerce()` — the
-    importer cannot tell which source a record came from, which is what lets one
-    storage path serve both.
+    Exactly one of `num` / `label` is set — the importer cannot tell which
+    source a record came from, which is what lets one storage path serve both.
 
     `fraction()` is the read position, for the progress bar. `skipped` counts
     records dropped for an unstorable type, so an import that quietly ignored

@@ -107,6 +107,11 @@ class HubClient:
     def status(self) -> dict:
         return self._json("GET", "/v1/status")
 
+    def blobs(self, limit: int = 1000) -> list[dict]:
+        """Every blob the hub holds, oldest first: sha, kind, name, origin (the
+        machine that uploaded it). The hub serves at most 1000 per call."""
+        return list(self._json("GET", f"/v1/blobs?limit={int(limit)}").get("blobs", []))
+
     # ── blobs ─────────────────────────────────────────────────────────────
 
     def has_blob(self, sha: str) -> bool:

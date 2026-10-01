@@ -166,9 +166,8 @@ match Onshape exactly.
 |---|---|
 | `.hoot` | straight off the CTRE controller: **the one to use** (extracted with owlet first) |
 | `.wpilog` | the roboRIO's own log: the team's application signals, PDH currents |
-| `.txt` | an older Phoenix "detailed" export |
 
-The app stays usable while it imports (a 3.8 GB export takes about a minute).
+The app stays usable while it imports (a multi-gigabyte log takes a minute or more).
 It refuses a log it has already imported, before spending time on it.
 
 **Name the CAN ids, once per robot.** A log only ever says "TalonFX 11". Type

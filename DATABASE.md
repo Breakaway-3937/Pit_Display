@@ -108,6 +108,7 @@ side effect. `main.py` does this at the top.
 | 11 | `_v11_analysis_run` | `analysis_run`: the log of analysis runs (`app/ai/`). See [Analysis](#analysis) |
 | 12 | `_v12_analysis_feedback` | `analysis_feedback` (the crew's ratings); `uid` on `analysis_run`; sync triggers on `analysis_run`, `analysis_feedback`, `analysis_board` |
 | 13 | `_v13_tba` | `tba_event`, `tba_match`: TheBlueAlliance rows home pushes; pulled only. See [Analysis](#analysis) |
+| 14 | `_v14_session_origin` | `log_session.origin`, `origin_name`: the machine a session was imported on. Local cache of a hub fact; doesn't sync |
 
 **Never edit a migration that has shipped.** Add a new one. A migration must be
 safe to run against a database that already has data — `_v5` checks
@@ -246,20 +247,20 @@ device  ──────┘  signal ──── signal_enum
 
 #### The pipeline that fills these tables
 
-Three shapes of file arrive in the pit and all three land here. `app/robot/`
+Two shapes of file arrive in the pit and both land here. `app/robot/`
 holds the code; the layout is in [`CLAUDE.md`](CLAUDE.md).
 
 ```
 robot.hoot   ──owlet -f wpilog──▶  .wpilog ──┐
-robot.wpilog ───────────────────────────────┼──▶ (t_ms, device, can id, signal, value)
-…_detailed.txt ──parser.parse_line──────────┘                    │
+robot.wpilog ───────────────────────────────┴──▶ (t_ms, device, can id, signal, value)
+                                                                 │
                                                                  ▼
                      device · signal · series · sample · session_constant · fault_event
 ```
 
 The storage code sees one record stream and cannot tell which source produced a
-row — a `.hoot`, its `.wpilog` extraction, and a hand-made `.txt` export of the
-same log all write identical `device` / `signal` / `series` rows. That is what
+row — a `.hoot` (through its `.wpilog` extraction) and a `.wpilog` write
+identical `device` / `signal` / `series` rows. That is what
 lets the CAN-id names survive a change of import route.
 
 **The one thing a wpilog adds** is signals with no CAN address at all: the
@@ -306,9 +307,10 @@ One row per imported file.
 
 | Column | Notes |
 |---|---|
-| `source_file` | absolute path, **UNIQUE** — a second import of the same file fails loudly instead of silently doubling the data |
+| `source_file` | absolute path, **UNIQUE** — a second import of the same file fails loudly instead of silently doubling the data. `sync:<uid>` for a session that arrived by sync |
+| `origin`, `origin_name` | the machine it was imported on (where the original file is): NULL for a log imported here; for a synced session, the hub's `origin` on its bundle blob (only the importer uploads it) and that machine's current name, filled by the sync engine (`_origins`). Not watched, not synced; shown as the session list's **From** column |
 | `source_name` | basename, for display |
-| `source_kind` | `hoot` \| `wpilog` — the same tables hold both sources. A `.hoot` and the `.txt` export of one are both `hoot`; the roboRIO's own DataLogManager file is `wpilog` |
+| `source_kind` | `hoot` \| `wpilog` — the same tables hold both sources. A `.hoot` is `hoot`; the roboRIO's own DataLogManager file is `wpilog`. Sessions imported by older builds from a text export also read `hoot` |
 | `device_serial`, `started_at` | parsed from the filename |
 | `duration_s` | length of the log in seconds |
 | `raw_rows`, `stored_rows` | compression audit — **read it against `source_kind`**. A hoot compresses ~19×; a wpilog is *already* change-only and lands near 1.1×, which is normal and not a fault. A hoot far off 19× is the cheapest signal that the export format changed |

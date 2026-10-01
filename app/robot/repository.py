@@ -116,7 +116,8 @@ def unnamed_count() -> int:
 def sessions() -> list:
     return db.fetchall(
         """SELECT id, source_name, started_at, duration_s, raw_rows, stored_rows,
-                  source_bytes, match_key, keep, imported_at
+                  source_bytes, match_key, keep, imported_at, source_file,
+                  origin, origin_name
            FROM log_session ORDER BY imported_at DESC""")
 
 

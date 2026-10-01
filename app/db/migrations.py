@@ -687,3 +687,20 @@ def _v13_tba(conn: sqlite3.Connection) -> None:
         CREATE INDEX idx_tba_match_event ON tba_match(event_key, match_key);
         """
     )
+
+
+@register_migration
+def _v14_session_origin(conn: sqlite3.Connection) -> None:
+    """
+    Which machine a log session was imported on: its root, where the original
+    file is. NULL `origin` is a log imported here; a session that arrived by
+    sync gets the importing machine's id from the hub (the `origin` of its
+    bundle blob, which only the importer uploads) and that machine's name.
+    A local cache of a hub fact, so neither column syncs or is watched.
+    """
+    conn.executescript(
+        """
+        ALTER TABLE log_session ADD COLUMN origin TEXT;
+        ALTER TABLE log_session ADD COLUMN origin_name TEXT;
+        """
+    )

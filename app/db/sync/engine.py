@@ -154,7 +154,7 @@ class Engine:
         conn = self._connect()
         try:
             for step in (self._scan, self._push, self._pull, self._retry, self._fetch,
-                         self._status):
+                         self._status, self._origins):
                 try:
                     step(conn, rep)
                 except SyncError as e:
@@ -177,6 +177,35 @@ class Engine:
 
     def _status(self, conn, rep: Report) -> None:
         rep.machines = list(self.client.status().get("machines", []))
+
+    def _origins(self, conn, rep: Report) -> None:
+        """Name the machine each pulled session was imported on.
+
+        The importer is the only machine that uploads a session's bundle, so
+        the hub's `origin` on that blob is the session's root. Asked only while
+        a pulled session still lacks one; names follow renames every cycle.
+        Local bookkeeping: `origin` columns aren't watched, nothing is pushed.
+        """
+        missing = conn.execute(
+            """SELECT ls.id, b.bundle_sha FROM log_session ls
+               JOIN sync_session_blob b ON b.uid = ls.uid
+               WHERE ls.source_file LIKE 'sync:%' AND ls.origin IS NULL
+                 AND b.bundle_sha IS NOT NULL""").fetchall()
+        changed = 0
+        if missing:
+            by_sha = {b["sha"]: b.get("origin") for b in self.client.blobs()}
+            for sid, sha in missing:
+                if by_sha.get(sha):
+                    changed += conn.execute("UPDATE log_session SET origin = ? WHERE id = ?",
+                                            (by_sha[sha], sid)).rowcount
+        for m in rep.machines:
+            if m.get("id"):
+                name = m.get("name") or m["id"]
+                changed += conn.execute(
+                    "UPDATE log_session SET origin_name = ? WHERE origin = ? "
+                    "AND origin_name IS NOT ?", (name, m["id"], name)).rowcount
+        if changed:
+            rep.applied.add(LOG_SESSION)
 
     # ── scan: JSON settings and files have no triggers ────────────────────
 
