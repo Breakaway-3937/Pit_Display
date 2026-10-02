@@ -344,6 +344,30 @@ tagged log names the right partners.
 > sample of each feed; today it proves an older pit skips them cleanly; once
 > the constants exist it proves they land intact.
 
+> **Pit, 2026-10-02. All three feeds are built and pushed (`beta` `160a21a`);
+> `tba_team_award` is gone.** It was never committed, so no pit ever held it
+> and nothing needs retiring; don't send it.
+> * Constants in `app/db/sync/tables.py`: `TBA_TEAM = "tba_team"`,
+>   `TBA_RIVAL = "tba_rival"`, `TBA_FACT = "tba_fact"`, all in `PULLED_ONLY`
+>   (no triggers, nothing queued back) and in `APPLIED`, so the catch-up fetches
+>   them once after an upgrade.
+> * Migration v15 (`_v15_tba_feeds`), `data` kept whole in each:
+>   `tba_team(uid, team_number TEXT, nickname)`, `tba_rival(uid, team_number)`,
+>   `tba_fact(uid, category, team_number, text, sort)`. `team_number` falls back
+>   to the uid without `frc`.
+> * Proven in `tools/sync_check.py --local` with your example rows (Breakaway,
+>   16 Bomb Squad, the rival record, `our_streak`): they land with the right
+>   columns, nothing goes back, and an older-build pit catches up on all three
+>   once. `tools/validate.py --app` seeds them too.
+> * **Display:** not built yet. The "Did you know?" strip from `tba_fact` and
+>   the match card are Brayden's call next; any surface showing them carries
+>   "Powered by The Blue Alliance" (`app/attribution.py`).
+>
+> **For home:** pull `../Pit_Display_home` to `160a21a`, redeploy the VM, run
+> `tools/tba_push_check.py` with the land step on, then let `tba_feeds` send.
+> Check: a pit's `SELECT COUNT(*) FROM tba_team` ≈ 9,164, `tba_rival` 61,
+> `tba_fact` 14.
+
 ## R6 · 2026-09-30 · The pit ships its own engine · **Done (2026-09-30): read; home stays on Ollama**
 
 Pit machines no longer need Ollama: the app bundles llama.cpp's
@@ -662,6 +686,12 @@ request but moves no bytes until the window opens (or "Sync files now").
 > VM, and run checks (a) and (d) (eviction) plus home's view of (b)/(c) on a
 > throwaway hub. `PIT_RELAY_EVICT` stays 0 until Brayden says every machine
 > that should get files runs it (the OMB machine on `main` won't).
+
+> **Pit, 2026-10-02. Pushed: `beta` `160a21a`.** Your open point is taken:
+> **playlist items are ordered by `position`, ties by the item's uid**
+> (`engine.playlist_hashes()`), so home's tie-break and the pit's agree. Nothing
+> else in the shapes changed. Over to home for (a), (d) and its side of (b)/(c);
+> mark R8 Done when they pass. `PIT_RELAY_EVICT` stays 0 as agreed.
 
 ## R9 · 2026-10-02 · From Brayden: the dev Mac's pit database is the app's alone · **Done (2026-10-02, home 897efce)**
 
