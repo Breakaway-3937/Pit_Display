@@ -704,3 +704,87 @@ def _v14_session_origin(conn: sqlite3.Connection) -> None:
         ALTER TABLE log_session ADD COLUMN origin_name TEXT;
         """
     )
+
+
+@register_migration
+def _v15_tba_feeds(conn: sqlite3.Connection) -> None:
+    """
+    Home's award feeds, pulled only like `tba_event` (home/REQUESTS.md R5):
+    `data` is the hub row whole; beside it, what a query needs. Rows pushed
+    before a build knew these tables arrive through the engine's catch-up
+    (`sync_meta.known_tables`), not here.
+
+    * `tba_team`: every team (≈9,200): nickname and home, award totals, blue
+      banners, streaks, Quality Award counts. Also the nicknames for a
+      match schedule.
+    * `tba_rival`: teams 3937 has met in finals, with and against.
+    * `tba_fact`: finished one-sentence facts, `category` '3937' or 'league'.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE tba_team (
+            uid          TEXT PRIMARY KEY,         -- team key, 'frc3937'
+            team_number  TEXT,                     -- '3937', a string as in tba_match
+            nickname     TEXT,
+            data         TEXT NOT NULL,
+            updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_tba_team_number ON tba_team(team_number);
+        CREATE TABLE tba_rival (
+            uid          TEXT PRIMARY KEY,         -- team key
+            team_number  TEXT,
+            data         TEXT NOT NULL,
+            updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE tba_fact (
+            uid          TEXT PRIMARY KEY,         -- fact key, 'our_streak'
+            category     TEXT,                     -- '3937' | 'league'
+            team_number  TEXT,                     -- the team it's about, or NULL
+            text         TEXT,                     -- one finished sentence
+            sort         INTEGER,
+            data         TEXT NOT NULL,
+            updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """
+    )
+
+
+@register_migration
+def _v16_relay(conn: sqlite3.Connection) -> None:
+    """
+    R2 as a relay, not a store (home/REQUESTS.md R8). Machine-local
+    bookkeeping; none of it has triggers:
+
+    * `sync_blob_request`: this pit's requests for team-file bytes the hub no
+      longer holds. Pushed as `blob_request` rows; `done_at` once the bytes
+      landed and verified.
+    * `sync_verdict`: home's comparison of a machine's manifest with the
+      master, pulled only; the panel shows this machine's.
+    * `tracks.sha*`: every scanned song is a team file now, hashed once per
+      (size, mtime) and remembered here, so a restart doesn't re-read the
+      library. `team_deleted`: an admin removed the song for the team; it's
+      hidden everywhere and stays on disk until home approves the deletion.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE sync_blob_request (
+            sha          TEXT PRIMARY KEY,         -- the blob the hub should hold
+            file_uid     TEXT NOT NULL,
+            file_sha     TEXT,                     -- the file's own sha (= sha unless zstd'd)
+            bytes        INTEGER,
+            codec        TEXT,
+            requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+            done_at      TEXT
+        );
+        CREATE TABLE sync_verdict (
+            uid        TEXT PRIMARY KEY,           -- machine id
+            data       TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        ALTER TABLE tracks ADD COLUMN sha TEXT;
+        ALTER TABLE tracks ADD COLUMN sha_size INTEGER;
+        ALTER TABLE tracks ADD COLUMN sha_mtime_ns INTEGER;
+        ALTER TABLE tracks ADD COLUMN team_deleted INTEGER NOT NULL DEFAULT 0;
+        """
+    )
+

@@ -54,14 +54,19 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
+# The log every check here is written against: 50 latched faults, a battery
+# low of 11.25 V, a hottest motor of 26 °C. A sync bundle (the database's own
+# lossless format), so it imports the same on every machine and the check never
+# depends on what this machine's database happens to hold.
+FIXTURE = ROOT / "TEST_LOGS" / "fixture_faults_2026-07-29.pitlog.zst"
+
+
 def scratch_db() -> Path:
+    """A fresh install's database (built by the migrations, as CI's seed is),
+    never a copy of this machine's own data."""
     scratch = ROOT / ".ai_check"
     shutil.rmtree(scratch, ignore_errors=True)
     (scratch / "data").mkdir(parents=True)
-    for name in ("pit_display.db", "pit_display_samples.db"):
-        src = ROOT / "data" / name
-        if src.exists():
-            shutil.copy2(src, scratch / "data" / name)
     os.environ["PIT_DISPLAY_DATA"] = str(scratch)
     # The real model, not a scratch copy of 5 GB: the checkout's own models/.
     os.environ.setdefault("PIT_AI_MODELS", str(ROOT / "models"))
@@ -729,12 +734,17 @@ def main() -> int:
     import app.db.migrations  # noqa: F401  — registers the schema
     from app.ai import tools
     from app.db import init_db
-    init_db()
+    db = init_db()
+    from app.db.sync import bundle
+    scratch_dir = ROOT / ".ai_check" / "scratch"
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    bundle.import_bundle(db.path, FIXTURE, scratch_dir)
+    shutil.rmtree(scratch_dir, ignore_errors=True)
 
     sessions = tools.list_sessions(limit=1)["sessions"]
     uid = opts.session or (sessions[0]["uid"] if sessions else None)
     if not uid:
-        print("No imported log in this machine's database: import one first.")
+        print(f"The fixture {FIXTURE.name} didn't import.")
         return 1
     print(f"Session {uid}")
 

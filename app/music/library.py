@@ -116,7 +116,7 @@ def scan(folder: Path) -> tuple[int, int]:
 
 
 def all_tracks(search: str = "") -> list[Track]:
-    sql = "SELECT * FROM tracks WHERE missing = 0"
+    sql = "SELECT * FROM tracks WHERE missing = 0 AND team_deleted = 0"
     params: list = []
     if search.strip():
         sql += " AND (title LIKE ? OR artist LIKE ? OR album LIKE ?)"
@@ -124,3 +124,11 @@ def all_tracks(search: str = "") -> list[Track]:
         params += [like, like, like]
     sql += " ORDER BY artist COLLATE NOCASE, title COLLATE NOCASE"
     return [_row_to_track(r) for r in db.fetchall(sql, tuple(params))]
+
+
+def team_delete(track_id: int) -> None:
+    """Delete a song for the whole team (admin). It's a mark, not a deletion:
+    hidden from every machine's library at the next sync, the file left on
+    disk, and home approves the real deletion later (home/REQUESTS.md R8)."""
+    db.execute("UPDATE tracks SET team_deleted = 1 WHERE id = ?", (track_id,))
+

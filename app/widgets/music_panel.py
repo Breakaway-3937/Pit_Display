@@ -191,6 +191,12 @@ class MusicPanel(QWidget):
         enqueue.clicked.connect(self._on_enqueue)
         lib_actions.addWidget(play_all)
         lib_actions.addWidget(enqueue)
+        lib_actions.addStretch()
+        # Admin only, hidden while locked. A mark for the team, not a delete:
+        # home approves the real deletion (home/REQUESTS.md R8).
+        self._team_delete = RoundedButton("Delete for the team…", variant="ghost")
+        self._team_delete.clicked.connect(self._on_team_delete)
+        lib_actions.addWidget(self._team_delete)
         root.addLayout(lib_actions)
         root.addSpacing(10)
 
@@ -586,8 +592,24 @@ class MusicPanel(QWidget):
         self._eq_field.set_analyser(analyser if on else None)
 
     def _apply_lock(self, unlocked: bool):
+        self._team_delete.setVisible(unlocked)
         self._eq_section.setVisible(unlocked)
         self._eq_locked_notice.setVisible(not unlocked)
+
+    def _on_team_delete(self):
+        tracks = [i.data(Qt.ItemDataRole.UserRole) for i in self._library_list.selectedItems()]
+        if not tracks or not admin.unlocked:
+            return
+        names = ", ".join(t.label() for t in tracks[:3]) + ("…" if len(tracks) > 3 else "")
+        if QMessageBox.question(
+                self, "Delete for the team?",
+                f"Remove {names} from every machine's library?\n\nThe song is marked "
+                "deleted at the next sync and disappears everywhere; the files stay on "
+                "disk until the deletion is approved at home.") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        for t in tracks:
+            music.team_delete(t.id)
 
     # ── Misc ──────────────────────────────────────────────────────────────
 

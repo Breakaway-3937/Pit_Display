@@ -307,7 +307,9 @@ def main() -> int:
     face_payload("checklist", "checklist", "Checklist")
     face_payload("diagnostics", "board", "Diagnostics board")
     face_payload("robot_info", "board", "Robot info board")
-    face_payload("next_match", "next_match", "Next match")
+    nm = face_payload("next_match", "next_match", "Next match")
+    check("the Next Match face credits frc.nexus (a condition of the API's use)",
+          "FRC.NEXUS" in str(nm.get("ledger_right", "")), str(nm.get("ledger_right")))
     config.set("presentation_a", "content", "rotation")
     pump(500)
 

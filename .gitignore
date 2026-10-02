@@ -62,3 +62,6 @@ models/
 llama.log
 mcp.log
 ai.json
+
+# tools/validate.py: check logs and the --app test install, rebuilt each run
+.validation/

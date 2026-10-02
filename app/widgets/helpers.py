@@ -1,6 +1,7 @@
 """Small shared Qt construction helpers used across control-panel widgets."""
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import QFrame, QLabel, QLayout
 
 
@@ -11,6 +12,49 @@ def label(text: str, obj_name: str = "",
     if obj_name:
         lbl.setObjectName(obj_name)
     return lbl
+
+
+class LinkLabel(QLabel):
+    """
+    Wrapped text with links that open in the browser. Qt draws rich-text
+    links blue, and neither the stylesheet nor a later palette change reaches
+    an anchor already laid out, so the colour goes into the anchor itself:
+    the surface's primary ink (white on a dark ground, carbon on a light one,
+    read from the label's own text colour), underlined. Never blue, never red
+    (the brand puts no colour on type). For the data-source credits
+    (`app/attribution.py`).
+    """
+
+    def __init__(self, html: str, obj_name: str = "stat_label"):
+        super().__init__()
+        self._html = html
+        self._ink = ""
+        self.setObjectName(obj_name)
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self.setOpenExternalLinks(True)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.setWordWrap(True)
+        self._render()
+
+    def _render(self) -> None:
+        from app import brand
+        text = self.palette().color(QPalette.ColorRole.WindowText)
+        ink = brand.WHITE if text.lightness() > 128 else brand.CARBON
+        if ink == self._ink:
+            return
+        self._ink = ink
+        self.setText(self._html.replace(
+            "<a ", f'<a style="color:{ink}; text-decoration:underline;" '))
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.PaletteChange):
+            self._render()
+
+    def showEvent(self, event):
+        self.ensurePolished()
+        self._render()
+        super().showEvent(event)
 
 
 def divider() -> QFrame:

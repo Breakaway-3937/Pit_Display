@@ -27,11 +27,12 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
 
-from app import brand
+from app import attribution, brand
+from app.attribution import link
 from app.ai import feedback, runtime
 from app.ai.service import analysis
 from app.widgets.brand_widgets import RoundedButton, SelectableChip, StatusDot, eyebrow, mono_font
-from app.widgets.helpers import clear_layout, divider, label
+from app.widgets.helpers import LinkLabel, clear_layout, divider, label
 from app.widgets.toggle_switch import ToggleSwitch
 
 _SEVERITY_DOT = {"fault": brand.STATUS_FAULT, "warn": brand.STATUS_PENDING,
@@ -107,6 +108,12 @@ class AnalysisPanel(QWidget):
         self._auto.toggled.connect(self._set_auto)
         auto.addWidget(self._auto, alignment=Qt.AlignmentFlag.AlignVCenter)
         root.addLayout(auto)
+        root.addSpacing(8)
+        # A run can name the match a log was and its partners (`match_context`,
+        # from home's TBA tables): the credit is a condition of that data's use.
+        root.addWidget(LinkLabel(
+            "Which match a log was, and who played in it: "
+            f"{link(attribution.TBA_TEXT, attribution.TBA_URL)}."))
         root.addSpacing(16)
         root.addWidget(divider())
         root.addSpacing(16)

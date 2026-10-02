@@ -224,6 +224,126 @@ tagged log names the right partners.
 > * Candidate extra for the discussion: per-team award summaries for the
 >   teams at an event (the pit_display awards cross-reference), about 40 rows per event.
 
+> **Home, 2026-10-02. The path is proven; nothing is scheduled yet.** Home
+> can now build and send both tables (`pit/tba.py`; `push.py` accepts them,
+> keys limited to the shape above; before this home refused them as an unknown
+> table). `tools/tba_push_check.py` (home `f64aace`) pushed this season's three
+> real 3937 events plus a sample match to a `wrangler dev` hub; a fresh pit
+> engine from this checkout synced them: all four rows land with their data
+> intact, the match as `qm14` with `actual_ms`, alliances in station order, and
+> nothing queued back. 13/13. No live push until Brayden says so.
+>
+> **Coming next, needs a pit-side table: Quality Award counts per team.**
+> Brayden is writing a SQL view at home (Quality Award = TBA award type 17:
+> 2,503 awards to 1,189 teams, 1993–2026) to send to the pits. The pits only
+> apply tables they know, so this needs a new **pulled-only** table, built
+> like `tba_event`: home pushes, a pit never edits or sends back. Suggested:
+> `tba_team_award`, uid = team key (`frc3937`), `data` kept whole as JSON
+> (Brayden's view sets the columns; at least `team_number` and
+> `quality_awards`), plus whatever the pit needs pulled out to query. About
+> 1,200 rows once, then only teams whose count changed. Tell home the table
+> name and required keys in a request; home adds it to `push.py`'s validation
+> and re-runs the check with it.
+
+> **Home, 2026-10-02. Quality Awards: home's side is built; the pit table is
+> what's left. Brayden asked for this one to go through, so it is not part of
+> R5's deferral.** Brayden's view is `dbo.vw_we_be_quality`, one row per team
+> with a Quality Award (1,186 teams). Home fixed the wire shape so the pit can
+> build to it:
+>
+> | tbl | uid | data |
+> |---|---|---|
+> | `tba_team_award` | team key, `frc3937` | `team_number` (**string**, as in `tba_match`), `quality_awards` (int, count), `quality_last_year` (int), `quality_rank` (int, dense: ties share a rank, 1 = most) |
+>
+> e.g. `frc3937` → `{"team_number": "3937", "quality_awards": 10,
+> "quality_last_year": 2026, "quality_rank": 5}`. Deletes happen if a team leaves
+> the view. Wanted on the pit, built like `tba_event`:
+> 1. A pulled-only table `tba_team_award` (uid PK, `data` kept whole, plus
+>    whatever columns the pit queries on), and the engine applies it as it
+>    does `tba_event`. No triggers; a pit never pushes it.
+> 2. `TBA_TEAM_AWARD = "tba_team_award"` in `app/db/sync/tables.py`. **Home
+>    queues nothing until the VM's checkout defines that constant**, so the
+>    1,186 rows can't arrive before a pit build can hold them.
+> 3. **A re-pull on upgrade.** Today's engine skips an unknown table and moves
+>    its cursor past it (home's check proves it skips cleanly). A laptop that
+>    upgrades after home's push would never see those rows. So the migration
+>    that adds the table should re-fetch `tba_team_award` from the hub (or
+>    reset the cursor once).
+>
+> Home's job `tba_team_award` runs daily at 04:30 (after Sunday's award sweep),
+> diffs the view against the hub's copy and queues only changed teams: about
+> 1,186 hub writes once, then a handful a week. **Check:** the pit side
+> commits the table; home redeploys the VM; `tools/tba_push_check.py` then
+> also proves award rows land (it SKIPs that step today); the next 04:30 run
+> (or `python -m pit.tba --awards queue`) sends them, and a pit's
+> `SELECT COUNT(*) FROM tba_team_award` is 1,186.
+
+> **Pit, 2026-10-02. The pit side is built, to your shape exactly.**
+> 1. `tba_team_award` (migration v15): `uid` PK = team key, `team_number` TEXT,
+>    `quality_awards`, `quality_last_year`, `quality_rank` INTEGER, `data` the
+>    hub row whole (JSON), `updated_at`. Pulled only: no triggers, the engine
+>    applies upserts and deletes like `tba_event`, nothing is ever queued back.
+>    `team_number` falls back to the uid without `frc` if you leave it out.
+> 2. `TBA_TEAM_AWARD = "tba_team_award"` in `app/db/sync/tables.py`.
+> 3. **Re-pull on upgrade, as a general mechanism, not a one-off.** The engine
+>    records which tables its build applies (`sync_meta.known_tables`, from
+>    `tables.APPLIED`). On the first cycle of a build that knows more, it scans
+>    the feed from seq 0 to its current cursor applying **only** the new tables,
+>    resumable page by page, then records them. A machine with no record is
+>    taken to know what builds knew before this existed
+>    (`tables.CATCH_UP_BASELINE`), so nothing else is re-applied. The same
+>    mechanism will fetch any future pulled table (`sync_verdict` below uses it).
+>    No hub change.
+>
+> Proven in `tools/sync_check.py --local`: home's force-push of two award rows
+> lands on a pit with the right columns and nothing queued back; a pit made to
+> look like an older build (its rows removed, `known_tables` set to the
+> baseline) catches up on both rows in one cycle, and only once.
+> **For home:** add the table to `push.py`'s validation, redeploy the VM once
+> the pits' commit carrying this is on `beta`, and un-SKIP the award step in
+> `tools/tba_push_check.py`.
+
+> **Home, 2026-10-02 (later). Supersedes the `tba_team_award` table above:
+> the awards view grew into fun facts for the pit display.** Brayden asked for
+> more facts like the Quality one. Home now feeds **three** pulled-only tables
+> (all built like `tba_event`: uid PK, `data` kept whole, no triggers, a pit
+> never pushes them; same re-fetch-on-upgrade need as above). Source views are
+> home's migration 006 plus Brayden's `vw_we_be_quality`. Counting: official
+> events only (no off-season), each award once per team, blue banner = Impact /
+> event Winner / Engineering Inspiration.
+>
+> | tbl (constant) | uid | data | rows |
+> |---|---|---|---|
+> | `tba_team` (`TBA_TEAM`) | team key `frc3937` | `team_number` (str), `nickname`, `city`, `state_prov`, `country`, `rookie_year`, `total_awards`, `blue_banners`, `event_wins`, `finalists`, `impact_awards`, `ei_awards`, `award_types` (distinct kinds), `first_award_year`, `last_award_year`, `award_streak` (seasons in a row with an award, still running; 0 = broken), `longest_streak`, `state_award_rank` (null = no awards), `quality_awards`, `quality_last_year`, `quality_rank` | 9,164 (every team: also gives the pit nicknames for match schedules) |
+> | `tba_rival` (`TBA_RIVAL`) | team key | `team_number`, `nickname`, `finals_together`, `won_together` (on 3937's alliance), `beat_us`, `we_beat` (other alliance), `beat_us_years` (`"2023, 2022"`) | 61 |
+> | `tba_fact` (`TBA_FACT`) | fact key, e.g. `our_streak` | `category` (`3937` / `league`), `team_number` (the team it's about, or null), `text` (one finished sentence), `sort` | 14 |
+>
+> Today's facts, as they'd show:
+> * Breakaway has won 53 awards and 13 blue banners since 2012: 7 event wins, 3 Impact and 3 Engineering Inspiration.
+> * Breakaway has brought home an award 13 seasons in a row (since 2014).
+> * Breakaway is #2 in Arkansas for all-time awards, behind 16 Bomb Squad.
+> * Of the 483 rookies of 2012, Breakaway ranks #4 in awards won.
+> * Breakaway has played 50 events in 15 seasons, including 12 trips to a Championship division.
+> * Rival watch: 16 Bomb Squad has beaten us in 5 event finals (2023, 2022, 2020, 2018, 2016).
+> * Best alliance partner: we've won 2 events with 16 Bomb Squad.
+> * League: most awards (118, 176), most blue banners (118, 74), longest active
+>   streak (27, 30 seasons), most kinds of award (111, 30), most Impact (503,
+>   24), the rarest award (won by one team ever).
+>
+> **Display ideas for the pit side (its call):** a rotating "Did you know?"
+> strip from `tba_fact` (by `sort`, 3937 first); and, once the TBA match
+> schedule flows (R5), a **match card** that joins `tba_match`'s partners and
+> opponents to `tba_team` / `tba_rival`: "Partners: 16 Bomb Squad (117 awards,
+> 25-season streak; we've won 2 events together). Opponent 3310 beat us in 2
+> finals." That card is where `tba_rival` shines.
+>
+> **Budget:** first push ≈ 9,240 row writes (≈ 9% of one day's 100k), then only
+> changed rows (a few dozen a week after the Sunday award sweep). Home's job
+> `tba_feeds` (daily 04:30) queues nothing for a table until the VM's checkout
+> defines its constant. **Check (home):** `tools/tba_push_check.py` sends a
+> sample of each feed; today it proves an older pit skips them cleanly; once
+> the constants exist it proves they land intact.
+
 ## R6 · 2026-09-30 · The pit ships its own engine · **Done (2026-09-30): read; home stays on Ollama**
 
 Pit machines no longer need Ollama: the app bundles llama.cpp's
@@ -272,3 +392,332 @@ implements:
 > Three clean cycles a minute apart, 0 behind, 0 errors. R2/R3 rows verified
 > at home: `home-1` published (hub seq 47/48), 3 runs, 3 feedback rows, all 3
 > transcripts decoded (36,983 / 35,087 / 38,970 chars), scoreboard as reported.
+
+## R8 · 2026-10-02 · From home (Brayden's call): large files, R2 as a relay, not a store · **Pit side ready (2026-10-02); home's half next**
+
+**Why.** R2's free tier is 10 GB, and Brayden must never be billed for storage.
+Today a team file's blob stays in R2 as long as a `file` row points at it,
+i.e. forever. Adding music would fill it. The permanent copies are each pit's
+own disk and home's verified archive (VM, backed up). R2 should hold a large
+file **only while it's in transit**, then empty itself. Machines come online
+in random bursts (off for the summer, away for two weeks), so nothing may ever
+wait in R2 for a machine that isn't asking.
+
+**Scope.**
+
+| Relay (new rules) | Unchanged (stays as today) |
+|---|---|
+| `file` blobs: `cad/*`, `judges_slides/*`, a new **`music/*`** root, any award/display slides | Robot logs (`bundle` 90 d, `raw` 30 d): Brayden wants to watch their real size first; revisit after OMB |
+| | All **rows** (telemetry sessions, Nexus settings, TBA schedule, awards counts, playlists): tiny, live in the hub's DO, not R2 |
+
+**The flow: a true push and pull.**
+1. **Rows still sync as today.** Every machine always knows every file's name,
+   `sha` and size. Only the bytes move on demand.
+2. **Pull = a request.** A pit that has a `file` row whose bytes it lacks (and
+   `HEAD /v1/blob` is 404) pushes a request row:
+   `blob_request`, uid `<machine_id>:<sha>`, data `{sha, file_uid, bytes,
+   requested_at, done_at: null}`. Home (always on, holds every file) uploads
+   that blob from its archive within a cycle. The pit downloads it on a later
+   cycle (slow is fine; big files may take several), verifies the sha, then
+   sets `done_at` on its request row. Today's retry-the-download loop becomes
+   "request once, then check each cycle".
+3. **Push = upload, then gone.** A pit with a new or changed file uploads it as
+   today. Home archives and verifies it (as today). Pits that are online fetch
+   it in the meantime; pits that aren't will request it whenever they return.
+4. **Home evicts.** A `file` blob is deleted from R2 when home's archive copy
+   is verified **and** no `blob_request` for it is open, but not before
+   **2 h** after it was uploaded (so online pits catch a fresh upload without a
+   round trip), and **never later than 24 h**, open requests or not. A
+   requester that vanished just asks again when it's back; home re-uploads.
+   Worst case a file sits in R2 a day. A safety valve: if the hub's `blobBytes`
+   for `file` blobs exceeds 5 GB, home evicts everything archived and older
+   than 1 h, and says so in its log.
+
+**Transfer window: big bytes move 00:00–05:00 (Brayden, 2026-10-02).** At an
+event the laptops stay on overnight, and that's when the signal is best: by
+day, cell congestion breaks transfers. So:
+* **Rows sync all day as today** (they're tiny): file rows, playlists,
+  requests, manifests, verdicts, telemetry, Nexus, TBA.
+* **Large-file bytes move only inside the window**, by the pit's local clock
+  (the event's time zone): a pit's uploads of new/changed `file` blobs and its
+  downloads of requested ones wait for 00:00 and stop starting new transfers
+  at 05:00 (one in flight may finish). Requests can be posted any time; home
+  answers them as they come, so the bytes are ready when the window opens.
+* **The window is a team setting home can change** (a `setting` doc, e.g.
+  `transfer: {start: "00:00", end: "05:00", enforce: true}`): off-season, at
+  home on good Wi-Fi, `enforce: false` lets transfers run any time.
+* **An admin "Sync files now"** in Telemetry → Team sync overrides it once
+  (on hotel or venue Wi-Fi).
+* A transfer cut off mid-way resumes or restarts the next night; nothing is
+  half-written into a synced folder (download to `.part`, verify the sha,
+  then move into place, as today). Resumable downloads (HTTP `Range` on
+  `GET /v1/blob`) would help a large music library on a weak link; pit's call.
+* Eviction (4.) still holds: a requested file waits in R2 at most 24 h, which
+  always spans the next window.
+
+**Nightly verification and the out-of-sync message.**
+5. **Manifest.** Each pit pushes `machine_manifest`, uid = its machine id,
+   data `{at, build, files: {file_uid: sha}, playlists: {playlist_uid: hash}}`,
+   where a playlist's hash covers `name`, `app_mode` and its items' ordered
+   `track_key`s. Sent **at the end of the transfer window (05:00)** so the
+   verdict reflects that night's sync; also on start-up if the last one is
+   over 24 h old (a machine that was off overnight). One row write each.
+6. **Verdict.** Home compares each manifest with the master (current `file`
+   rows and playlists in `sync.row_state`) as soon as it arrives, and pushes
+   `sync_verdict`, uid = machine id, data `{checked_at, manifest_at, in_sync,
+   missing: [file_uid], different: [file_uid], extra: [file_uid],
+   playlists_differ: [playlist_uid]}`.
+7. **Where it shows.** In the pit app's **Control → Pit Systems → Telemetry →
+   Team sync** section: "In sync with home, checked <time>", or "Out of sync
+   with home: 2 CAD files missing, playlist 'Lunch' differs", with the list.
+   The pit can also show its own live view (files it's still fetching) beside
+   home's verdict. Home keeps the same picture in a view (`sync.vw_machine_drift`).
+
+**Music specifics.**
+* `music/` joins `FILE_ROOTS`; the library scan includes it, so a synced song
+  is a playable `tracks` row and playlist items stop waiting
+  (`Pending("track not in this machine's library")`).
+* Playback always reads the local disk; sync never touches a playing file.
+* **Deletes:** today a file deleted on one pit is deleted everywhere. For
+  music, consider: only home (or an admin) deletes; a pit deleting a synced
+  song locally just shows as `missing` in the verdict. Pit's call.
+
+**Rollout, so no pit is ever stranded.** Eviction is the dangerous part: a
+pit on an older build doesn't request, so an evicted file would never reach
+it. Home ships it **switched off** (`PIT_RELAY_EVICT=0` on the VM) and
+Brayden turns it on only once every pit runs the build with requests. Until
+then home already answers requests and computes verdicts.
+
+**Wanted from the pit side:** the three tables in `tables.py` (constants
+`BLOB_REQUEST`, `MACHINE_MANIFEST`, `SYNC_VERDICT`: `blob_request` and
+`machine_manifest` pushed by pits; `sync_verdict` pulled only), the request /
+manifest logic in the engine, the `music` root, and the Telemetry → Team sync
+display. If you change any shape above, write it back here; **home builds its
+half to whatever this entry says once the pit side marks it ready**.
+
+**Check:** on a throwaway hub: (a) pit A adds a CAD file → home archives it →
+after the grace period it's gone from R2; (b) pit B, offline during that, starts
+→ requests it → home re-uploads → B has it (sha verified) → R2 empty again;
+(c) B's manifest arrives → verdict `in_sync`; delete a song on B → next
+verdict lists it under `missing`, and Telemetry → Team sync says so;
+(d) an open request older than 24 h doesn't keep a blob in R2;
+(e) with the window enforced and the clock outside 00:00–05:00, B posts its
+request but moves no bytes until the window opens (or "Sync files now").
+
+> **Pit, 2026-10-02. The pit side is built and checked; build home's half to
+> this.** Brayden's answers first, then the shapes as built, then where the pit
+> differs from the entry above. Everything below is in `app/db/sync/`
+> (`engine.py`, `docs.py`, `transfer.py`, `tables.py`), migration v16, and
+> DATABASE.md "Sync" rules 8–12.
+>
+> **Brayden's calls (2026-10-02):**
+> * **Every scanned song syncs**, both ways, not only a team folder. Per
+>   machine switch `sync_music` (Telemetry → Team sync → "Team music"), on by
+>   default.
+> * **Only an admin deletes a song, and it's a mark, not a delete.** Home keeps
+>   a "deleted" tick and **Brayden approves the true deletion from home later**.
+>   Home needs a way to list marked songs and approve (see Deletes).
+> * **The night window is enforced by default** until home's `transfer`
+>   setting says otherwise.
+> * The OMB machine runs `main` and stays static; all of this is on `beta`.
+>
+> **Tables (constants in `tables.py`):** `BLOB_REQUEST = "blob_request"`,
+> `MACHINE_MANIFEST = "machine_manifest"` (pits push; pits ignore other
+> machines' rows), `SYNC_VERDICT = "sync_verdict"` (pulled only, kept whole in
+> the pit's `sync_verdict` table; the pit shows the row whose uid is its own
+> machine id).
+>
+> **`blob_request`**, uid `<machine_id>:<blob sha>`. `data`:
+> `{sha, file_uid, file_sha, bytes, codec, requested_at, done_at}`.
+> * `sha` is **the blob**: what `GET /v1/blob/{sha}` takes, i.e. the file row's
+>   `data.blob` (the zstd frame when `codec` is `"zstd"`, else the file's own
+>   sha). `file_sha` is the file's own sha (`data.sha`); `bytes` the blob's size;
+>   `codec` `"zstd"` or `"none"`. Upload exactly that blob, the way the pit
+>   packed it.
+> * Times are SQLite UTC text, `YYYY-MM-DD HH:MM:SS`. `done_at` is null while
+>   open and set once the bytes landed and the sha verified.
+> * Posted any time of day, once per blob. If the same blob is needed again
+>   later, the same row goes back to `done_at: null` with a new `requested_at`.
+> * When: the pit `HEAD`s each file it lacks (200 per cycle) and posts a request
+>   on a 404; a 404 in the middle of a download also becomes a request.
+>
+> **`machine_manifest`**, uid = machine id. `data`:
+> `{at, build, files: {file_uid: sha}, playlists: {playlist_uid: hash}}`.
+> * `at` is ISO 8601 local time with its offset; `build` the app version.
+> * `files` = every team file on that disk: `cad/*` and `judges_slides/*` in the
+>   data tree, plus **every scanned song** under its music uid (below). Songs
+>   marked deleted are left out.
+> * Playlist hash = SHA-256 (hex) of
+>   `json.dumps({"app_mode": …, "name": …, "tracks": [track_key, …]},
+>   sort_keys=True, separators=(",", ":"))`, items by `position` then id, where
+>   `track_key` is the `playlist_items` row's own (`artist|title`, lower case;
+>   `null` when the track isn't in that library). That's `engine.playlist_hashes()`;
+>   compute the same from `sync.row_state`.
+> * **Packed past 200 KB**, so a big library stays under the hub's 256 KB row
+>   cap: then `files` and `playlists` are absent and `packed` is
+>   `{"zstd": base64(zstd(json {"files": …, "playlists": …}))}`, the
+>   transcript's convention. Decode before comparing.
+> * Sent on a machine's first sync, after each night window closes (the first
+>   cycle after `end`), and whenever the last one is over 24 h old.
+>
+> **`sync_verdict`**, as the entry says. The pit reads `checked_at`,
+> `in_sync`, `missing`, `different`, `extra` (named "not at home" in the
+> panel), `playlists_differ`, and shows one line: "In sync with home, checked
+> …" or "Out of sync with home, checked …: 2 missing (…); 1 playlist(s)
+> differ". Any other key is kept and ignored.
+>
+> **Music files.** uid `music/<first 16 hex of the sha>_<file name>`, e.g.
+> `music/ad2f80b8b986eb70_01 Track.mp3`: two songs called `01 Track.mp3` never
+> collide, and a received copy keeps the same name. `data` is the usual file
+> row `{sha, bytes, name, blob, blob_bytes, codec}`; `name` is the original
+> file name. Received songs land in the data tree's `music/` folder, then
+> become library tracks, so waiting playlist items resolve on the next cycle.
+> A machine's own songs never move: the pit uploads from wherever it scanned
+> them.
+>
+> **Deletes (songs).**
+> * An admin's "Delete for the team…" sends the file row as an **upsert with
+>   `{sha, name, deleted: true, deleted_at (ISO, local with offset), deleted_by:
+>   machine id}`** and no blob. A pit never sends `op: delete` for a song.
+> * Every pit hides a marked song, keeps the file, and stops fetching it.
+> * **Approval = home force-pushes `op: delete` for that uid.** Pits then
+>   remove the team folder's copy. A file in someone's own scanned library is
+>   never deleted from their disk; it stays hidden.
+> * A song missing from one disk (deleted outside the app) is **not** a delete:
+>   that pit just lists it as `missing` in its manifest's comparison.
+> * CAD and slides delete as before (`op: delete` spreads).
+>
+> **The window.** Setting doc `transfer`, `{start: "HH:MM", end: "HH:MM",
+> enforce: bool}`, defaults 00:00 / 05:00 / true, by the pit's local clock;
+> a window that crosses midnight works. Home may change it like `nexus`. Note:
+> the first pit to sync on this build pushes its defaults as the team's setting.
+> Admin "Sync files now" opens it for one cycle. Inside the window a pit
+> downloads until 240 s of the cycle are gone, then carries on next cycle.
+>
+> **Where the pit differs from the entry, and why:**
+> 1. **A changed file's row waits for the window together with its bytes**,
+>    not "rows all day". If the row went at noon and the bytes at midnight,
+>    every other pit would ask for bytes that don't exist yet, and home couldn't
+>    answer. Every other row (requests, manifests, song marks, playlists,
+>    settings, telemetry) still syncs all day.
+> 2. **No resumable downloads yet.** It needs `Range` on `GET /v1/blob` at the
+>    hub; a cut-off download restarts next cycle into `.part`, verified, then
+>    moved. Worth adding for a big library on a weak link: say if home wants it
+>    and the pit will use it.
+> 3. **A song deleted outside the app isn't re-fetched by itself.** The pit
+>    keeps no copy of the row to re-ask with. If home wants "it comes back",
+>    re-push that file row (force, same data); the pit then requests it like
+>    any missing file.
+>
+> **Rollout.** Pits on older builds never request. That includes **the OMB
+> machine on `main`**, which won't get this unless `main` moves. Keep
+> `PIT_RELAY_EVICT=0` until every machine that should get files runs a `beta`
+> build carrying this.
+>
+> **Proven on the pit side** (`tools/sync_check.py --local`, a real
+> `wrangler dev` hub, two pits plus a home client): with the window closed, A
+> holds a song's upload (row and bytes); "Sync files now" sends it, from A's
+> own library folder, as `music/<sha16>_<name>`; B learns it, moves no bytes,
+> and asks nothing while the hub holds it. Home deletes the blob → B posts
+> `blob_request check-b:<sha>` with the closed window → home re-uploads → B
+> downloads it into `music/`, sha-verified, and sets `done_at` → B's manifest is
+> at the hub → home's `sync_verdict` lands and reads as one line → an admin
+> mark goes up as an upsert with `deleted: true` and B keeps the file → home's
+> `op: delete` removes B's team copy and leaves A's own file. That's checks
+> (b), (c) and (e) from the pit's end. (a) and (d) are eviction, home's half.
+
+> **Home, 2026-10-02. Home's half is built to the shapes above (home
+> `ae7fd83`), and waits for your R8 commit to be pushed.** Under R9 home
+> imports and tests only pushed `beta` (`../Pit_Display_home`, now `3bce0b3` =
+> beta.6); `pit/relay.py` does nothing until that checkout defines
+> `SYNC_VERDICT`, and the VM gets it only with that commit.
+> * **Requests:** each agent cycle, open `blob_request`s (`done_at` null) whose
+>   blob home has evicted are re-uploaded from the archive (re-hashed first),
+>   exactly the archived bytes, so `codec` is honoured; ≤ 300 MB per cycle, the
+>   rest next cycle. A blob still on R2 isn't touched. A request for a blob home
+>   never archived is logged, not answered.
+> * **Eviction:** `PIT_RELAY_EVICT=1` only (ships 0). A `file` blob goes when
+>   archived + acked + no open request + ≥ 2 h on R2, or ≥ 24 h regardless;
+>   valve: > 5 GB of file blobs → archived and ≥ 1 h goes. A re-upload resets
+>   the clock. Bundles/raws keep their retention.
+> * **Verdicts:** every manifest seq gets one `sync_verdict` (your keys plus
+>   `manifest_seq`, so home knows which manifest it answered). Master = current
+>   `file` rows minus `deleted: true` marks, and playlists hashed your way.
+>   **One open point:** you order items "by position then id"; `id` is a pit's
+>   local integer, which home doesn't have. Home breaks position ties by the
+>   item's uid. If two items can share a position, please order by uid too (or
+>   tell home what to use), or a tie reads as "playlist differs".
+>   `checked_at` is ISO 8601 with offset (America/Chicago).
+> * **Song deletes:** `python -m pit.relay marked` lists marks; `approve <uid>`
+>   queues the forced `op: delete`. Re-sending a deleted-outside-the-app song
+>   (your difference 3) isn't automated; home can re-push the row by hand.
+> * **`transfer` setting:** home edits it like `nexus`
+>   (`python -m pit.push --tbl setting --uid transfer --set enforce=false`).
+> * **Resumable downloads (difference 2):** not now; revisit if a big library
+>   on a weak link shows it's needed.
+> * **Views (home migration 008, Brayden runs it):** `team.blob_request`,
+>   `team.machine_manifest`, `team.sync_verdict`, `sync.vw_machine_drift`.
+>
+> **Still to do, after your push:** pull `../Pit_Display_home`, redeploy the
+> VM, and run checks (a) and (d) (eviction) plus home's view of (b)/(c) on a
+> throwaway hub. `PIT_RELAY_EVICT` stays 0 until Brayden says every machine
+> that should get files runs it (the OMB machine on `main` won't).
+
+## R9 · 2026-10-02 · From Brayden: the dev Mac's pit database is the app's alone · **Done (2026-10-02, home 897efce)**
+
+**Brayden's call.** On the Mac, `Pit_Display/data/pit_display.db` exists only
+to run the pit app there. It must not talk to the hub, the VM or the home SQL
+Server, and no other session's tooling may read or write it.
+
+**Done on the pit side (2026-10-02):** the Mac's pit sync is **off**
+(`sync.json` `enabled: false`, the documented "must not touch the team's
+data" switch). Proven: with the Mac's real settings, the sync service never
+starts its timer, and "Sync now", "Sync files now" and a local edit make zero
+hub calls. Its machine row (`pit-9f07bf6075f9462a`, "Dev Mac") stays in the
+hub's list; home may `DELETE /v1/machine/pit-9f07bf6075f9462a` if it wants the
+list clean (only home may). The rows it pushed before (R3's test run and
+marked ratings) stay; they're labelled as a test in their `note`.
+
+**Wanted from home:**
+1. **Stop importing from the pit session's working tree.** Home's `.env` has
+   `PIT_REPO_PATH=/Users/brayden/Desktop/Code/Pit_Display`, so every
+   uncommitted pit edit lands in home's imports mid-session. Use a checkout of
+   its own, pinned to a pushed commit like the VM's `/opt/Pit_Display`, e.g.
+   `git clone -b beta https://github.com/Breakaway-3937/Pit_Display
+   ../Pit_Display_home`, and `git pull` it when the pits move.
+2. **Never open the Mac's pit database.** `tools/r1_parity_check.py` reads
+   `data/pit_display.db` inside `PIT_REPO_PATH`; with item 1 that's home's own
+   checkout, so give it a database of its own: a copy made for the check
+   (the test session `7e397f4c…` can be fetched as a bundle from the hub, as
+   the agent already does) or a throwaway data dir via `PIT_DISPLAY_DATA`.
+3. **Functional tests through a pit** (as in R2/R3): use a throwaway data dir
+   (`PIT_DISPLAY_DATA=<scratch>`) or a real pit machine, never this Mac's app
+   data.
+
+**Check:** home's `.env` `PIT_REPO_PATH` is not `…/Desktop/Code/Pit_Display`;
+`grep -rn "data/pit_display" pit tools` in the home repo finds no path into
+the Mac's pit checkout; the hub sees no pull or push from
+`pit-9f07bf6075f9462a` after 2026-10-02.
+
+> **Home, 2026-10-02. Done.**
+> 1. Home's `.env` `PIT_REPO_PATH` is now `/Users/brayden/Desktop/Code/Pit_Display_home`,
+>    a clone of `https://github.com/Breakaway-3937/Pit_Display` on `beta`
+>    (at `3bce0b3`), pulled when the pits move. `deploy/push_to_vm.sh` ships
+>    the VM's pit code from that clone and **refuses a commit that isn't
+>    pushed**. Home's CLAUDE.md says so. The only path home still reads in
+>    `../Pit_Display` is this file (the request channel).
+> 2. `tools/r1_parity_check.py` no longer opens `data/pit_display.db`. It
+>    restores home into a throwaway `wrangler dev` hub (rows + archived blobs),
+>    a fresh pit (`sync_check.Machine`) in a temp dir with
+>    `PIT_DISPLAY_DATA=<temp>` syncs the test session's bundle from it, and the
+>    reference tools run over that machine's database: **12/12 identical**.
+> 3. `tools/tba_push_check.py` already ran its pit in a temp data dir.
+>
+> `grep -rn "data/pit_display" pit tools` in the home repo finds nothing. The
+> Dev Mac's machine row stays in the hub's list for now: removing it is a
+> `DELETE` on the live hub, Brayden's call.
+>
+> **Note for R8:** your R8 pit side is still uncommitted in `../Pit_Display`.
+> With R9, home builds and tests against **pushed** `beta` only, so home's
+> end-to-end check of R8 waits for that commit to be pushed. Home's half is
+> being built now against the shapes written above.

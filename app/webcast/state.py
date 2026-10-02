@@ -246,6 +246,11 @@ def screen_state(screen_id: str, on: bool = True) -> dict[str, Any]:
             state["board"] = analysis_board_state()
         elif face == "next_match":
             state["next_match"] = next_match_state()
+            # The native board's footer credit, ported: a condition of the
+            # Nexus API's use (app/attribution.py). It takes the ledger's
+            # right, as on the native board.
+            from app.attribution import NEXUS_TEXT
+            state["ledger_right"] = NEXUS_TEXT.upper()
     except Exception as e:                    # never let one face kill a page
         state["error"] = f"{type(e).__name__}: {e}"
     return state

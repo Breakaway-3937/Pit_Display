@@ -109,6 +109,8 @@ side effect. `main.py` does this at the top.
 | 12 | `_v12_analysis_feedback` | `analysis_feedback` (the crew's ratings); `uid` on `analysis_run`; sync triggers on `analysis_run`, `analysis_feedback`, `analysis_board` |
 | 13 | `_v13_tba` | `tba_event`, `tba_match`: TheBlueAlliance rows home pushes; pulled only. See [Analysis](#analysis) |
 | 14 | `_v14_session_origin` | `log_session.origin`, `origin_name`: the machine a session was imported on. Local cache of a hub fact; doesn't sync |
+| 15 | `_v15_tba_feeds` | `tba_team`, `tba_rival`, `tba_fact`: home's award feeds; pulled only |
+| 16 | `_v16_relay` | R2 as a relay (R8): `sync_blob_request`, `sync_verdict`; `tracks.sha`, `sha_size`, `sha_mtime_ns`, `team_deleted` |
 
 **Never edit a migration that has shipped.** Add a new one. A migration must be
 safe to run against a database that already has data — `_v5` checks
@@ -487,6 +489,17 @@ match_key = the short 'qm14' a crew types, actual_ms = Unix ms or NULL)`.
 `app/ai/tools.py` `match_context()` reads them: the log's `match_key` first,
 else the played match within 15 minutes of the log's start.
 
+#### `tba_team`, `tba_rival`, `tba_fact`
+Home's award feeds (home/REQUESTS.md R5), pulled only like `tba_event`, `data`
+the hub row whole. `tba_team(uid = 'frc3937', team_number (a **string**),
+nickname)`: every team (≈9,200), its award totals, blue banners, streaks and
+Quality Award counts in `data`. `tba_rival(uid, team_number)`: teams 3937 has
+met in finals (`finals_together`, `won_together`, `beat_us`, `we_beat`,
+`beat_us_years`). `tba_fact(uid = fact key, category '3937' | 'league',
+team_number, text, sort)`: one finished sentence each. Home's daily job sends
+only changed rows after the first ≈9,240. Shown anywhere → "Powered by The
+Blue Alliance" (`app/attribution.py`).
+
 **Rules the tools keep** (`app/ai/checks.py` enforces the rest):
 
 - Figures are chosen exactly as `app.robot.diagnostics` chooses them; the
@@ -511,11 +524,13 @@ Every pit machine's team data meets at the hub (`sync.bh-stack.com`,
 |---|---|---|
 | Team-owned rows | `led_presets`, `eq_presets`, `playlists`, `playlist_items`, `checklist`, `checklist_item` (not `done`), `admin_credential`, `device` (the CAN names) | triggers → `sync_outbox` → hub; `app/db/sync/tables.py` `SPECS` |
 | Team settings | `nexus.json`'s event and feed keys; `update.json`'s `auto_check`, `check_interval_hours` | `tbl = "setting"`, by hash (`docs.py`) |
-| Team files | `assets/judges_slides/*`, `assets/cad/*` in the data tree | `tbl = "file"` → an R2 blob by SHA-256 |
+| Team files | `assets/judges_slides/*`, `assets/cad/*` in the data tree; **every scanned song** as `music/<sha[:16]>_<file name>` (received ones land in the data tree's `music/`) | `tbl = "file"` → an R2 blob by SHA-256. **R2 is a relay** (R8): bytes move only in the night window; see Rules 8–11 |
 | Machine-produced | `log_session` (hand-edited fields in the row; the data as a **bundle**; the original log as a zstd **raw** blob only with `upload_raw`, off by default) | `bundle.py`, `columns.py` |
-| TheBlueAlliance | `tba_event`, `tba_match` (home pushes; `home/REQUESTS.md` R5) | pulled only; the engine special-cases them |
+| TheBlueAlliance | `tba_event`, `tba_match`, `tba_team`, `tba_rival`, `tba_fact` (home pushes; `home/REQUESTS.md` R5) | pulled only; the engine special-cases them |
+| Relay bookkeeping (R8) | `blob_request` (a pit's ask for evicted bytes), `machine_manifest` (what a pit holds, nightly) | pushed by the engine, never applied from others |
+| Home's verdicts (R8) | `sync_verdict`: home's comparison of a manifest with the master | pulled only; Telemetry → Team sync shows this machine's |
 | Analysis | `analysis_run`, `analysis_feedback` (the crew's ratings), `analysis_board` (home's and every pit's; a pit's are `<session>:<machine>-<run>`) | triggers → `sync_outbox`; `SPECS` for the first two, the engine special-cases boards |
-| **Never** | `tracks` (paths on this disk), `checklist_item.done` (this pit's ticks), `config`'s per-screen settings, `webcast.json`, the updater's `channel`, `secrets/`, `sync.json` | |
+| **Never** | `tracks` (paths on this disk; songs travel as files, not rows), `checklist_item.done` (this pit's ticks), `config`'s per-screen settings, `webcast.json`, the updater's `channel`, `secrets/`, `sync.json` | |
 
 ### The bookkeeping tables
 
@@ -526,7 +541,9 @@ Every pit machine's team data meets at the hub (`sync.bh-stack.com`,
 | `sync_outbox` | `(tbl, uid)` with an unsent change, its `op`, and `rev` (bumped on every re-edit, so a push that raced an edit keeps it) |
 | `sync_row` | the hub's `seq` for each row as this machine last saw it: the `base` a push is judged on |
 | `sync_pending` | pulled changes that can't land yet: a parent not here, a track not in this library, a bundle or file to download |
-| `sync_meta` | `cursor` (hub seq read up to) and `epoch` (a new one = the hub was rebuilt: re-read from 0) |
+| `sync_meta` | `cursor` (hub seq read up to) and `epoch` (a new one = the hub was rebuilt: re-read from 0); `known_tables` and `catch_up` (Rule 12); `manifest_at` (the last manifest the hub took) |
+| `sync_blob_request` | this pit's requests for evicted team-file bytes: `sha` (the blob), `file_uid`, `file_sha`, `bytes`, `codec`, `requested_at`, `done_at` (set once the bytes landed and verified) |
+| `sync_verdict` | home's verdicts, `uid` = machine id, `data` whole |
 | `sync_session_blob` | a session's `bundle_sha` / `raw_sha` at the hub |
 | `sync_doc` | hash of each setting document / team file as last pushed or applied |
 | `analysis_board` | boards from the home pipeline: `uid`, `title`, `spec` (JSON, `home/contracts/board.schema.json`) |
@@ -558,6 +575,34 @@ warning), never `save()`.
    Phoenix export is a 2.98 MB bundle (was 14.7 MB), bit-exact, checked by
    `sync_check`. Team files go zstd'd unless that saves under 10% (the CAD
    model: 360 → 58 MB). Bundle format 1 (gzip) still imports.
+8. **Team-file bytes move only in the night window** (`transfer.py`, team
+   setting doc `transfer`: `{start, end, enforce}`, default 00:00–05:00,
+   enforced). A changed file's row goes **with** its bytes, so no machine ever
+   asks for bytes that were never uploaded; every other row syncs all day.
+   "Sync files now" (admin) opens it for one cycle. Robot-log bundles are not
+   covered.
+9. **A pit asks for evicted bytes; it never waits on R2.** A file row whose
+   blob the hub lacks (`HEAD` 404, or a 404 mid-download) becomes a
+   `blob_request` at any hour; home re-uploads from its archive; the pit
+   downloads in the window, verifies, sets `done_at`. Requests and manifests
+   queued in a cycle go out in the same cycle (a second push).
+10. **Songs: only an admin deletes, and it's a mark.** "Delete for the team"
+    sets `tracks.team_deleted` and pushes the file row with `deleted: true`
+    (no delete). Every pit hides it and keeps the file; home approves the real
+    deletion by pushing `op = delete`, which removes only the team folder's
+    copy, never a file in someone's own library. A song missing from one disk
+    is not a delete; the verdict reports it.
+11. **Manifest after each night** (`machine_manifest`, uid = machine id):
+    `{at, build, files: {uid: sha}, playlists: {uid: hash}}`, the lists
+    zstd-packed (`packed: {"zstd": …}`) past 200 KB. A playlist's hash is the
+    SHA-256 of `{"app_mode", "name", "tracks": [track_key, …]}` (items by
+    position; sorted keys, `(",", ":")` separators). Sent after the window
+    closes and at least daily.
+12. **A table a build learns is caught up once.** The pull moves past tables
+    it doesn't know, so after an upgrade the engine scans the feed from 0 for
+    the new ones only (`tables.APPLIED` vs `sync_meta.known_tables`;
+    resumable). Add every new pulled table to `APPLIED`; never edit
+    `CATCH_UP_BASELINE`.
 
 ---
 

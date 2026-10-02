@@ -265,6 +265,20 @@ machine** (admin). With no token the machine works exactly as before and
 keeps everything to itself. The same place renames the machine (what the
 other pits and home call it), turns sync off, and picks what it downloads.
 
+**Big files move at night.** CAD, judges slides and music copy between
+machines only from 00:00 to 05:00 (laptops stay on at an event, and the signal
+is best then); everything else syncs all day. Telemetry → Team sync shows how
+many files are waiting. On good venue or hotel Wi-Fi, an admin can press
+**Sync files now** to move them at once. Every song any machine scans is
+shared with the team; **Team music** turns that off for one machine.
+
+**Deleting a song for the team** (Music → select it → *Delete for the team…*,
+admin) hides it on every machine. The file stays until the deletion is
+approved at home.
+
+**Every morning home checks each machine** against the master copy:
+Telemetry → Team sync says "In sync with home" or lists what's missing.
+
 **Machine id** is how the hub tells machines apart. Changing it (admin, with a
 warning) is for giving a machine an id you chose or taking back a reinstalled
 machine's old one. **Never give two running machines the same id**: the hub

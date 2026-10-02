@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from app import brand, paths, version
+from app import attribution, brand, paths, version
 from app.admin import admin
 from app.config import config
 from app.update import install, settings, update
@@ -39,7 +39,8 @@ from app.update.release import UpdateError, set_token, token
 from app.widgets.brand_widgets import (
     RoundedButton, RoundedFrame, SelectableChip, StatusDot, eyebrow, mono_font,
 )
-from app.widgets.helpers import divider, label
+from app.attribution import link
+from app.widgets.helpers import LinkLabel, divider, label
 from app.widgets.toggle_switch import ToggleSwitch
 
 _CHANNEL_BLURB = {
@@ -261,6 +262,26 @@ class UpdatePanel(QWidget):
             "top left.", "stat_label")
         self._locked_note.setWordWrap(True)
         root.addWidget(self._locked_note)
+
+        # ── Data sources ──────────────────────────────────────────────────
+        # Owed, not optional: both APIs make a credit with a link back a
+        # condition of use (app/attribution.py). Never gated, never a logo.
+        root.addSpacing(16)
+        root.addWidget(divider())
+        root.addSpacing(16)
+        root.addWidget(eyebrow("Data sources"))
+        root.addSpacing(8)
+        root.addWidget(LinkLabel(
+            f"{link(attribution.TBA_TEXT, attribution.TBA_URL)}. Event schedules, "
+            "match results, team award records and fun facts, gathered at home and sent "
+            "to the pits. This app isn't an official The Blue Alliance app and "
+            "isn't supported by them; report a data problem at "
+            f"{link('thebluealliance.com', attribution.TBA_URL)}."))
+        root.addSpacing(10)
+        root.addWidget(LinkLabel(
+            f"{link(attribution.NEXUS_TEXT, attribution.NEXUS_URL)}. Live queueing, "
+            "pit locations and match timing at events that queue with Nexus."))
+        root.addStretch()
 
     # ── State ─────────────────────────────────────────────────────────────
 

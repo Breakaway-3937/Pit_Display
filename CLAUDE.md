@@ -14,7 +14,22 @@ PIT_LEDS_FAKE=1 PIT_NEXUS_FAKE=1 uv run main.py
 uv run main.py --self-check        # boot everything offscreen, exit 0/1
 ```
 
-No unit tests and no linter. The checks run the real thing and exit 0/1:
+No unit tests and no linter. **`uv run tools/validate.py` runs every check
+below, each isolated, and is the one command before a release**
+(`--model` adds a real analysis, `--hardware` the LED controller;
+logs in `.validation/logs/`). **`uv run tools/validate.py --app`** opens the
+full app on a fresh test install: a private sync hub on this Mac (`tools/devhub.py`,
+the real Worker in `wrangler dev`), a simulated home and second pit, the test
+logs imported (`--setup-only` builds it and proves its first sync). **Checks
+never read this Mac's own `data/`**: in a checkout `paths.seed_user_data()`
+doesn't seed the database (it's the developer's, not a seed), so a scratch
+tree starts as CI's seed does; `ai_check` imports `TEST_LOGS/fixture_faults_2026-07-29.pitlog.zst`.
+The dev Mac's own app never syncs with the team (`sync.json` off).
+`tools/import_check.py` pins every test log's complete import; **owlet 26.3.0
+(macOS) cuts the end off ~73% of hoot conversions while reporting 100%**, so
+its hoot step fails until that's resolved (see its docstring).
+
+The individual checks, each exit 0/1:
 `--self-check`, `tools/relay_check.py` (`--local` against `wrangler dev`),
 `tools/sync_check.py --local` (starts its own hub),
 `tools/webcast_check.py`, `tools/upgrade_check.py`, `tools/eq_check.py`,
@@ -665,6 +680,19 @@ server and no cloudflared, by design.**
   (set by `--self-check`) opens no socket and no timers. **Every surface
   showing this data carries `api.ATTRIBUTION`.**
 
+## Data-source credits (`app/attribution.py`), a condition of use
+
+Nexus: "a link back to frc.nexus". The Blue Alliance: "Powered by The Blue
+Alliance" with a link to thebluealliance.com, and **never TBA's name or lamp
+logo in our name or brand identity** (text only, and we say we're not
+official). Both sit, as links, in Control → Software Updates → Data sources
+and the README. **Any surface showing a source's data carries its credit**:
+Nexus on the Event Feed panel and the Next Match board (native footer and the
+pit-network ledger, enforced by `webcast_check`); TBA on the Analysis panel,
+and on any future surface showing `tba_*` rows (the Quality Awards when they
+get a screen). Links are `helpers.LinkLabel`: the surface's ink, underlined,
+never blue or red.
+
 ## Robot-log analysis (`app/ai/`)
 
 A local model reads a session through **ten read-only tools** (the home MCP
@@ -758,6 +786,13 @@ is not in this repo and is built from `home/HANDOFF.md`.
   the token and changes the id (`set_machine_id()` only, behind a warning).
 - **Temp files come from `codec.temp_path()`, never a bare `mkstemp()`**: its
   open handle locks the file on Windows, and synced CAD models couldn't land.
+- **R2 is a relay, not a store** (`home/REQUESTS.md` R8, DATABASE.md Sync
+  rules 8–12). Team-file bytes (CAD, slides, every scanned song) move only in
+  the night window (`transfer.py`, enforced by default; a file row goes with
+  its bytes); a pit asks home (`blob_request`) for evicted bytes; a nightly
+  `machine_manifest` gets home's `sync_verdict` back. Songs are deleted only
+  as an admin's mark; home approves the real delete. **A new pulled table goes
+  in `tables.APPLIED`**, and the catch-up fetches it after an upgrade.
 - Logs travel as **bundles** (names, not ids; enum codes remapped on import;
   samples as columns on each series' exact quantum, zstd'd: 3.85 GB → 2.98 MB,
   bit-exact). Everything sent is zstd'd (`codec.py`). The original log goes

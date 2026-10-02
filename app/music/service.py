@@ -326,6 +326,11 @@ class _MusicService(QObject):
     def tracks(self, search: str = "") -> list[Track]:
         return self.source.tracks(search=search)
 
+    def team_delete(self, track_id: int) -> None:
+        """Admin only (the panel hides the button while locked)."""
+        library.team_delete(track_id)
+        self.library_changed.emit()
+
     def scan_folder(self, folder: Path) -> tuple[int, int]:
         found, added = library.scan(Path(folder))
         self.library_changed.emit()

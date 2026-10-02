@@ -178,6 +178,14 @@ class _SyncService(QObject):
         self.state_changed.emit()
         self._worker.start()
 
+    def sync_files_now(self) -> None:
+        """Move team files in the next cycle even outside the night window
+        (R8): the admin's override on venue or hotel Wi-Fi. One cycle only."""
+        if not self.enabled:
+            return
+        self._engine_for(self.prefs).force_files = True
+        self.sync_now()
+
     def _notice_local_change(self) -> None:
         """A local edit waiting to go: don't make it wait for the minute timer."""
         if self.busy:
@@ -256,6 +264,12 @@ class _SyncService(QObject):
             from app.cad_assets import cad_assets
             attempt(cad_assets.model_changed.emit)
             attempt(cad_assets.config_changed.emit)
+        if "file:music" in applied:
+            # Songs that arrived become tracks (so waiting playlist items can
+            # land next cycle); a song marked deleted drops out of the library.
+            from app.db.sync import docs
+            from app.music import music
+            attempt(lambda: music.scan_folder(docs.root(docs.MUSIC)))
         if "analysis_board" in applied:
             self.boards_changed.emit()
         if applied & {"analysis_run", "analysis_feedback", "analysis_board"}:

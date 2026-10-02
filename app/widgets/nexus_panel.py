@@ -39,12 +39,13 @@ from app.nexus import api, nexus, settings
 from app.nexus import alerts as alerts_mod
 from app.nexus.alerts import alerts
 from app.nexus.api import (
-    ATTRIBUTION, InspectionState, Match, MatchState, when,
+    ATTRIBUTION, ATTRIBUTION_URL, InspectionState, Match, MatchState, when,
 )
 from app.widgets.brand_widgets import (
     RoundedButton, RoundedFrame, SelectableChip, StatusDot, eyebrow, mono_font,
 )
-from app.widgets.helpers import divider, label
+from app.attribution import link
+from app.widgets.helpers import LinkLabel, divider, label
 from app.widgets.toggle_switch import ToggleSwitch
 
 _STATE_COLOR = {
@@ -163,9 +164,9 @@ class NexusPanel(QWidget):
         actions.addStretch()
         root.addLayout(actions)
         root.addSpacing(6)
-        attrib = label(f"{ATTRIBUTION}. Match times are only accurate at events "
-                       "that queue with Nexus.", "stat_label")
-        attrib.setWordWrap(True)
+        # A condition of the API's use: a link back to frc.nexus.
+        attrib = LinkLabel(f"{link(ATTRIBUTION, ATTRIBUTION_URL)}. Match times are "
+                           "only accurate at events that queue with Nexus.")
         root.addWidget(attrib)
         root.addSpacing(16)
         root.addWidget(divider())

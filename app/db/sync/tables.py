@@ -82,6 +82,20 @@ ANALYSIS_BOARD = "analysis_board"
 # TheBlueAlliance data from home (home/REQUESTS.md R5): pulled only, never
 # pushed. The hub row's `data` is kept whole, keys beside it.
 TBA_EVENT, TBA_MATCH = "tba_event", "tba_match"
+# Home's award feeds (home/REQUESTS.md R5, "Supersedes the tba_team_award
+# table"), pulled only: every team with its award record (nicknames for match
+# schedules too), 3937's rivals and partners, and finished fun-fact sentences.
+# Home queues none until these constants exist in the VM's checkout, so rows
+# can't arrive before a build can hold them.
+TBA_TEAM, TBA_RIVAL, TBA_FACT = "tba_team", "tba_rival", "tba_fact"
+
+# R2 as a relay (home/REQUESTS.md R8). A pit pushes `blob_request` (uid
+# `<machine_id>:<blob sha>`) for team-file bytes the hub no longer holds, and
+# `machine_manifest` (uid = machine id) once a night; home pushes back
+# `sync_verdict` (uid = machine id), pulled only. Other machines' requests
+# and manifests arrive in the feed and are ignored.
+BLOB_REQUEST, MACHINE_MANIFEST, SYNC_VERDICT = "blob_request", "machine_manifest", "sync_verdict"
+PULLED_ONLY = (TBA_EVENT, TBA_MATCH, TBA_TEAM, TBA_RIVAL, TBA_FACT, SYNC_VERDICT)
 
 
 def short_match_key(match_key: str) -> str:
@@ -90,11 +104,22 @@ def short_match_key(match_key: str) -> str:
 
 
 # Push order for everything the outbox can hold.
-ORDER = [s.name for s in SPECS] + [LOG_SESSION, "setting", "file", ANALYSIS_BOARD]
+ORDER = [s.name for s in SPECS] + [LOG_SESSION, "setting", "file", ANALYSIS_BOARD,
+                                   BLOB_REQUEST, MACHINE_MANIFEST]
 
 
 def order_key(tbl: str) -> int:
     return ORDER.index(tbl) if tbl in ORDER else len(ORDER)
+
+
+# Every table this build applies when pulled. A table that's new here was
+# skipped by the build before (its cursor moved past it), so the engine
+# catches up on it once from the start of the feed. Add to it with any table.
+APPLIED = tuple(ORDER) + PULLED_ONLY
+# What builds knew before the catch-up existed: a machine with no record
+# (`known_tables`) knew these, and catches up on the rest. Never edit.
+CATCH_UP_BASELINE = tuple(s.name for s in SPECS) + (
+    LOG_SESSION, "setting", "file", ANALYSIS_BOARD, TBA_EVENT, TBA_MATCH)
 
 
 class Pending(Exception):

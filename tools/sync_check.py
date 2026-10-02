@@ -54,9 +54,7 @@ from app.db.sync.client import HubClient  # noqa: E402
 from app.db.sync.engine import Engine  # noqa: E402
 
 _failures: list[str] = []
-PIT_TOKEN = "check-pit-token"
-HOME_TOKEN = "check-home-token"
-OLD_PIT_TOKEN = "check-old-pit-token"      # a token mid-rotation (--local only)
+from devhub import HOME_TOKEN, OLD_PIT_TOKEN, PIT_TOKEN, start_hub  # noqa: E402
 
 
 def check(name: str, ok: bool, detail: str = "") -> bool:
@@ -111,33 +109,6 @@ class Machine:
         return None if row is None else row[0]
 
 
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def start_hub(tmp: Path) -> tuple[subprocess.Popen, str]:
-    port = free_port()
-    hub_dir = ROOT / "sync-hub"
-    if not (hub_dir / "node_modules").exists():
-        subprocess.run(["npm", "install", "--no-audit", "--no-fund"], cwd=hub_dir, check=True)
-    proc = subprocess.Popen(
-        ["npx", "wrangler", "dev", "--local", "--ip", "127.0.0.1", "--port", str(port),
-         "--persist-to", str(tmp / "hub-state"),
-         "--var", f"PIT_TOKEN:{PIT_TOKEN},{OLD_PIT_TOKEN}", "--var", f"HOME_TOKEN:{HOME_TOKEN}"],
-        cwd=hub_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    url = f"http://127.0.0.1:{port}"
-    for _ in range(60):
-        try:
-            with urllib.request.urlopen(url + "/healthz", timeout=2):
-                return proc, url
-        except Exception:
-            time.sleep(1)
-    proc.kill()
-    raise SystemExit("wrangler dev didn't come up on :%d" % port)
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--local", action="store_true")
@@ -181,9 +152,146 @@ def main() -> int:
     return 0
 
 
+# Home's award feeds as home/REQUESTS.md (R5, "Supersedes…") shows them.
+HOME_FEEDS = [
+    {"tbl": "tba_team", "uid": "frc3937", "op": "upsert", "base": 0,
+     "data": {"team_number": "3937", "nickname": "Breakaway", "state_prov": "Arkansas",
+              "rookie_year": 2012, "total_awards": 53, "blue_banners": 13,
+              "award_streak": 13, "quality_awards": 10, "quality_last_year": 2026,
+              "quality_rank": 5}},
+    {"tbl": "tba_team", "uid": "frc16", "op": "upsert", "base": 0,
+     "data": {"team_number": "16", "nickname": "Bomb Squad", "total_awards": 117,
+              "award_streak": 25}},
+    {"tbl": "tba_rival", "uid": "frc16", "op": "upsert", "base": 0,
+     "data": {"team_number": "16", "nickname": "Bomb Squad", "finals_together": 2,
+              "won_together": 2, "beat_us": 5, "we_beat": 0,
+              "beat_us_years": "2023, 2022, 2020, 2018, 2016"}},
+    {"tbl": "tba_fact", "uid": "our_streak", "op": "upsert", "base": 0,
+     "data": {"category": "3937", "team_number": "3937", "sort": 2,
+              "text": "Breakaway has brought home an award 13 seasons in a row (since 2014)."}},
+]
+
+
+def relay_section(a, b, url: str, home_token: str) -> None:
+    """R8: R2 as a relay. The pit side of home's checks (a), (b), (c), (e):
+    the night window holds bytes (not rows), a pit asks home for bytes the
+    hub evicted and gets them when home re-uploads, songs travel, an admin's
+    delete is a mark, home's approval removes only the team folder's copy,
+    and a manifest goes up and home's verdict comes back."""
+    import hashlib
+    from datetime import datetime, timedelta
+    from app.db.sync import docs, transfer
+    print("\nR2 as a relay (R8)")
+    home = HubClient(url, home_token, "home", "home", "check")
+    now = datetime.now()
+    closed = {"enforce": True, "start": (now + timedelta(hours=2)).strftime("%H:%M"),
+              "end": (now + timedelta(hours=3)).strftime("%H:%M")}
+    for m in (a, b):
+        with m.env():
+            transfer.save(**closed)
+
+    # A song on A, in A's own library folder (not the team folder).
+    song = a.dir / "my music" / "01 Track.mp3"
+    song.parent.mkdir(parents=True, exist_ok=True)
+    song.write_bytes(b"ID3" + os.urandom(300_000))
+    a.sql("INSERT INTO tracks (path, title, artist) VALUES (?, 'Pit Song', 'Breakaway')",
+          (str(song),))
+    sha = hashlib.sha256(song.read_bytes()).hexdigest()
+    uid = f"music/{sha[:16]}_01 Track.mp3"
+    ra = a.sync()
+    check("window closed: A holds the song's upload (bytes and row wait)",
+          ra.held_uploads >= 1 and a.one("SELECT COUNT(*) FROM sync_outbox WHERE uid = ?",
+                                         (uid,)) == 1, f"held {ra.held_uploads}")
+    with a.env():
+        a.engine.force_files = True
+        ra = a.engine.cycle()
+    check("'Sync files now' sends it outside the window", ra.ok and
+          a.one("SELECT COUNT(*) FROM sync_outbox WHERE uid = ?", (uid,)) == 0, str(ra.errors))
+    check("…as music/<sha16>_<name>, the scanned file left where it was",
+          a.one("SELECT hash FROM sync_doc WHERE tbl = 'file' AND uid = ?", (uid,)) == sha
+          and song.is_file())
+
+    rb = b.sync()
+    with b.env():
+        landed = docs.root("music") / f"{sha[:16]}_01 Track.mp3"
+    check("window closed: B learns the song but moves no bytes",
+          rb.held_downloads >= 1 and not landed.exists(), f"held {rb.held_downloads}")
+    check("…and asks nothing while the hub still holds them",
+          b.one("SELECT COUNT(*) FROM sync_blob_request") == 0)
+
+    # Home evicts the blob (R8 step 4). B must ask for it.
+    blob = b.one("SELECT data FROM sync_pending WHERE uid = ?", (uid,))
+    blob = json.loads(blob)["blob"]
+    req = urllib.request.Request(f"{url}/v1/blob/{blob}", method="DELETE", headers={
+        "Authorization": f"Bearer {home_token}", "X-Pit-Machine": "home"})
+    urllib.request.urlopen(req).read()
+    b.engine._present.clear()                 # a fresh start, as after a night off
+    rb = b.sync()
+    check("evicted: B posts a request any time of day (window still closed)",
+          rb.open_requests == 1 and not landed.exists(), f"open {rb.open_requests}")
+    rows = home.changes(0, 1000)["changes"]
+    asked = [c for c in rows if c["tbl"] == "blob_request" and c["uid"] == f"check-b:{blob}"]
+    check("…as blob_request <machine>:<blob sha> with the file it's for",
+          asked and asked[-1]["data"]["file_uid"] == uid and asked[-1]["data"]["done_at"] is None,
+          str(asked[-1]["data"] if asked else rows[-3:]))
+
+    # Home answers from its archive (here: A's copy).
+    home.put_blob(song, blob, "file", uid)
+    with b.env():
+        b.engine.force_files = True
+        rb = b.engine.cycle()
+    check("answered: B downloads it, sha verified, into the team music folder",
+          rb.ok and landed.is_file() and landed.read_bytes() == song.read_bytes(), str(rb.errors))
+    rows = home.changes(0, 1000)["changes"]
+    done = [c for c in rows if c["tbl"] == "blob_request" and c["uid"] == f"check-b:{blob}"]
+    check("…and marks its request done", done and done[-1]["data"]["done_at"],
+          str(done[-1]["data"] if done else ""))
+
+    # (c) the manifest and home's verdict.
+    manifests = [c for c in rows if c["tbl"] == "machine_manifest" and c["uid"] == "check-b"]
+    check("B's manifest is at the hub (files by uid → sha, playlists hashed)",
+          manifests and manifests[-1]["data"].get("files") is not None
+          and "playlists" in manifests[-1]["data"], str(manifests[-1]["data"] if manifests else ""))
+    home.push([{"tbl": "sync_verdict", "uid": "check-b", "op": "upsert", "base": 0,
+                "data": {"checked_at": "2026-10-02T05:01:00-05:00", "in_sync": False,
+                         "manifest_at": manifests[-1]["data"]["at"] if manifests else "",
+                         "missing": ["cad/robot.glb"], "different": [], "extra": [],
+                         "playlists_differ": []}}], force=True)
+    b.sync()
+    from app.widgets.network_panel import verdict_line
+    held = b.one("SELECT data FROM sync_verdict WHERE uid = 'check-b'")
+    line = verdict_line(json.loads(held) if held else None)
+    check("home's verdict lands and reads as one line",
+          "Out of sync with home" in line and "robot.glb" in line, line)
+
+    # An admin's delete is a mark; home's approval removes the team copy only.
+    a.sql("UPDATE tracks SET team_deleted = 1 WHERE path = ?", (str(song),))
+    a.sync()
+    b.sync()
+    rows = home.changes(0, 1000)["changes"]
+    mark = [c for c in rows if c["tbl"] == "file" and c["uid"] == uid]
+    check("admin delete goes up as a mark, not a delete",
+          mark and mark[-1]["op"] == "upsert" and mark[-1]["data"].get("deleted") is True)
+    check("…B keeps the file, and doesn't fetch it again",
+          landed.is_file() and b.one("SELECT hash FROM sync_doc WHERE uid = ?", (uid,)) == "deleted")
+    home.push([{"tbl": "file", "uid": uid, "op": "delete", "base": 0}], force=True)
+    a.sync(); b.sync()
+    check("home approves: the team folder's copy goes, A's own file stays",
+          not landed.exists() and song.is_file())
+
+    for m in (a, b):
+        with m.env():
+            transfer.save(enforce=False)
+    a.sync(); b.sync()
+
+
 def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     a = Machine("a", tmp, url, pit_token)
     b = Machine("b", tmp, url, pit_token)
+    from app.db.sync import transfer
+    for m in (a, b):
+        with m.env():
+            transfer.save(enforce=False)     # the night window gets its own section
 
     print("First contact")
     ra = a.sync()
@@ -303,6 +411,8 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     a.sync(); b.sync()
     with b.env():
         check("a removed slide is removed", not (docs.root("judges_slides") / "01 Robot.png").exists())
+
+    relay_section(a, b, url, home_token)
 
     print("\nRobot logs")
     log = ROOT / "TEST_LOGS" / "akit_26-08-17_02-59-21.wpilog"
@@ -471,6 +581,34 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
           and a.one("SELECT match_key FROM tba_match WHERE uid = '2026check_qm14'") == "qm14")
     check("…and a pit never sends them back (pulled only)",
           a.one("SELECT COUNT(*) FROM sync_outbox WHERE tbl LIKE 'tba_%'") == 0)
+    home.push(HOME_FEEDS, force=True)
+    a.sync()
+    us = json.loads(a.one("SELECT data FROM tba_team WHERE uid = 'frc3937'") or "{}")
+    check("home's award feeds land: tba_team, tba_rival, tba_fact (pulled only)",
+          a.one("SELECT nickname FROM tba_team WHERE uid = 'frc16'") == "Bomb Squad"
+          and us.get("quality_awards") == 10 and us.get("award_streak") == 13
+          and a.one("SELECT team_number FROM tba_rival WHERE uid = 'frc16'") == "16"
+          and a.one("SELECT text FROM tba_fact WHERE uid = 'our_streak'").startswith("Breakaway")
+          and a.one("SELECT COUNT(*) FROM sync_outbox WHERE tbl LIKE 'tba_%'") == 0)
+    # B as a build from before the table: it pulled past the rows and kept
+    # none. Its first cycle on this build must fetch them once.
+    from app.db.sync import tables as sync_tables
+    b.sync()
+    for t in ("tba_team", "tba_rival", "tba_fact"):
+        b.sql(f"DELETE FROM {t}")
+    b.sql("UPDATE sync_meta SET v = ? WHERE k = 'known_tables'",
+          (json.dumps(sorted(sync_tables.CATCH_UP_BASELINE)),))
+    rb = b.sync()
+    check("a pit that skipped the table on an older build catches up on it",
+          b.one("SELECT COUNT(*) FROM tba_team") == 2
+          and b.one("SELECT COUNT(*) FROM tba_rival") == 1
+          and b.one("SELECT COUNT(*) FROM tba_fact") == 1
+          and "tba_fact" in json.loads(
+              b.one("SELECT v FROM sync_meta WHERE k = 'known_tables'")),
+          str(rb.errors))
+    rb = b.sync()
+    check("…once", b.one("SELECT v FROM sync_meta WHERE k = 'catch_up'") == "null"
+          and rb.ok, str(rb.errors))
     status = home.status()
     check("the hub lists both machines",
           {"check-a", "check-b"} <= {m["id"] for m in status.get("machines", [])})

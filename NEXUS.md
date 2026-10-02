@@ -11,9 +11,12 @@ This file is the reference for the whole feature: its status, what every
 endpoint and field means, how the app keeps the data fresh, and where a screen
 should look to draw it. `app/nexus/api.py` is the same reference as code.
 
-> **Attribution is a condition of the API's use.** Any surface that shows this
-> data carries "Event data from frc.nexus" (`api.ATTRIBUTION`). The Event Feed
-> panel does; a new board that shows a match must too.
+> **Attribution is a condition of the API's use.** The docs (v1.8.0): "Include
+> a link back to frc.nexus in any projects in which you utilize Nexus data."
+> Any surface that shows this data carries "Event data from frc.nexus"
+> (`api.ATTRIBUTION`, from `app/attribution.py`): the Event Feed panel (a
+> link), the Next Match board (native and pit-network), and Control →
+> Software Updates → Data sources. A new board that shows a match must too.
 
 ---
 

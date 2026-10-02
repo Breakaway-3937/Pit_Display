@@ -139,6 +139,12 @@ def seed_user_data() -> list[str]:
 
     copied: list[str] = []
     for rel in _SEEDS:
+        if rel.endswith(".db") and not is_frozen():
+            # In a checkout, data/ is the developer's own live database, not a
+            # seed. A scratch data dir (a check, the validation app) must start
+            # as a fresh install does: an empty file the migrations build,
+            # which is exactly what CI's seed is.
+            continue
         src = resource_root() / rel
         dst = data_root() / rel
         if not src.exists() or dst.exists():

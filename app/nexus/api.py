@@ -63,8 +63,8 @@ from app import credentials, net, paths
 BASE_URL = os.environ.get("PIT_NEXUS_API", "https://frc.nexus/api/v1")
 API_KEY_SECRET = "nexus_api_key"
 RELAY_TOKEN_SECRET = "nexus_relay_token"
-ATTRIBUTION = "Event data from frc.nexus"
-ATTRIBUTION_URL = "https://frc.nexus"
+# A condition of the API's use; the wording and the rule live in app/attribution.py.
+from app.attribution import NEXUS_TEXT as ATTRIBUTION, NEXUS_URL as ATTRIBUTION_URL  # noqa: E402
 
 _TIMEOUT = 15
 _USER_AGENT = "breakaway-pit-display"

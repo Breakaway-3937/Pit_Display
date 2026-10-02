@@ -23,23 +23,36 @@ transactions), like the log importer: it must never share the GUI's.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import sqlite3
 import time
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 from app import paths
-from app.db.sync import bundle, codec, docs, tables
+from app.db.sync import bundle, codec, docs, tables, transfer
 from app.db.sync.client import HubClient, SyncError, sha256_file
 from app.db.sync.tables import LOG_SESSION, ANALYSIS_BOARD, Pending
 
 PUSH_BATCH = 100
 PULL_PAGE = 500
-FETCH_PER_CYCLE = 3
+FETCH_PER_CYCLE = 3                 # robot-log bundles
+# Team files inside the night window: keep downloading until this much of a
+# cycle has gone, then let the next cycle carry on (one in flight finishes).
+FILE_BUDGET_S = 240
+# Checking whether the hub still holds bytes this pit lacks: HEADs per cycle.
+REQUEST_CHECKS = 200
+# A manifest goes out after each night window closes, and at least this often.
+MANIFEST_MAX_AGE = timedelta(hours=24)
+# Past this a manifest's lists travel zstd'd ({"zstd": …}), under the hub's
+# 256 KB row cap.
+MANIFEST_PACK_AT = 200_000
 # The original log, when it goes up at all (`upload_raw`, off by default: the
 # bundle already carries every record), goes compressed; past this compressed
 # size it's skipped. The 3.85 GB Phoenix export compresses to ~110 MB.
@@ -66,6 +79,11 @@ class Report:
     seconds: float = 0.0
     # The hub's view of every machine: [{id, name, role, version, last_seen, …}]
     machines: list[dict] = field(default_factory=list)
+    # The night window (R8): team-file uploads and downloads held for it,
+    # and this pit's requests home hasn't answered yet.
+    held_uploads: int = 0
+    held_downloads: int = 0
+    open_requests: int = 0
 
     @property
     def ok(self) -> bool:
@@ -86,6 +104,26 @@ class Engine:
         self.prefs = prefs
         self._say = say or (lambda _msg: None)
         self.hasher = docs.FileHasher()
+        # "Sync files now": the next cycle moves team files outside the window.
+        self.force_files = False
+        # Blobs the hub was seen to hold this session (no need to ask again).
+        self._present: set[str] = set()
+
+    def _files_open(self) -> bool:
+        return self.force_files or transfer.is_open()
+
+    def _music_on(self) -> bool:
+        return bool(self.prefs.get("sync_files", True) and self.prefs.get("sync_music", True))
+
+    @staticmethod
+    def _team_deleted(conn, uid: str):
+        """The deleted track behind music `uid`, or None."""
+        parts = docs.split(uid)
+        if parts is None or parts[0] != docs.MUSIC:
+            return None
+        return conn.execute(
+            "SELECT sha FROM tracks WHERE team_deleted = 1 AND sha LIKE ? LIMIT 1",
+            (parts[1][:16] + "%",)).fetchone()
 
     # ── plumbing ──────────────────────────────────────────────────────────
 
@@ -153,8 +191,11 @@ class Engine:
         t0 = time.monotonic()
         conn = self._connect()
         try:
-            for step in (self._scan, self._push, self._pull, self._retry, self._fetch,
-                         self._status, self._origins):
+            # The second push sends what this cycle queued: requests, their
+            # done marks, the manifest. Same cycle, not a minute later.
+            for step in (self._scan, self._push, self._catch_up, self._pull, self._retry,
+                         self._fetch, self._status, self._origins, self._manifest,
+                         self._push):
                 try:
                     step(conn, rep)
                 except SyncError as e:
@@ -170,7 +211,16 @@ class Engine:
                 "SELECT COUNT(*) FROM sync_pending WHERE reason IN ('bundle', 'download')"
             ).fetchone()[0]
             rep.cursor = int(self._meta(conn, "cursor", "0") or 0)
+            rep.open_requests = conn.execute(
+                "SELECT COUNT(*) FROM sync_blob_request WHERE done_at IS NULL").fetchone()[0]
+            rep.held_uploads = conn.execute(
+                "SELECT COUNT(*) FROM sync_outbox WHERE tbl = 'file' AND op = 'upsert'"
+            ).fetchone()[0] if not self._files_open() else 0
+            rep.held_downloads = conn.execute(
+                "SELECT COUNT(*) FROM sync_pending WHERE reason = 'download'"
+            ).fetchone()[0] if not self._files_open() else 0
         finally:
+            self.force_files = False
             conn.close()
         rep.seconds = round(time.monotonic() - t0, 2)
         return rep
@@ -218,12 +268,23 @@ class Engine:
             return
         waiting = {r[0] for r in conn.execute(
             "SELECT uid FROM sync_pending WHERE tbl = 'file'")}
-        local = self.hasher.local_files()
+        local = self.hasher.local_files(conn if self._music_on() else None)
         for uid, (_path, sha, _size) in local.items():
             if known.get((docs.FILE, uid)) != sha and uid not in waiting:
                 self._enqueue(conn, docs.FILE, uid, "upsert")
+        if self._music_on():
+            # An admin's "delete for the team": sent as a mark, never a
+            # delete. Home approves the real deletion (R8).
+            for sha, path in conn.execute(
+                    "SELECT sha, path FROM tracks WHERE team_deleted = 1 AND sha IS NOT NULL"):
+                uid = f"{docs.MUSIC}/{docs.music_name(sha, Path(path).name)}"
+                if docs.split(uid) is not None and known.get((docs.FILE, uid)) != "deleted":
+                    self._enqueue(conn, docs.FILE, uid, "upsert")
         for (tbl, uid) in known:
+            # A song gone from one disk isn't a team delete: it's missing
+            # there, which the nightly verdict reports.
             if tbl == docs.FILE and uid not in local and uid not in waiting \
+                    and not uid.startswith(docs.MUSIC + "/") \
                     and docs.file_path(uid) is not None and not docs.file_path(uid).exists():
                 self._enqueue(conn, docs.FILE, uid, "delete")
 
@@ -242,8 +303,21 @@ class Engine:
             return json.loads(row[0]) if row else None
         if tbl == docs.SETTING:
             return docs.setting_data(uid)
+        if tbl == tables.BLOB_REQUEST:
+            row = conn.execute(
+                "SELECT sha, file_uid, file_sha, bytes, codec, requested_at, done_at "
+                "FROM sync_blob_request WHERE sha = ?", (uid.partition(":")[2],)).fetchone()
+            return dict(row) if row else None
+        if tbl == tables.MACHINE_MANIFEST:
+            return self._manifest_data(conn)
+        if tbl == docs.FILE and (gone := self._team_deleted(conn, uid)) is not None:
+            return {"sha": gone[0], "name": docs.split(uid)[1], "deleted": True,
+                    "deleted_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                    "deleted_by": self.me}
         if tbl == docs.FILE:
             path = docs.file_path(uid)
+            if uid.startswith(docs.MUSIC + "/") and (path is None or not path.is_file()):
+                path = docs.music_source(conn, uid)
             if path is None or not path.is_file():
                 return None
             sha = self.hasher.sha(path)
@@ -341,6 +415,9 @@ class Engine:
         for i in range(0, len(entries), PUSH_BATCH):
             batch, sent = [], {}
             for e in entries[i:i + PUSH_BATCH]:
+                if e["tbl"] == docs.FILE and e["op"] != "delete" and not self._files_open() \
+                        and self._team_deleted(conn, e["uid"]) is None:
+                    continue        # bytes wait for the night window; the row with them
                 try:
                     data = None if e["op"] == "delete" else \
                         self._payload(conn, e["tbl"], e["uid"], rep)
@@ -372,7 +449,10 @@ class Engine:
                     if tbl == docs.SETTING:
                         self._set_doc(conn, tbl, uid, docs.hash_json(data) if data else None)
                     elif tbl == docs.FILE:
-                        self._set_doc(conn, tbl, uid, data["sha"] if data else None)
+                        self._set_doc(conn, tbl, uid, None if not data else
+                                      "deleted" if data.get("deleted") else data["sha"])
+                    elif tbl == tables.MACHINE_MANIFEST and data:
+                        self._set_meta(conn, "manifest_at", data["at"])
                     conn.execute("COMMIT")
                     rep.pushed += 1
                 elif r["status"] == "conflict":
@@ -392,6 +472,47 @@ class Engine:
                 else:
                     conn.execute(done, (tbl, uid, rev))
                     rep.errors.append(f"hub refused {tbl} {uid[:12]}: {r.get('reason')}")
+
+    # ── catch-up: tables this build learned ───────────────────────────────
+
+    def _catch_up(self, conn, rep: Report) -> None:
+        """Fetch, once, the rows of tables an older build skipped.
+
+        The pull moves its cursor past a table it doesn't know, so after an
+        upgrade those rows would never arrive. `known_tables` records what the
+        build that last pulled could apply; for anything new, scan the feed
+        from 0 to today's head applying only those tables (the feed holds each
+        row's latest version, so this is every live row once). Resumable: the
+        scan's position is saved after every page.
+        """
+        recorded = json.loads(self._meta(conn, "known_tables", "null") or "null")
+        known = set(recorded if recorded is not None else tables.CATCH_UP_BASELINE)
+        cursor = int(self._meta(conn, "cursor", "0") or 0)
+        state = json.loads(self._meta(conn, "catch_up", "null") or "null")
+        if state is None:
+            if cursor == 0:
+                # Never pulled (or the hub was rebuilt): the pull gets it all.
+                self._set_meta(conn, "known_tables", json.dumps(sorted(tables.APPLIED)))
+                return
+            new = sorted(set(tables.APPLIED) - known)
+            if not new:
+                return
+            state = {"tables": new, "at": 0, "until": cursor}
+        want = set(state["tables"])
+        at, until = int(state["at"]), int(state["until"])
+        while at < until:
+            changes = self.client.changes(at, PULL_PAGE).get("changes", [])
+            if not changes:
+                break
+            for ch in changes:
+                if int(ch["seq"]) > until:
+                    break
+                if ch["tbl"] in want:
+                    self._apply(conn, ch, rep)
+            at = min(until, int(changes[-1]["seq"]))
+            self._set_meta(conn, "catch_up", json.dumps({**state, "at": at}))
+        self._set_meta(conn, "catch_up", "null")
+        self._set_meta(conn, "known_tables", json.dumps(sorted(set(state["tables"]) | known)))
 
     # ── pull ──────────────────────────────────────────────────────────────
 
@@ -459,6 +580,9 @@ class Engine:
         drop = "DELETE FROM sync_outbox WHERE tbl = ? AND uid = ?"
         clear = "DELETE FROM sync_pending WHERE tbl = ? AND uid = ?"
 
+        if tbl in (tables.BLOB_REQUEST, tables.MACHINE_MANIFEST):
+            return          # every pit's requests and manifests are home's to read
+
         if spec is not None:
             with self._guarded(conn):
                 conn.execute(drop, (tbl, uid))
@@ -506,9 +630,27 @@ class Engine:
         if tbl == docs.FILE:
             if not self.prefs.get("sync_files", True) or docs.split(uid) is None:
                 return
+            music = uid.startswith(docs.MUSIC + "/")
+            if music and not self._music_on():
+                return
             with self._guarded(conn):
                 conn.execute(drop, (tbl, uid))
                 path = docs.file_path(uid)
+                if music and (op == "delete" or data.get("deleted")):
+                    # A mark hides the song everywhere and keeps the file; a
+                    # delete (home approved it) removes the team folder's
+                    # copy. A file in someone's own library is never touched.
+                    if op == "delete":
+                        docs.remove_file(uid)
+                    conn.execute("UPDATE tracks SET team_deleted = 1 WHERE sha LIKE ?",
+                                 (docs.split(uid)[1][:16] + "%",))
+                    self._set_doc(conn, tbl, uid, None if op == "delete" else "deleted")
+                    conn.execute(clear, (tbl, uid))
+                    self._saw(conn, tbl, uid, seq)
+                    rep.applied.add("file:music")
+                    return
+                if music and not path.is_file():
+                    path = docs.music_source(conn, uid) or path
                 if op == "delete":
                     docs.remove_file(uid)
                     self._set_doc(conn, tbl, uid, None)
@@ -523,10 +665,41 @@ class Engine:
                     self._pend(conn, ch, "download")
             return
 
-        if tbl in (tables.TBA_EVENT, tables.TBA_MATCH):
+        if tbl in tables.PULLED_ONLY:
             with self._guarded(conn):
                 if op == "delete":
                     conn.execute(f"DELETE FROM {tbl} WHERE uid = ?", (uid,))
+                elif tbl == tables.SYNC_VERDICT:
+                    conn.execute(
+                        """INSERT INTO sync_verdict (uid, data) VALUES (?, ?)
+                           ON CONFLICT (uid) DO UPDATE SET data = excluded.data,
+                             updated_at = datetime('now')""", (uid, json.dumps(data)))
+                elif tbl in (tables.TBA_TEAM, tables.TBA_RIVAL):
+                    number = str(data.get("team_number") or uid.removeprefix("frc"))
+                    if tbl == tables.TBA_TEAM:
+                        conn.execute(
+                            """INSERT INTO tba_team (uid, team_number, nickname, data)
+                               VALUES (?, ?, ?, ?)
+                               ON CONFLICT (uid) DO UPDATE SET team_number = excluded.team_number,
+                                 nickname = excluded.nickname, data = excluded.data,
+                                 updated_at = datetime('now')""",
+                            (uid, number, data.get("nickname"), json.dumps(data)))
+                    else:
+                        conn.execute(
+                            """INSERT INTO tba_rival (uid, team_number, data) VALUES (?, ?, ?)
+                               ON CONFLICT (uid) DO UPDATE SET team_number = excluded.team_number,
+                                 data = excluded.data, updated_at = datetime('now')""",
+                            (uid, number, json.dumps(data)))
+                elif tbl == tables.TBA_FACT:
+                    conn.execute(
+                        """INSERT INTO tba_fact (uid, category, team_number, text, sort, data)
+                           VALUES (?, ?, ?, ?, ?, ?)
+                           ON CONFLICT (uid) DO UPDATE SET category = excluded.category,
+                             team_number = excluded.team_number, text = excluded.text,
+                             sort = excluded.sort, data = excluded.data,
+                             updated_at = datetime('now')""",
+                        (uid, data.get("category"), data.get("team_number"), data.get("text"),
+                         data.get("sort"), json.dumps(data)))
                 elif tbl == tables.TBA_EVENT:
                     conn.execute(
                         """INSERT INTO tba_event (uid, name, start_date, end_date, data)
@@ -617,21 +790,121 @@ class Engine:
         for ch in self._pending(conn, waiting_for_files=False):
             self._apply(conn, ch, rep)
 
+    def _waiting(self, conn, reason: str, limit: int) -> list[dict]:
+        rows = conn.execute(
+            "SELECT tbl, uid, seq, op, data, reason FROM sync_pending WHERE reason = ? "
+            "ORDER BY seq LIMIT ?", (reason, limit)).fetchall()
+        return [{"tbl": r[0], "uid": r[1], "seq": r[2], "op": r[3],
+                 "data": json.loads(r[4]) if r[4] else None, "reason": r[5]} for r in rows]
+
     def _fetch(self, conn, rep: Report) -> None:
-        for ch in self._pending(conn, waiting_for_files=True, limit=FETCH_PER_CYCLE):
-            data = ch["data"] or {}
-            try:
-                if ch["reason"] == "bundle":
-                    self._fetch_bundle(conn, ch, data, rep)
-                else:
-                    self._fetch_file(conn, ch, data, rep)
-            except SyncError:
-                raise
-            except Exception as e:
-                conn.execute("UPDATE sync_pending SET tries = tries + 1 WHERE tbl = ? AND uid = ?",
-                             (ch["tbl"], ch["uid"]))
-                rep.errors.append(f"couldn't land {ch['tbl']} {ch['uid'][:12]}: "
-                                  f"{type(e).__name__}: {e}")
+        """Robot-log bundles any time, as before. Team files (R8): ask for
+        bytes the hub no longer holds at any time; move bytes only in the
+        night window (or after "Sync files now")."""
+        for ch in self._waiting(conn, "bundle", FETCH_PER_CYCLE):
+            self._land(conn, ch, rep, self._fetch_bundle)
+        self._request_missing(conn, rep)
+        if not self._files_open():
+            return
+        t0 = time.monotonic()
+        for ch in self._waiting(conn, "download", 10_000):
+            if time.monotonic() - t0 > FILE_BUDGET_S:
+                break
+            blob = self._blob_of(ch["data"] or {})
+            if blob not in self._present and not self.client.has_blob(blob):
+                self._request(conn, blob, ch["uid"], ch["data"] or {})
+                continue
+            if self._land(conn, ch, rep, self._fetch_file):
+                self._present.discard(blob)
+                if conn.execute("UPDATE sync_blob_request SET done_at = datetime('now') "
+                                "WHERE sha = ? AND done_at IS NULL", (blob,)).rowcount:
+                    self._enqueue(conn, tables.BLOB_REQUEST, f"{self.me}:{blob}", "upsert")
+
+    def _land(self, conn, ch: dict, rep: Report, fetch) -> bool:
+        try:
+            fetch(conn, ch, ch["data"] or {}, rep)
+            return True
+        except SyncError as e:
+            if e.status == 404 and ch["reason"] == "download":
+                # Evicted between the check and the download: ask for it.
+                self._request(conn, self._blob_of(ch["data"] or {}), ch["uid"], ch["data"] or {})
+                return False
+            raise
+        except Exception as e:
+            conn.execute("UPDATE sync_pending SET tries = tries + 1 WHERE tbl = ? AND uid = ?",
+                         (ch["tbl"], ch["uid"]))
+            rep.errors.append(f"couldn't land {ch['tbl']} {ch['uid'][:12]}: "
+                              f"{type(e).__name__}: {e}")
+            return False
+
+    @staticmethod
+    def _blob_of(data: dict) -> str:
+        return data.get("blob") or data.get("sha") or ""
+
+    def _request_missing(self, conn, rep: Report) -> None:
+        """Ask home for team-file bytes the hub no longer holds. Any time of
+        day: home answers as requests come, so the bytes are there when the
+        window opens. One request per blob; asked again only once answered."""
+        asked = {r[0] for r in conn.execute(
+            "SELECT sha FROM sync_blob_request WHERE done_at IS NULL")}
+        checks = 0
+        for ch in self._waiting(conn, "download", 10_000):
+            blob = self._blob_of(ch["data"] or {})
+            if not blob or blob in asked or blob in self._present:
+                continue
+            if checks >= REQUEST_CHECKS:
+                break
+            checks += 1
+            if self.client.has_blob(blob):
+                self._present.add(blob)
+            else:
+                self._request(conn, blob, ch["uid"], ch["data"] or {})
+                asked.add(blob)
+
+    def _request(self, conn, blob: str, file_uid: str, data: dict) -> None:
+        self._present.discard(blob)
+        conn.execute(
+            """INSERT INTO sync_blob_request (sha, file_uid, file_sha, bytes, codec)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT (sha) DO UPDATE SET file_uid = excluded.file_uid,
+                 requested_at = datetime('now'), done_at = NULL
+               WHERE sync_blob_request.done_at IS NOT NULL""",
+            (blob, file_uid, data.get("sha"), data.get("blob_bytes") or data.get("bytes"),
+             data.get("codec") or "none"))
+        self._enqueue(conn, tables.BLOB_REQUEST, f"{self.me}:{blob}", "upsert")
+
+    # ── nightly manifest (R8) ─────────────────────────────────────────────
+
+    def _manifest(self, conn, rep: Report) -> None:
+        """Queue this machine's manifest when it's due: after each night window
+        closes (so the verdict reflects that night), and at least daily."""
+        last = self._meta(conn, "manifest_at")
+        if conn.execute("SELECT 1 FROM sync_outbox WHERE tbl = ?",
+                        (tables.MACHINE_MANIFEST,)).fetchone():
+            return
+        now = datetime.now().astimezone()
+        due = not last
+        if last:
+            sent = datetime.fromisoformat(last)
+            due = now - sent > MANIFEST_MAX_AGE or (
+                transfer.load()["enforce"]
+                and sent < transfer.last_close(now.replace(tzinfo=None)).astimezone())
+        if due:
+            self._enqueue(conn, tables.MACHINE_MANIFEST, self.me, "upsert")
+
+    def _manifest_data(self, conn) -> dict:
+        from app import version
+        files = {uid: sha for uid, (_p, sha, _n) in
+                 self.hasher.local_files(conn if self._music_on() else None).items()}
+        data = {"at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "build": version.VERSION, "files": files,
+                "playlists": playlist_hashes(conn)}
+        if len(json.dumps(data)) > MANIFEST_PACK_AT:
+            packed = json.dumps({"files": data.pop("files"),
+                                 "playlists": data.pop("playlists")}).encode("utf-8")
+            data["packed"] = {"zstd": base64.b64encode(
+                codec.zstd.compress(packed, 19)).decode("ascii")}
+        return data
 
     def _fetch_bundle(self, conn, ch: dict, data: dict, rep: Report) -> None:
         sha = data["bundle_sha"]
@@ -691,3 +964,21 @@ def _label(tbl: str, uid: str, data: dict | None) -> str:
     name = (data or {}).get("name") or (data or {}).get("text") or (data or {}).get("label")
     what = tbl.replace("_", " ")
     return f"{what} “{name}”" if name else f"{what} {uid[:12]}"
+
+
+def playlist_hashes(conn) -> dict[str, str]:
+    """playlist uid → sha256 of `{"app_mode", "name", "tracks": [track_key, …]}`
+    (items by position, ties by the item's uid, which every machine shares;
+    JSON with sorted keys and `(",", ":")` separators). Home computes the
+    same from `sync.row_state` (R8)."""
+    out = {}
+    for pid, puid, name, mode in conn.execute(
+            "SELECT id, uid, name, app_mode FROM playlists WHERE uid IS NOT NULL"):
+        keys = [tables._track_key(conn, r[0]) for r in conn.execute(
+            "SELECT track_id FROM playlist_items WHERE playlist_id = ? ORDER BY position, uid",
+            (pid,))]
+        body = json.dumps({"name": name, "app_mode": mode, "tracks": keys},
+                          sort_keys=True, separators=(",", ":"))
+        out[puid] = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    return out
+

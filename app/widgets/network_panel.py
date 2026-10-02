@@ -47,6 +47,7 @@ from app import brand, credentials
 from app.admin import admin
 from app.config import SCREEN_LABELS, config
 from app.db.sync import settings as sync_settings
+from app.db.sync import transfer
 from app.db.sync.service import sync
 from app.leds import leds
 from app.nexus import nexus
@@ -63,6 +64,7 @@ _SYNC_SWITCHES = (
     ("enabled", "Sync on this machine"),
     ("pull_logs", "Download other pits' robot logs"),
     ("sync_files", "Team files: judges slides, the CAD model (~300 MB)"),
+    ("sync_music", "Team music: every scanned song, both ways"),
     ("upload_raw", "Also upload original log files (home Wi-Fi only)"),
 )
 
@@ -106,6 +108,36 @@ def _bytes(count: int) -> str:
     if count < 1024 * 1024:
         return f"{count / 1024:.1f} KB"
     return f"{count / (1024 * 1024):.1f} MB"
+
+
+def _verdict(machine_id: str) -> str:
+    """Home's last check of this machine's manifest (R8), as one line."""
+    import json
+    from app.db import db
+    try:
+        row = db.fetchone("SELECT data FROM sync_verdict WHERE uid = ?", (machine_id,))
+        v = json.loads(row["data"]) if row else None
+    except Exception:
+        return ""
+    return verdict_line(v)
+
+
+def verdict_line(v: dict | None) -> str:
+    if not v:
+        return "Home hasn't checked this machine yet (it does after each night's sync)."
+    when = str(v.get("checked_at") or "")[:16].replace("T", " ")
+    if v.get("in_sync"):
+        return f"In sync with home, checked {when}."
+    parts = []
+    for key, word in (("missing", "missing"), ("different", "different"),
+                      ("extra", "not at home")):
+        items = v.get(key) or []
+        if items:
+            names = ", ".join(i.partition("/")[2] or i for i in items[:3])
+            parts.append(f"{len(items)} {word} ({names}{'…' if len(items) > 3 else ''})")
+    if v.get("playlists_differ"):
+        parts.append(f"{len(v['playlists_differ'])} playlist(s) differ")
+    return f"Out of sync with home, checked {when}: " + "; ".join(parts) + "."
 
 
 class NetworkPanel(QWidget):
@@ -291,6 +323,16 @@ class NetworkPanel(QWidget):
         sb.setSpacing(0)
         sb.addWidget(eyebrow("This machine"))
         sb.addSpacing(8)
+        files_now = RoundedButton("Sync files now", variant="secondary")
+        files_now.clicked.connect(self._sync_files_now)
+        sb.addWidget(files_now, alignment=Qt.AlignmentFlag.AlignLeft)
+        sb.addSpacing(4)
+        files_help = label(
+            "Moves CAD, slides and music this once, outside the night window: "
+            "for good venue or hotel Wi-Fi.", "stat_label")
+        files_help.setWordWrap(True)
+        sb.addWidget(files_help)
+        sb.addSpacing(12)
 
         name_row = QHBoxLayout()
         name_row.setSpacing(8)
@@ -381,6 +423,9 @@ class NetworkPanel(QWidget):
         root.addWidget(self._sync_locked)
         root.addSpacing(16)
         self._fill_sync_form()
+
+    def _sync_files_now(self) -> None:
+        sync.sync_files_now()
 
     def _fill_sync_form(self) -> None:
         """Put the stored values in the text fields (only on build and after a
@@ -859,7 +904,10 @@ class NetworkPanel(QWidget):
         self._sync_head.setText(head)
 
         lines = [f"This machine: {prefs['machine_name']}  ({prefs['machine_id']})",
-                 f"Hub: {prefs['url']}"]
+                 f"Hub: {prefs['url']}", transfer.describe()]
+        verdict = _verdict(prefs["machine_id"])
+        if verdict:
+            lines.append(verdict)
         if rep is not None:
             waiting = []
             if rep.outbox:
@@ -869,6 +917,12 @@ class NetworkPanel(QWidget):
             if rep.pending:
                 waiting.append(f"{rep.pending} waiting on something this machine "
                                "doesn't have (a track, a parent)")
+            held = rep.held_uploads + rep.held_downloads
+            if held:
+                waiting.append(f"{held} team file{'s' if held != 1 else ''} held for "
+                               "the night window")
+            if rep.open_requests:
+                waiting.append(f"{rep.open_requests} asked of home, not answered yet")
             lines.append("Waiting: " + (", ".join(waiting) if waiting else "nothing"))
             if rep.adopted:
                 lines.append(f"First sync: took the team's version of {rep.adopted} "

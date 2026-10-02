@@ -57,6 +57,9 @@ DEFAULTS: dict[str, Any] = {
     "upload_raw": False,
     # Team files (judges slides, the CAD model). The model is ~300 MB.
     "sync_files": True,
+    # Every scanned song, both ways (R8). Off keeps this machine's library to
+    # itself and fetches nobody's.
+    "sync_music": True,
     # Written by the service, read by the panel.
     "last_sync": "",
     "last_result": "",
@@ -74,7 +77,7 @@ def _clamp(values: dict[str, Any]) -> dict[str, Any]:
         values["interval_s"] = max(MIN_INTERVAL_S, int(values["interval_s"]))
     except (TypeError, ValueError):
         values["interval_s"] = DEFAULTS["interval_s"]
-    for key in ("enabled", "pull_logs", "upload_raw", "sync_files"):
+    for key in ("enabled", "pull_logs", "upload_raw", "sync_files", "sync_music"):
         values[key] = bool(values.get(key))
     values["machine_name"] = " ".join(str(values.get("machine_name") or "").split())[:80]
     return values

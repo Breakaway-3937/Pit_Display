@@ -13,6 +13,17 @@ PIT_LEDS_FAKE=1 PIT_NEXUS_FAKE=1 uv run main.py   # no LED hardware, fake event 
 uv run main.py --self-check         # boot everything offscreen and report, exit 0/1
 ```
 
+## Data sources
+
+- Event schedules, match results, team award records and fun facts: **Powered by
+  [The Blue Alliance](https://www.thebluealliance.com)**. This app isn't an
+  official The Blue Alliance app and isn't supported by them.
+- Live queueing and match timing: **event data from
+  [frc.nexus](https://frc.nexus)**.
+
+Both credits are conditions of the APIs' use; `app/attribution.py` holds the
+wording, the rules and where the app shows them.
+
 ## Documentation
 
 | Read this | When |
