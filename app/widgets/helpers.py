@@ -77,8 +77,20 @@ def divider() -> QFrame:
 
 
 def clear_layout(layout: QLayout) -> None:
-    """Remove and delete every widget/item currently in the layout."""
+    """
+    Remove and delete every widget/item currently in the layout, **nested
+    layouts included**. It used to delete only direct widgets, so a row built
+    as a QHBoxLayout left its label and switch behind, unmanaged, piled at the
+    parent's top-left (the Home Datasets ghosts, 2026-10-03). Widgets are
+    hidden at once: deleteLater() alone leaves them painted until the loop
+    gets to it.
+    """
     while layout.count():
         item = layout.takeAt(0)
-        if item.widget():
-            item.widget().deleteLater()
+        w = item.widget()
+        if w is not None:
+            w.hide()
+            w.deleteLater()
+        elif item.layout() is not None:
+            clear_layout(item.layout())
+            item.layout().deleteLater()

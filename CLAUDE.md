@@ -218,6 +218,11 @@ The control screen never holds a presentation window.
   `layout.setAlignment(AlignCenter)` collapses a `QVBoxLayout`.
 - **`helpers.label()` does not word-wrap.** Call `setWordWrap(True)` on prose,
   or one long label pushes the whole panel wider than the window.
+- **Rebuild a list with `helpers.clear_layout()`**, which clears nested
+  layouts too. It used to delete only direct widgets, so rows built as
+  `QHBoxLayout`s left their labels and switches piled at the top-left (Home
+  Datasets, 2026-10-03). Don't rebuild on a signal that fires every cycle
+  (`sync.state_changed`); rebuild when what the rows show changed.
 - **A `QWidget` ignores a stylesheet border unless `WA_StyledBackground` is set.**
 - **The app-wide `QPushButton` rule has 16px horizontal padding**; reset it in
   tight places (`ScreenCard`).

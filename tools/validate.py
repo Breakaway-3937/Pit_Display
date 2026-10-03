@@ -17,7 +17,8 @@ to `.validation/logs/<check>.log`; the summary names the failing line.
 **`--app`** is the deploy machine's first boot, made whole: a fresh data tree
 in `.validation/pit` (rebuilt every run), the test logs imported, team sync
 pointed at a private hub on this Mac, a simulated home that has pushed a TBA
-schedule, Quality Award counts and a verdict, and a simulated second pit that
+schedule, Quality Award counts, its datasets (off until an admin turns
+each on) and a verdict, and a simulated second pit that
 has shared a judges slide and a checklist. Then the real app opens on it.
 LEDs, Nexus and the battery cart are simulated unless `--leds` /
 `--live-nexus`; the analysis uses the real model in `models/`. Close the app
@@ -167,8 +168,11 @@ def _seed_peer_and_home(url: str, pit_dir: Path) -> None:
                   "blue_score": 98, "winning_alliance": "red",
                   "scheduled_time": fixture_start, "actual_time": fixture_start}},
     ], force=True)
-    from sync_check import HOME_FEEDS
+    from sync_check import HOME_DATASETS, HOME_FEEDS
     home.push(HOME_FEEDS, force=True)
+    # Home's datasets (R10/R11), all off until an admin turns each on in
+    # Control → Presentation A/B → Home Datasets.
+    home.push(HOME_DATASETS, force=True)
 
     peer_dir = VALIDATION / "peer"
     old = os.environ.get("PIT_DISPLAY_DATA")
@@ -202,6 +206,11 @@ def _seed_peer_and_home(url: str, pit_dir: Path) -> None:
             os.environ["PIT_DISPLAY_DATA"] = old
 
 
+def _home_datasets() -> list:
+    from sync_check import HOME_DATASETS
+    return HOME_DATASETS
+
+
 def _first_sync(db, url: str, prefs: dict) -> int:
     """The validation pit's first cycle, as the app's service runs it, and a
     report of what arrived: the environment proving itself before anyone
@@ -225,6 +234,8 @@ def _first_sync(db, url: str, prefs: dict) -> int:
         "home's TBA event and match": one("SELECT COUNT(*) FROM tba_match") == 1,
         "home's award feeds (teams, rivals, facts)": one("SELECT COUNT(*) FROM tba_team") == 2
             and one("SELECT COUNT(*) FROM tba_rival") == 1 and one("SELECT COUNT(*) FROM tba_fact") == 1,
+        "home's datasets (off until an admin turns them on)":
+            one("SELECT COUNT(*) FROM home_dataset") == len(_home_datasets()),
         "home's verdict for this machine": one(
             f"SELECT COUNT(*) FROM sync_verdict WHERE uid = '{prefs['machine_id']}'") == 1,
         "three logs (fixture + test logs)": one("SELECT COUNT(*) FROM log_session") == 3,

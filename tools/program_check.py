@@ -381,6 +381,32 @@ def main() -> int:
           and program._authored()["robot"].title == "Meet the robot",
           panel._status.text())
     wording.set_texts({k: "" for k in wording.load()["texts"]})
+
+    print("\nHome Datasets panel (admin)")
+    from app.widgets.dataset_panel import DatasetPanel
+    from app.widgets.toggle_switch import ToggleSwitch
+    from PyQt6.QtWidgets import QLabel
+    pa, pb = DatasetPanel(), DatasetPanel()
+    rows = len(datasets.all_datasets(enabled_only=False))
+    for _ in range(3):
+        pa._shown = None                # force real rebuilds
+        pa.rebuild()
+    qapp.processEvents()
+    seen = lambda p, cls: [w for w in p._body.findChildren(cls) if w.isVisibleTo(p._body)]
+    check("rebuilding leaves one row per dataset, no ghosts piled top-left",
+          len(seen(pa, QLabel)) == rows and len(seen(pa, ToggleSwitch)) == rows,
+          f"{len(seen(pa, QLabel))} labels, {len(seen(pa, ToggleSwitch))} switches for {rows}")
+    sw = seen(pa, ToggleSwitch)[0]
+    key, was = sw.property("dataset"), sw.isChecked()
+    sw.setChecked(not was)
+    qapp.processEvents()
+    check("a switch on one screen's panel shows on the other's; its own stays put",
+          any(w.property("dataset") == key and w.isChecked() == (not was)
+              for w in seen(pb, ToggleSwitch))
+          and sw.isVisibleTo(pa._body) and sw.isChecked() == (not was))
+    dataset_settings.set_on(str(key), was)
+    pa.deleteLater()
+    pb.deleteLater()
     panel.deleteLater()
     board.deleteLater()
     qapp.processEvents()
