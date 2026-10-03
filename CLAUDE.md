@@ -712,7 +712,12 @@ a core; state costs 0.1%.
   unparented); disconnect by handle, never wildcard, inside `disconnected`;
   `stop()` aborts, then drains deferred deletes.
 - `app/qt_log.py` writes Qt's warnings to `qt_warnings.log` (the app has no
-  console).
+  console). **Nothing in a Qt message handler may raise** (in the windowed
+  build `sys.stderr` is None; that once ate every warning through a crash),
+  and it keeps every warning/critical/fatal, not a hand-picked list.
+  `crash_log.start_watchdog()` writes every thread's stack to `crash.log`
+  when the GUI thread stops answering for 20 s: a freeze closed by hand
+  leaves no other trace.
 
 ## Nexus event feed (`app/nexus/`, `nexus-relay/`)
 

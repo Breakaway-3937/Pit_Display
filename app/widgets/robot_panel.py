@@ -219,6 +219,10 @@ class _DuplicatesDialog(QDialog):
     def __init__(self, dups: list, unlocked: bool, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Already imported")
+        # Always in front: it's modal, so behind a full-screen overhead window
+        # it would leave the control screen looking frozen with no way to
+        # answer it (the suspected 2026-10-03 batch "crash").
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.setMinimumWidth(720)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(24, 22, 24, 22)
@@ -730,7 +734,10 @@ class RobotLogPanel(QWidget):
         skipped = kept = 0
         if plan.duplicates:
             self._import_status.setText(safe + " Some were imported before.")
-            dlg = _DuplicatesDialog(plan.duplicates, admin.unlocked, self)
+            dlg = _DuplicatesDialog(plan.duplicates, admin.unlocked, self.window())
+            dlg.show()
+            dlg.raise_()
+            dlg.activateWindow()
             dlg.exec()
             again = dlg.chosen()
             jobs += sorted(again, key=lambda j: j[0].started or "", reverse=True)

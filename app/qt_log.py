@@ -21,6 +21,15 @@ it turns "I saw some errors" into a time and a sequence.
 
 Everything Qt prints still reaches stderr as well, so running from a checkout
 is unchanged.
+
+**2026-10-03, the installed app's first real log:** in the windowed build
+`sys.stderr` is None, so `sys.stderr.write` raised AttributeError (only
+OSError/ValueError were caught) on *every* Qt message, before anything was
+written: the file held only start lines through a whole batch-import crash.
+Now nothing in the handler can raise, and **every** warning, critical and
+fatal message is kept (repeats still collapse), because the message that
+explains a crash is rarely one of the few anyone thought to list. A fatal
+message also goes to `crash.log`, the file anyone asks for first.
 """
 
 from __future__ import annotations
@@ -34,19 +43,6 @@ from PyQt6.QtCore import QtMsgType, qInstallMessageHandler
 _FILE = "qt_warnings.log"
 _MAX_BYTES = 512 * 1024
 
-# Messages worth keeping. Everything else Qt says during a normal run is noise
-# — missing font families, platform plugin chatter — and burying the two lines
-# that matter under it is the same as not logging at all.
-_INTERESTING = (
-    "QObject::",
-    "QWebSocket",
-    "QTcpSocket",
-    "QNativeSocketEngine",
-    "wrapped C/C++ object",
-    "QThread",
-    "QBackingStore",
-    "requestActivate",
-)
 
 _seen: dict[str, int] = {}
 _previous = None
@@ -79,14 +75,19 @@ def _handler(mode, context, message: str) -> None:
             pass
     else:
         try:
-            sys.stderr.write(message + "\n")
-        except (OSError, ValueError):
+            if sys.stderr is not None:          # None in the windowed build
+                sys.stderr.write(message + "\n")
+        except Exception:
             pass
+    try:
+        _record(mode, context, message)
+    except Exception:
+        pass          # a logger that raises inside Qt is worse than none
 
+
+def _record(mode, context, message: str) -> None:
     if mode not in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg,
                     QtMsgType.QtFatalMsg):
-        return
-    if not any(token in message for token in _INTERESTING):
         return
 
     count = _seen.get(message, 0) + 1
@@ -97,7 +98,15 @@ def _handler(mode, context, message: str) -> None:
     if count == 1 or count in (10, 100, 1000) or count % 5000 == 0:
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         suffix = "" if count == 1 else f"   (seen {count}x)"
-        _write(f"{stamp}  {message}{suffix}")
+        level = {QtMsgType.QtCriticalMsg: "CRITICAL ", QtMsgType.QtFatalMsg: "FATAL "}.get(mode, "")
+        where = ""
+        if getattr(context, "file", None):
+            where = f"   [{context.file}:{context.line} {context.function or ''}]"
+        _write(f"{stamp}  {level}{message}{suffix}{where}")
+    if mode == QtMsgType.QtFatalMsg:
+        # Qt aborts after this returns: put the reason where it's looked for.
+        from app import crash_log
+        crash_log.note(f"Qt FATAL: {message}")
 
 
 def install() -> None:

@@ -411,6 +411,35 @@ def main() -> int:
     board.deleteLater()
     qapp.processEvents()
 
+    print("\nWhen something goes wrong, the logs say so (the windowed build)")
+    import time as _time
+    from app import crash_log, paths, qt_log
+    from PyQt6.QtCore import qWarning
+    crash_log.install()
+    qt_log.install()
+    real_err, sys.stderr = sys.stderr, None          # the windowed exe has no stderr
+    try:
+        qWarning(b"probe: a warning nobody listed in advance")
+    finally:
+        sys.stderr = real_err
+    log = paths.data("qt_warnings.log").read_text(encoding="utf-8", errors="replace")
+    check("with no console, a Qt warning is still written down (it used to raise instead)",
+          "probe: a warning nobody listed in advance" in log)
+    crash_log.start_watchdog(stall_s=3.0)
+    _time.sleep(6.5)                                 # the GUI thread, frozen
+    qapp.processEvents()
+    _time.sleep(2.5)
+    qapp.processEvents()
+    _time.sleep(2.5)
+    text = crash_log.path().read_text(encoding="utf-8", errors="replace")
+    check("a frozen GUI thread is recorded with every thread's stack, then its recovery",
+          "FROZEN" in text and "program_check.py" in text and "responsive again" in text)
+    from app.widgets.robot_panel import _DuplicatesDialog
+    from PyQt6.QtCore import Qt as _Qt
+    check("the 'Already imported' pop-up stays in front of full-screen windows",
+          bool(_DuplicatesDialog([], unlocked=False).windowFlags()
+               & _Qt.WindowType.WindowStaysOnTopHint))
+
     print("\nData goes away")
     nexus._status = None
     rotation.refresh()

@@ -184,6 +184,9 @@ def main():
     # screens, so anything Qt writes to stderr is lost — including the object
     # lifetime complaints that name a class and nothing else. See app/qt_log.py.
     qt_log.install()
+    # A freeze leaves no trace otherwise (app/crash_log.py): record where it hangs.
+    if "--self-check" not in sys.argv:
+        crash_log.start_watchdog()
     _load_fonts(app)
 
     from app import version
