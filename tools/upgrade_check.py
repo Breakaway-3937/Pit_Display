@@ -228,6 +228,25 @@ def main() -> int:
           "           checklist_id — are held in `config` only. They reset on\n"
           "           every launch, not just on a version change.", flush=True)
 
+    print("\nThe updater picks the highest version, not GitHub's order")
+    # GitHub lists releases by the tagged commit's date, then the tag *as
+    # text*, so on one day beta.9 came above beta.10 and beta.11 and every pit
+    # stopped at beta.9 (2026-10-03). This is the order the API really gave.
+    from unittest import mock
+    from app.update import release
+    order = ["v0.2.0-beta.9", "v0.2.0-beta.8", "v0.2.0-beta.10", "v0.2.0-beta.7",
+             "v0.2.0-beta.11", "v0.1.14", "v0.1.13"]
+    fake = [{"tag_name": t, "draft": False, "prerelease": "-" in t,
+             "assets": [{"name": "manifest.json", "id": i},
+                        {"name": f"{t}.zip", "id": 100 + i}]} for i, t in enumerate(order)]
+    with mock.patch.object(release, "_api_json", return_value=fake), \
+         mock.patch.object(release, "_fetch_manifest", side_effect=lambda aid: {
+             "version": order[aid].lstrip("v"),
+             "platforms": {release.platform_key(): {"asset": f"{order[aid]}.zip"}}}):
+        beta, stable = release.latest("beta"), release.latest("stable")
+    check("beta channel: beta.11 over beta.9 and beta.10", beta.tag == "v0.2.0-beta.11", beta.tag)
+    check("stable channel: never a prerelease", stable.tag == "v0.1.14", stable.tag)
+
     shutil.rmtree(scratch, ignore_errors=True)
     print()
     failed = [n for n, ok, _ in RESULTS if not ok]

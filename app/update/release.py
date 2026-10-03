@@ -223,7 +223,16 @@ def latest(channel: str = "stable") -> Release | None:
     if not isinstance(releases, list):
         raise UpdateError("GitHub returned something that is not a release list.")
 
-    for entry in releases:                 # newest first, per the API
+    # Highest version first, never the API's order. GitHub lists releases by
+    # the tagged commit's date and then by tag name *as text*, so on one day
+    # "beta.9" sorts above "beta.10" and "beta.11": every pit stopped at
+    # beta.9 (2026-10-03). The manifest's version is the authority below;
+    # the tag only orders the candidates.
+    from app.version import parse
+    releases = sorted((r for r in releases if isinstance(r, dict)),
+                      key=lambda r: parse(str(r.get("tag_name", ""))), reverse=True)
+
+    for entry in releases:                 # highest version first
         if entry.get("draft"):
             continue
         if channel != "beta" and entry.get("prerelease"):
