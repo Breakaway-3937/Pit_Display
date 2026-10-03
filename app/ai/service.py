@@ -1,8 +1,12 @@
 """
 `_AnalysisService`: runs the pipeline inside the app.
 
-* **When:** each newly imported log (`config.logs_changed`, when the newest
-  log has no run yet and `auto_run` is on), or the panel's button.
+* **When:** every newly imported log (`config.logs_changed`: each log from
+  the last 24 h with no run yet, newest first, when `auto_run` is on), or the
+  panel's buttons. Brayden, 2026-10-03: a batch import must have **every**
+  log analysed, not only the newest, so requests queue (FIFO) instead of
+  "newest wins", and the queue is **held while a batch imports** (`hold()`):
+  the model's 6.5 GB and the import don't compete for a 16 GB machine.
 * **Where:** a worker thread with its own database connection
   (`local.ThreadDB`), one run at a time; a request while busy is queued (the
   newest wins). The GUI never waits on a model.
@@ -81,7 +85,9 @@ class _AnalysisService(QObject):
         self.download_done = 0
         self.download_error = ""
         self._cancel = threading.Event()
-        self._pending: str | None = None
+        self._queue: list[str] = []          # session uids waiting, in order
+        self._held = False                   # a batch import is running
+        self._running: str | None = None
 
         self._worker_step.connect(self._on_step)
         self._worker_done.connect(self._on_done)
@@ -121,6 +127,7 @@ class _AnalysisService(QObject):
         self.engine_version, self.models = version, list(models or [])
         if changed:
             self.state_changed.emit()
+        self._next()                        # logs queued before the engine was ready
 
     @property
     def model_ready(self) -> bool:
@@ -159,8 +166,11 @@ class _AnalysisService(QObject):
 
     def describe(self) -> str:
         """One line for the panel: what's stopping a run, or what's running."""
+        more = f" · {len(self._queue)} more queued" if self._queue else ""
         if self.busy:
-            return self.step or "Starting…"
+            return (self.step or "Starting…") + more
+        if self._held and self._queue:
+            return f"{len(self._queue)} log(s) queued; analysis starts when the import finishes"
         if self.downloading:
             return (f"Downloading the model · {self.download_done / 1e9:.2f} of "
                     f"{runtime.MODEL['bytes'] / 1e9:.2f} GB")
@@ -217,15 +227,50 @@ class _AnalysisService(QObject):
     def _on_dl_done(self, error: str) -> None:
         self.downloading, self.download_error = False, error
         self.state_changed.emit()
+        self._next()
 
     # ── runs ──────────────────────────────────────────────────────────────
 
     def _on_logs_changed(self) -> None:
         if self._quiet or not self.prefs["auto_run"] or not self.ready:
             return
-        uid = feedback.newest_unanalysed()
-        if uid:
-            self.analyse(uid)
+        for uid in feedback.unanalysed():
+            self.enqueue(uid)
+
+    def enqueue(self, uid: str) -> None:
+        """Queue one log; it runs when everything before it has."""
+        if uid in self._queue or uid == self._running:
+            return
+        self._queue.append(uid)
+        self.state_changed.emit()
+        self._next()
+
+    def analyse_all(self) -> int:
+        """Queue every log on this machine that no run has looked at."""
+        before = len(self._queue)
+        for uid in feedback.unanalysed(since_hours=None):
+            if uid not in self._queue and uid != self._running:
+                self._queue.append(uid)
+        self.state_changed.emit()
+        self._next()
+        return len(self._queue) - before
+
+    def hold(self, held: bool) -> None:
+        """A batch import starts (True) or ends (False). Logs queue meanwhile."""
+        self._held = held
+        self.state_changed.emit()
+        if not held:
+            self._on_logs_changed()
+            self._next()
+
+    @property
+    def queued(self) -> int:
+        return len(self._queue)
+
+    def _next(self) -> None:
+        if self.busy or self._held or not self._queue or not self.ready:
+            return
+        self.analyse(self._queue.pop(0))
 
     def analyse(self, session_uid: str | None = None) -> bool:
         """Start a run on `session_uid` (default: the newest log). False if none."""
@@ -233,8 +278,10 @@ class _AnalysisService(QObject):
         if uid is None:
             return False
         if self.busy:
-            self._pending = uid
+            if uid not in self._queue and uid != self._running:
+                self._queue.append(uid)
             return True
+        self._running = uid
         self._idle.stop()
         self.busy, self.step = True, "Starting…"
         self.state_changed.emit()
@@ -270,15 +317,15 @@ class _AnalysisService(QObject):
 
     def _on_done(self, run_id: int, status: str, reason: str) -> None:
         self.busy, self.step = False, ""
+        self._running = None
         self.last = (run_id, status, reason)
         if status == "published":
             leds.start_alert(Alert(sides=STRIP_PURPLE, centre_white=True,
                                    flash_s=2.0, steady_s=1.0, label="analysis"))
         self.state_changed.emit()
         self.run_finished.emit(run_id, status)
-        if self._pending:
-            uid, self._pending = self._pending, None
-            self.analyse(uid)
+        if self._queue and not self._held:
+            self._next()
         elif self.runtime.running:
             self._idle.start(_seconds(self.prefs["keep_alive"]) * 1000)
 

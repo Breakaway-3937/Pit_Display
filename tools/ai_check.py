@@ -570,7 +570,37 @@ def app_section(uid: str) -> None:
           fb_uid == f"{run_uid}#" and db.fetchone(
               "SELECT COUNT(*) n FROM sync_outbox WHERE tbl = 'analysis_feedback' AND uid = ?",
               (fb_uid,))["n"] == 1)
+
+    # What it looked at (app/ai/trace.py): every tool call, read back.
+    trace_chip = [c for c in panel.findChildren(SelectableChip)
+                  if c.property("run_id") == run_id and "looked at" in c.text()]
+    trace_chip[0].click()
+    app.processEvents()
+    from PyQt6.QtWidgets import QLabel
+    shown = " ".join(l.text() for l in panel.findChildren(QLabel) if l.isVisibleTo(panel))
+    check("'What it looked at' lists the logs and every tool call with its result",
+          "faults(" in shown and "series_stats(" in shown and "Logs:" in shown and "→" in shown)
     panel.close()
+
+    # A batch: every log gets a run, in turn, after the import finishes.
+    print("\nA batch: every log analysed, not just the newest")
+    ran: list = []
+    svc.run_finished.connect(lambda rid, st: ran.append(rid))
+    svc.hold(True)                       # an import is running
+    svc.enqueue("batch-log-a")
+    svc.enqueue("batch-log-b")
+    svc.enqueue("batch-log-a")           # queued once
+    check("held during the import: queued, nothing running",
+          svc.queued == 2 and not svc.busy, f"queued {svc.queued}")
+    loop2 = QEventLoop()
+    svc.run_finished.connect(lambda *_: loop2.quit() if not svc.queued and not svc.busy else None)
+    QTimer.singleShot(60_000, loop2.quit)
+    svc.hold(False)
+    loop2.exec()
+    looked = {r["session_uids"] for r in db.fetchall(
+        "SELECT session_uids FROM analysis_run WHERE session_uids LIKE '%batch-log-%'")}
+    check("released: each queued log got its own run, in order",
+          looked == {'["batch-log-a"]', '["batch-log-b"]'} and svc.queued == 0, str(looked))
 
     from app.ai import boards
     from app.widgets.analysis_overlay import AnalysisOverlay

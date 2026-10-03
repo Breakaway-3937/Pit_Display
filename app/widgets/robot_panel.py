@@ -108,8 +108,19 @@ class _CopyWorker(QThread):
 
 
 class _BatchImportWorker(QThread):
-    """Batch step 3: import the queue one file at a time, from the local
-    copies. A file that fails is reported and the rest carry on."""
+    """
+    Batch step 3: import the queue one file at a time, from the local copies.
+    A file that fails is reported and the rest carry on.
+
+    **Pipelined across cores** (Brayden, 2026-10-03: use the whole machine).
+    The database takes one writer at a time, and the import loop is Python, so
+    imports themselves stay one after another; owlet is a separate process,
+    so while one log imports, the next `LOOKAHEAD` hoots are already being
+    extracted on their own threads (`ingest.prepare_hoot`). A conversion
+    that fails is retried by the import itself, which then reports why.
+    """
+
+    LOOKAHEAD = 2
 
     progressed = pyqtSignal(str, float)
     file_done = pyqtSignal(str, str)          # file name, "" or the error
@@ -123,20 +134,65 @@ class _BatchImportWorker(QThread):
         self.stop = False
 
     def run(self):
-        ok, failed = 0, []
+        # Whatever happens in here, the panel hears the end: an exception that
+        # skipped `all_done` left it showing "Importing…" forever.
+        self._ok, failed = 0, []
+        try:
+            self._run(failed)
+        except BaseException as exc:          # pragma: no cover
+            failed.append(("(the batch)", f"stopped: {type(exc).__name__}: {exc}"))
+        self.all_done.emit(self._ok, failed)
+
+    def _run(self, failed: list):
+        from concurrent.futures import ThreadPoolExecutor
+        from app.robot.ingest import prepare_hoot
         n = len(self._jobs)
+        pool = ThreadPoolExecutor(max_workers=max(1, self.LOOKAHEAD),
+                                  thread_name_prefix="owlet-ahead")
+        ahead: dict[int, object] = {}
+
+        def look_ahead(start: int) -> None:
+            for j in range(start, min(n, start + 1 + self.LOOKAHEAD)):
+                f = self._jobs[j][0]
+                if j not in ahead and f.dest is not None and f.dest.suffix.lower() == ".hoot":
+                    ahead[j] = pool.submit(prepare_hoot, f.dest)
+
+        try:
+            self._import_all(n, failed, look_ahead, ahead)
+        finally:
+            # Stopped early: let running conversions finish, then clear them.
+            for fut in ahead.values():
+                if not fut.cancel():
+                    try:
+                        fut.result().discard()
+                    except Exception:
+                        pass
+            pool.shutdown(wait=True)
+
+    def _import_all(self, n, failed, look_ahead, ahead):
         for i, (f, replace) in enumerate(self._jobs, 1):
             if self.stop:
                 break
+            look_ahead(i - 1)                 # this hoot, and the next ones extract meanwhile
             head = f"Importing {i} of {n}: {f.name}"
             self.progressed.emit(head, (i - 1) / n)
+            prepared = None
+            fut = ahead.pop(i - 1, None)
+            if fut is not None:
+                if not fut.done():
+                    self.progressed.emit(f"{head} · owlet is still extracting it…", (i - 1) / n)
+                try:
+                    prepared = fut.result()
+                except Exception:
+                    prepared = None           # the import converts again and says why
             try:
                 if replace is not None:
                     delete_session(replace, self._db_path)
                 import_log(f.dest, self._db_path, archive_path=f.dest, fp=f.fp,
+                           prepared=prepared,
                            progress=lambda m, frac, head=head, i=i:
                                self.progressed.emit(f"{head} · {m}", (i - 1 + frac) / n))
-                ok += 1
+                self._ok += 1
                 # In the database now: the copy goes, unless team sync still
                 # has to upload the original (the engine deletes it after).
                 if not self._keep:
@@ -148,7 +204,6 @@ class _BatchImportWorker(QThread):
             except Exception as exc:                   # pragma: no cover
                 failed.append((f.name, f"Import failed: {exc}"))
                 self.file_done.emit(f.name, str(exc))
-        self.all_done.emit(ok, failed)
 
 
 class _DuplicatesDialog(QDialog):
@@ -248,6 +303,16 @@ class _DuplicatesDialog(QDialog):
     def chosen(self) -> list:
         """The duplicates to import again, as (Found, session id to replace)."""
         return [(f, f.duplicate_of["id"]) for box, f in self._boxes if box.isChecked()]
+
+
+def _hold_analysis(held: bool) -> None:
+    """Analysis waits while a batch imports, then takes every new log in turn
+    (`app/ai/service.py`). Fine when analysis isn't running on this machine."""
+    try:
+        from app.ai.service import analysis
+        analysis.hold(held)
+    except Exception:
+        pass
 
 
 def _local_time(utc: str | None) -> str:
@@ -628,6 +693,7 @@ class RobotLogPanel(QWidget):
         if self._busy():
             return
         self._set_busy(True, batch_run=True)
+        _hold_analysis(True)
         self._import_status.setText(f"Looking through {root.name}…")
         self._copier = _CopyWorker(root, Path(db.path))
         self._copier.progressed.connect(self._on_progress)
@@ -646,6 +712,7 @@ class RobotLogPanel(QWidget):
         self._batch = None
         if not plan.found:
             self._set_busy(False)
+            _hold_analysis(False)
             self._import_status.setText(
                 f"No .hoot or .wpilog files in {plan.root.name} or the folders inside it."
                 + (f" ({len(plan.empty)} empty file(s) skipped.)" if plan.empty else ""))
@@ -654,6 +721,7 @@ class RobotLogPanel(QWidget):
         safe = f"{valid} log(s) are on this machine. The drive can come out."
         if stopped:
             self._set_busy(False)
+            _hold_analysis(False)
             self._import_status.setText(
                 "Stopped while copying; nothing was imported. The logs copied so far "
                 "are on this machine; run the folder again to finish.")
@@ -691,9 +759,15 @@ class RobotLogPanel(QWidget):
 
     def _on_batch_file(self, _name: str, error: str):
         if not error:
-            # Each log reaches the boards as it lands, not at the end.
             self.refresh()
-            config.notify_logs_changed()
+            # The boards follow along, but at most every 20 s: reloading every
+            # screen after each of 60 logs kept the GUI thread busy enough to
+            # look hung. The batch's end always notifies.
+            import time
+            now = time.monotonic()
+            if now - getattr(self, "_last_notify", 0.0) >= 20.0:
+                self._last_notify = now
+                config.notify_logs_changed()
 
     def _on_batch_done(self, ok: int, failed: list):
         self._batch_done_text(ok, failed, f"Imported {ok} log(s).")
@@ -701,6 +775,9 @@ class RobotLogPanel(QWidget):
     def _batch_done_text(self, ok: int, failed: list, lead: str):
         stopped = self._batch is not None and self._batch.stop
         self._set_busy(False)
+        if ok:
+            config.notify_logs_changed()    # every board catches up once
+        _hold_analysis(False)               # every log just imported queues now
         parts = [lead]
         if self._batch_skipped:
             parts.append(f"{self._batch_skipped} already imported (same contents), skipped.")
@@ -765,6 +842,7 @@ class RobotLogPanel(QWidget):
 
     def _on_failed(self, message: str):
         self._set_busy(False)
+        _hold_analysis(False)
         self._import_status.setText(message)
         self._import_status.setStyleSheet(
             f"color: {brand.RED}; background: transparent;")

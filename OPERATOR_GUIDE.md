@@ -173,7 +173,11 @@ first while you keep working; **Stop** stops after the current file, and
 running the same folder again picks up where it left off. Each copy is
 deleted from this machine as soon as it's in the database (the drive itself
 is never touched); a log that failed, or a different copy you didn't import,
-stays in the `robot_logs` folder beside the database.
+stays in the `robot_logs` folder beside the database. While a folder
+imports, analysis waits; when it finishes, every new log is analysed in
+turn (Control → Analysis shows how many are queued). Open any run there and
+tap **Show what it looked at** to see exactly which log it read, every tool
+it called and what came back, and where the checks sent it back.
 
 **Control → Pit Systems → Telemetry → Robot telemetry → Choose log file…**
 

@@ -62,6 +62,26 @@ def recent_runs(limit: int = 8) -> list[dict]:
     return out
 
 
+def run_trace(run_id: int) -> tuple[list, dict[str, str]]:
+    """(the run's steps, uid → log name) for "what it looked at" (`trace.py`)."""
+    from app.ai import trace
+    row = db.fetchone("SELECT transcript, session_uids FROM analysis_run WHERE id = ?",
+                      (run_id,))
+    if row is None or not row["transcript"]:
+        return [], {}
+    try:
+        transcript = json.loads(row["transcript"])
+    except ValueError:
+        return [], {}
+    steps = trace.steps(transcript)
+    uids = set(json.loads(row["session_uids"] or "[]")) | trace.logs_looked_at(transcript)
+    names = {}
+    for uid in uids:
+        r = db.fetchone("SELECT source_name FROM log_session WHERE uid = ?", (uid,))
+        names[uid] = r["source_name"] if r else "a log not on this machine"
+    return steps, names
+
+
 def verdicts(run_id: int) -> dict[str, dict]:
     """finding_id → {rating, acted, score}; the run's own row is under ''."""
     return {r["finding_id"]: {"rating": r["rating"], "acted": bool(r["acted"]),
@@ -102,6 +122,27 @@ def newest_session() -> str | None:
              AND EXISTS (SELECT 1 FROM series se WHERE se.session_id = ls.id)
            ORDER BY ls.imported_at DESC, ls.id DESC LIMIT 1""")
     return row["uid"] if row else None
+
+
+def unanalysed(since_hours: float | None = 24) -> list[str]:
+    """Every log with data that no run has looked at, newest first. With
+    `since_hours`, only logs imported (or synced in) that recently: a batch
+    import queues all of its logs, not months of old ones."""
+    where = "" if since_hours is None else \
+        f"AND ls.imported_at >= datetime('now', '-{float(since_hours)} hours')"
+    rows = db.fetchall(
+        f"""SELECT ls.uid FROM log_session ls
+            WHERE ls.uid IS NOT NULL
+              AND EXISTS (SELECT 1 FROM series se WHERE se.session_id = ls.id)
+              {where}
+            ORDER BY ls.started_at DESC, ls.imported_at DESC, ls.id DESC""")
+    done = set()
+    for r in db.fetchall("SELECT session_uids FROM analysis_run"):
+        try:
+            done.update(json.loads(r["session_uids"] or "[]"))
+        except ValueError:
+            pass
+    return [r["uid"] for r in rows if r["uid"] not in done]
 
 
 def newest_unanalysed() -> str | None:

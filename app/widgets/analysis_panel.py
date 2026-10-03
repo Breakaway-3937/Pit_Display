@@ -60,6 +60,7 @@ class AnalysisPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._selected: int | None = None
+        self._traces_open: set[int] = set()      # runs whose "what it looked at" is unfolded
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -86,12 +87,16 @@ class AnalysisPanel(QWidget):
         self._run_btn = RoundedButton("Analyse the newest log", variant="secondary")
         self._run_btn.setMinimumHeight(_TOUCH)
         self._run_btn.clicked.connect(self._run_now)
+        self._all_btn = RoundedButton("Analyse every log not yet analysed", variant="secondary")
+        self._all_btn.setMinimumHeight(_TOUCH)
+        self._all_btn.clicked.connect(self._run_all)
         self._dl_btn = RoundedButton("", variant="secondary")
         self._dl_btn.setMinimumHeight(_TOUCH)
         self._dl_btn.clicked.connect(self._download)
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
         buttons.addWidget(self._run_btn)
+        buttons.addWidget(self._all_btn)
         buttons.addWidget(self._dl_btn)
         buttons.addStretch()
         root.addLayout(buttons)
@@ -172,10 +177,12 @@ class AnalysisPanel(QWidget):
             sub = ("This build has no built-in engine. Ollama works too: install it from "
                    f"ollama.com and run: ollama pull {analysis.prefs['model']}")
         else:
-            sub = ("Reads the newest robot log through nine read-only tools; every "
-                   "figure on a board is checked against what the tools returned.")
+            sub = ("Reads every newly imported robot log, one after another, through "
+                   "read-only tools; every figure on a board is checked against what the "
+                   "tools returned. Open a run below to see exactly what it looked at.")
         self._sub.setText(sub)
         self._run_btn.setEnabled(ready and not busy)
+        self._all_btn.setEnabled(ready)
         self._dl_btn.setVisible(analysis.needs_download or analysis.downloading)
         self._dl_btn.setText("Cancel the download" if analysis.downloading
                              else f"Download the model ({runtime.MODEL['bytes'] / 1e9:.1f} GB)")
@@ -183,6 +190,11 @@ class AnalysisPanel(QWidget):
     def _run_now(self) -> None:
         if not analysis.analyse():
             self._sub.setText("No robot log with data on this machine yet: import one first.")
+
+    def _run_all(self) -> None:
+        n = analysis.analyse_all()
+        self._sub.setText(f"Queued {n} log(s) that no run has looked at yet." if n
+                          else "Every log on this machine has been analysed.")
 
     def _download(self) -> None:
         if analysis.downloading:
@@ -286,6 +298,8 @@ class AnalysisPanel(QWidget):
         meta.setFont(mono_font(12))
         meta.setWordWrap(True)
         self._detail.addWidget(meta)
+        self._detail.addSpacing(10)
+        self._add_trace(run)
         self._detail.addSpacing(16)
 
         if run["status"] in ("published", "rejected") and run["findings"]:
@@ -308,6 +322,53 @@ class AnalysisPanel(QWidget):
             self._detail.addSpacing(8)
             for f in run["findings"]:
                 self._detail.addWidget(self._finding(f, verdict.get(f.get("id", "")) or {}))
+
+    # ── what it looked at ─────────────────────────────────────────────────
+
+    def _add_trace(self, run: dict) -> None:
+        """Every log, tool call and result the run saw (`app/ai/trace.py`),
+        folded away behind one chip until asked for."""
+        opened = run["id"] in self._traces_open
+        steps, names = feedback.run_trace(run["id"]) if opened else ([], {})
+        n_tools = (run["stats"] or {}).get("tool_calls", 0)
+        chip = _chip(("Hide" if opened else "Show") + f" what it looked at · {n_tools} tool calls")
+        chip.set_active(opened)
+        chip.setProperty("run_id", run["id"])
+        chip.clicked.connect(self._toggle_trace)
+        self._detail.addWidget(chip)
+        if not opened:
+            return
+        self._detail.addSpacing(8)
+        logs = ", ".join(sorted(names.values())) or "—"
+        head = label(f"Logs: {logs}", "stat_label")
+        head.setWordWrap(True)
+        self._detail.addWidget(head)
+        if not steps:
+            self._detail.addWidget(_prose("No transcript was kept for this run."))
+            return
+        for i, st in enumerate(steps, 1):
+            args = ", ".join(f"{k}={names.get(str(v), v) if 'session' in k else v}"
+                             for k, v in st.args.items())
+            text = f"{i:>2}. {st.title}" + (f"({args})" if args else "")
+            line = label(text, "stat_label")
+            f = mono_font(12)
+            f.setBold(True)
+            line.setFont(f)
+            line.setWordWrap(True)
+            self._detail.addWidget(line)
+            if st.result:
+                res = label(f"     → {st.result}", "stat_label")
+                res.setFont(mono_font(12))
+                res.setWordWrap(True)
+                self._detail.addWidget(res)
+
+    def _toggle_trace(self) -> None:
+        btn = self.sender()
+        if btn is None:
+            return
+        rid = int(btn.property("run_id"))
+        self._traces_open ^= {rid}
+        self._reload()
 
     def _finding(self, f: dict, verdict: dict) -> QWidget:
         box = QWidget()

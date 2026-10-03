@@ -672,6 +672,11 @@ DATABASE.md; read them before writing a query.
   newest first. **Each copy is deleted once its data is in the database**
   (kept while `upload_raw` must upload it; the engine deletes it after). Skips
   `._` twins, hidden folders, empty files. `tools/batch_check.py`.
+  **Pipelined:** imports stay one at a time (one SQLite writer, a GIL-bound
+  loop), but owlet is its own process, so the next two hoots extract
+  (`ingest.prepare_hoot`) while one imports. Boards reload at most every
+  20 s during a batch, and the worker always reports its end, whatever
+  fails.
 
 ## Pit LAN screens (`app/webcast/`)
 
@@ -786,7 +791,13 @@ toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
   finding. The designer only picks and words.
 - **In the app** (`service.py`, `init_analysis()` after sync): a worker
   thread on its own connection (`tools.using(ThreadDB())`), one run at a
-  time, on each new import (`auto_run`) or the panel's button. The model is
+  time. **Every new log gets a run** (Brayden, 2026-10-03): imports queue
+  each unanalysed log from the last 24 h, FIFO, never "newest wins"; a batch
+  import **holds** the queue (`analysis.hold()`) so the model doesn't load
+  while gigabytes import, then releases it. "Analyse every log not yet
+  analysed" queues the rest. **What a run looked at** is read back from its
+  transcript (`trace.py`, the panel's "Show what it looked at"): the data it
+  was given, every tool call and result, every time the checks sent it back. The model is
   unloaded `keep_alive` (1 min) after a run: **16 GB pit machines are the
   constraint** (qwen3:8b is 6.7 GB loaded; the 30B took ~20 GB and swapped
   a 24 GB Mac). Preferences in `ai.json`. `PIT_AI_QUIET=1` in `--self-check`.
