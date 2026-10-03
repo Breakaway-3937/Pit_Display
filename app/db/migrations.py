@@ -788,3 +788,26 @@ def _v16_relay(conn: sqlite3.Connection) -> None:
         """
     )
 
+
+@register_migration
+def _v17_home_dataset(conn: sqlite3.Connection) -> None:
+    """
+    Home's standard datasets (home/REQUESTS.md R10/R11), pulled only like
+    `tba_event`: generic, self-describing tables (title, columns, rows in
+    display order, a highlight) that the overhead screens render without code
+    per dataset (`app/datasets.py`). `data` is the hub row whole. Rows pushed
+    before a build knew the table arrive through the catch-up.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE home_dataset (
+            uid        TEXT PRIMARY KEY,           -- dataset_key, 'quality'
+            title      TEXT,
+            category   TEXT,                       -- '3937' | 'arkansas' | 'facts'
+            sort       INTEGER,
+            data       TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        """
+    )
+

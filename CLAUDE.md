@@ -125,9 +125,38 @@ A screen is rebuilt from scratch each time it's powered on.
 **Modes** (`config.set_mode()`), whole-pit: `standard` (slide rotation, 45 s,
 `RotationManager`), `judges` (`JudgesOverlay`, full-bleed artwork, header
 follows the chassis), `lunch` (`LunchOverlay`, one auto-fitted line, the Trace
-is its red). **Per-screen content** in standard mode
+is its red). **The overhead screens are a matched set at all times** (`app/overhead.py`,
+Brayden 2026-10-02): **one content choice for the pair**, each screen its half
+(Next match: A the Nexus queue | B the event's schedule, ours marked, our
+record; Robot: Diagnostics | Robot Info; Checklists: a list each, chosen per
+screen; Did you know: Breakaway's | Arkansas's; Analysis: board | Robot Info).
+The control screen's box sets both; `rotation.py` mirrors any per-screen
+`content` write onto the partner, so no path leaves them mismatched. **Power,
+theme, monitor, network publishing and the checklist stay per screen.**
+Results and our record are TBA's (`tba_match`, `app/event_schedule.py`), the
+schedule is Nexus's; "played" is play order, never the clock.
+
+**The slide rotation is to be revised in its entirety (Brayden, 2026-10-02):
+it'll be totally revamped.** `app/program.py` keeps only a few example stops
+to prove the machinery works; don't extend it, redesign it.
+
+**The overhead program** (`app/program.py`, driven by `app/rotation.py`):
+**the two overhead screens move as one unit.** A stop names what A and B show
+together (Diagnostics | Robot Info, Next match | Our schedule, a fact | a fact,
+authored pairs), and the rotation timer sets **one** `slide_index` on both;
+**a screen never advances itself** (two self-advancing lists drifted). A stop
+whose data is missing (no log, no event, no facts) leaves both screens. A
+picker jump on either screen moves both; a pinned screen keeps following the
+position and rejoins in step. Stop sides are `Slide`s; `Slide.face` makes a
+stop show a whole face, `Slide.credit` replaces "ROTATION A" with a data
+credit. `STORY` and `_fact_pairs()` are **drafts** (pairings to be worked
+through with Brayden). `tools/program_check.py` walks every stop.
+
+**Per-screen content** in standard mode
 (`config.get(screen, "content")`): `rotation`, `next_match`, `checklist`,
-`diagnostics`, `robot_info`, `analysis`.
+`diagnostics`, `robot_info`, `analysis`, `facts` ("Did you know?": home's
+`tba_fact` sentences, `facts_overlay.py` + the webcast's `faceFacts`; pinned only,
+pages a column that overflows, credits The Blue Alliance in the ledger).
 
 **`config`'s per-screen settings are memory-only and reset every launch**
 (theme, content, slide index, `checklist_id`). Anything that must survive a

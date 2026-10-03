@@ -34,7 +34,9 @@ from app.widgets.brand_widgets import (
     RoundedButton, RoundedFrame, SelectableChip, eyebrow, mono_font,
 )
 from app.widgets.cad_upload_panel import CADSettingsPanel
+from app import overhead
 from app.widgets.checklist_panel import ChecklistPanel
+from app.widgets.dataset_panel import DatasetPanel
 from app.widgets.admin_bar import AdminBar
 from app.widgets.helpers import clear_layout, divider, label
 from app.widgets.led_panel import LEDPanel
@@ -706,16 +708,6 @@ class _StandardSlideRow(QFrame):
         event.accept()
 
 
-# The six faces of Standard mode, in the order an operator would reach for
-# them. Values match `PresentationScreen._CONTENT_PAGES` plus "rotation".
-_CONTENT_CHOICES = [
-    ("rotation",    "Slide rotation"),
-    ("next_match",  "Next match"),
-    ("checklist",   "Pit checklist"),
-    ("diagnostics", "Robot diagnostics"),
-    ("robot_info",  "Robot info"),
-    ("analysis",    "Analysis board"),
-]
 
 
 class _StandardSlidePicker(QWidget):
@@ -737,6 +729,9 @@ class _StandardSlidePicker(QWidget):
         config.mode_changed.connect(lambda _m: self._refresh_enabled())
         config.team_changed.connect(self._on_team_changed)
         config.logs_changed.connect(self._rebuild)
+        # The program's stops change with its data (app/program.py).
+        from app.rotation import rotation
+        rotation.program_changed.connect(self._rebuild)
         self._rebuild()
 
     def _build_ui(self):
@@ -808,46 +803,28 @@ class _StandardSlidePicker(QWidget):
         except Exception:
             return coerce(cls.SLIDES)
 
-    def _board_index(self) -> int | None:
-        cls = self._screen_cls()
-        try:
-            return (len(cls.rotation_slides())
-                    if cls.board_entry() is not None else None)
-        except Exception:
-            return None
-
     def _rebuild(self):
         clear_layout(self._list)
         self._rows.clear()
         slides = self._slides()
-        authored = len(self._authored())
-        board = self._board_index()
         for i, slide in enumerate(slides):
-            is_board = board is not None and i == board
+            # A stop's own fields say what it is: a whole face, generated words
+            # (a log figure or a fact from home), or an authored slide.
             row = _StandardSlideRow(
                 i, slide.title, slide.body,
-                is_fact=(not is_board) and i >= authored,
-                kind="board" if is_board else "")
+                is_fact=bool(slide.kind == "figure" or slide.credit),
+                kind="board" if slide.face else "")
             row.clicked.connect(self._jump)
             self._rows.append(row)
             self._list.addWidget(row)
         self._list.addStretch()
 
-        n_slides = len(slides) - (1 if board is not None else 0)
-        facts = n_slides - authored
+        faces = sum(1 for sl in slides if sl.face)
         self._count_lbl.setText(
-            f"{n_slides} slides — {authored} authored"
-            + (f", {facts} from the robot log" if facts else "")
-            + (" · + the live board" if board is not None else ""))
+            f"{len(slides)} stops, paired with the other screen"
+            + (f" · {faces} live face{'s' if faces != 1 else ''}" if faces else ""))
         self._refresh_active()
         self._refresh_enabled()
-
-    def _authored(self) -> list:
-        from app.windows.presentation_a import PresentationScreenA
-        from app.windows.presentation_b import PresentationScreenB
-        cls = (PresentationScreenA if self._screen_id == "presentation_a"
-               else PresentationScreenB)
-        return cls.SLIDES
 
     # ── Interaction ───────────────────────────────────────────────────────
 
@@ -1111,32 +1088,44 @@ class ScreenSettingsPanel(QWidget):
             # mode: the useful arrangement is one overhead screen on the
             # checklist while the other keeps rotating for visitors.
             outer.addWidget(section(
-                "Standard Content",
-                "What this overhead screen shows in Standard mode. Rotation "
-                "cycles the slides and finishes on the diagnostics board; "
-                "anything else pins that page and stops the 45-second timer "
-                "touching this screen."))
+                "Overhead Content",
+                "What both overhead screens show in Standard mode, as a matched "
+                "set: each shows its half (Next match: the queue here, the "
+                "event's schedule on the other). Changing it here changes both. "
+                "Power, theme and display stay this screen's own."))
             outer.addSpacing(8)
 
-            # A combo, not a toggle: there are four faces now, and a two-state
-            # switch cannot say which of them you meant.
+            # The pair's set (app/overhead.py), the same box on both panels.
             self._pres_content = QComboBox()
-            for value, text in _CONTENT_CHOICES:
+            for value, text in overhead.LABELS.items():
                 self._pres_content.addItem(text, value)
-            current = config.get(screen_id, "content", "rotation")
-            idx = self._pres_content.findData(current)
-            self._pres_content.setCurrentIndex(idx if idx >= 0 else 0)
             self._pres_content.setFixedWidth(220)
+            self._show_set()
             self._pres_content.currentIndexChanged.connect(
                 self._on_pres_content_changed)
+            config.screen_setting_changed.connect(self._on_pair_setting)
 
             outer.addWidget(SettingRow(
-                label_text="Screen content",
-                description="Rotation, the next match, the checklist, or a robot board pinned.",
+                label_text="Both screens show",
+                description="This screen shows " + (
+                    "the left half of each set." if screen_id.endswith("_a")
+                    else "the right half of each set."),
                 control=self._pres_content,
             ))
             outer.addSpacing(8)
             outer.addWidget(ChecklistPanel(screen_id))
+            outer.addSpacing(16)
+
+            outer.addWidget(divider())
+            outer.addSpacing(12)
+            outer.addWidget(section(
+                "Home Datasets",
+                "Stats home builds from The Blue Alliance (Quality Award leaders, "
+                "season by season, records). Each stays off the screens until an "
+                "adult has reviewed it and turned it on; it's a team setting, so "
+                "this covers every pit."))
+            outer.addSpacing(8)
+            outer.addWidget(DatasetPanel())
             outer.addSpacing(16)
 
             outer.addWidget(divider())
@@ -1293,7 +1282,18 @@ class ScreenSettingsPanel(QWidget):
         QTimer.singleShot(1400, lambda: self._web_copy.setText("Copy"))
 
     def _on_pres_content_changed(self, _index: int):
-        config.set(self._screen_id, "content", self._pres_content.currentData())
+        overhead.choose(self._pres_content.currentData())
+
+    def _show_set(self) -> None:
+        """Point the box at the pair's current set, without re-choosing it."""
+        idx = self._pres_content.findData(overhead.current())
+        self._pres_content.blockSignals(True)
+        self._pres_content.setCurrentIndex(idx if idx >= 0 else 0)
+        self._pres_content.blockSignals(False)
+
+    def _on_pair_setting(self, screen: str, key: str, _value) -> None:
+        if key == "content" and screen in overhead.SIDES:
+            self._show_set()
 
     def _on_content_toggled(self, board: bool):
         self._content_label.setText("Impact Board" if board else "CAD Viewer")

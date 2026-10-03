@@ -40,7 +40,7 @@ can jump to it.
 imported" board appearing in front of visitors every 45 seconds is worse than
 no board, so `_cycle_len()` asks the database first.
 
-Subclasses provide `SCREEN_ID`, `SLIDES`, and `BOARD_CONTENT` — which of the two
+Subclasses provide `SCREEN_ID` and `SLIDES` (authored slides; `app/program.py` pairs them). Formerly also `BOARD_CONTENT` — which of the two
 boards is this screen's own.
 """
 
@@ -56,6 +56,11 @@ from app.theme import apply_theme
 from app.widgets.cad_viewer import CADViewerWidget
 from app.widgets.checklist_overlay import ChecklistOverlay
 from app.widgets.analysis_overlay import AnalysisOverlay
+from app.widgets.facts_overlay import FactsOverlay
+from app.widgets.schedule_overlay import ScheduleOverlay
+from app.widgets.quality_overlay import QualityOverlay
+from app.widgets.seasons_overlay import SeasonsOverlay
+from app.widgets.dataset_overlay import DatasetOverlay
 from app.widgets.diagnostics_overlay import DiagnosticsOverlay
 from app.widgets.robot_info_overlay import RobotInfoOverlay
 from app.widgets.lunch_overlay import LunchOverlay
@@ -70,9 +75,6 @@ class PresentationScreen(QMainWindow):
 
     SCREEN_ID: str = ""
     SLIDES: list[Slide] = []
-    # Which board is this screen's own: the one that joins its rotation and the
-    # one the picker lists. Either can still be pinned on either screen.
-    BOARD_CONTENT: str = "diagnostics"
 
     _PAGE_NORMAL      = 0
     _PAGE_LUNCH       = 1
@@ -83,6 +85,11 @@ class PresentationScreen(QMainWindow):
     _PAGE_ROBOT_INFO  = 6
     _PAGE_NEXT_MATCH  = 7
     _PAGE_ANALYSIS    = 8
+    _PAGE_FACTS       = 9
+    _PAGE_SCHEDULE    = 10
+    _PAGE_QUALITY     = 11
+    _PAGE_SEASONS     = 12
+    _PAGE_DATASET     = 13
 
     _CONTENT_PAGES = {
         "checklist":   _PAGE_CHECKLIST,
@@ -90,17 +97,13 @@ class PresentationScreen(QMainWindow):
         "robot_info":  _PAGE_ROBOT_INFO,
         "next_match":  _PAGE_NEXT_MATCH,
         "analysis":    _PAGE_ANALYSIS,
+        "facts":       _PAGE_FACTS,
+        "schedule":    _PAGE_SCHEDULE,
+        "quality":     _PAGE_QUALITY,
+        "bk_seasons":  _PAGE_SEASONS,
+        "dataset":     _PAGE_DATASET,
     }
 
-    BOARD_LABELS = {
-        "diagnostics": Slide(
-            kind=BOARD, eyebrow="Live board", title="Robot Diagnostics",
-            body="Battery, current, temperature and latched faults from the "
-                 "last imported log."),
-        "robot_info": Slide(
-            kind=BOARD, eyebrow="Live board", title="Robot Info",
-            body="What tripped, on which motor, and which log it came from."),
-    }
 
     def __init__(self):
         super().__init__()
@@ -124,7 +127,10 @@ class PresentationScreen(QMainWindow):
         config.team_changed.connect(self._on_team_changed)
         config.mode_changed.connect(self._on_mode_changed)
         config.screen_setting_changed.connect(self._on_setting_changed)
-        rotation.advance.connect(self._on_rotation_advance)
+        # The program (app/program.py) moves both screens together through
+        # `slide_index`; a screen never advances itself. When its stops change
+        # (a log, an event, facts arriving), rebuild.
+        rotation.program_changed.connect(self.reload_slides)
         # Importing a log mid-day regenerates the fun-fact slides and re-reads
         # both boards, with no power-cycle. This is what `reload_slides()` was
         # written for.
@@ -139,55 +145,21 @@ class PresentationScreen(QMainWindow):
     @classmethod
     def rotation_slides(cls) -> list[Slide]:
         """
-        The standard rotation: this screen's own slides, then any fun facts
-        generated from imported robot logs.
-
-        Facts are read once, at construction. Importing a new log while a
-        presentation screen is open will not change what it shows until the
-        screen is power-cycled from the control sidebar — the same way judges
-        slides need a Reload. `reload_slides()` does it without a restart.
-        """
-        slides = coerce(cls.SLIDES)
-        try:
-            from app.robot.fun_facts import slides as fact_slides
-            slides += coerce(fact_slides())
-        except Exception:
-            # A malformed or partially-imported log must never stop the
-            # audience screens from coming up.
-            pass
-        return slides
-
-    @classmethod
-    def board_entry(cls) -> Slide | None:
-        """
-        This screen's board as the picker should list it, or None when there is
-        nothing imported for it to show.
+        This screen's half of the overhead program (`app/program.py`), in
+        order: slides, and stops that show a whole face (`Slide.face`). The
+        same length on both screens, which is what keeps them paired.
         """
         try:
-            from app.robot.diagnostics import latest_session_id
-            if latest_session_id() is None:
-                return None
+            from app import program
+            return program.side(cls.SCREEN_ID)
         except Exception:
-            return None
-        return cls.BOARD_LABELS.get(cls.BOARD_CONTENT)
+            # Bad data must never stop the audience screens from coming up.
+            return coerce(cls.SLIDES)
 
     @classmethod
     def rotation_entries(cls) -> list[Slide]:
-        """
-        Every stop in the cycle, slides *and* the board, in order.
-
-        The control screen's picker lists exactly this, so the index it writes
-        to `slide_index` means the same thing on both sides.
-        """
-        entries = list(cls.rotation_slides())
-        board = cls.board_entry()
-        if board is not None:
-            entries.append(board)
-        return entries
-
-    def _board_index(self) -> int | None:
-        """Cycle position of the board, or None when it is not in the cycle."""
-        return self._board_idx
+        """Every stop, as the control screen's picker lists it."""
+        return cls.rotation_slides()
 
     def reload_slides(self) -> None:
         """
@@ -197,8 +169,6 @@ class PresentationScreen(QMainWindow):
         `config.logs_changed` themselves, so calling them would reload each of
         them twice.
         """
-        self._board_idx = (len(self.rotation_slides())
-                           if self.board_entry() is not None else None)
         new = SlidePanel(self.rotation_slides(), self.SCREEN_ID)
         old = self._slides
         self._stack.insertWidget(self._PAGE_NORMAL, new)
@@ -207,8 +177,9 @@ class PresentationScreen(QMainWindow):
         self._slides = new
         new.slide_changed.connect(self._on_slide_changed)
         new.apply_team(config.active_team)
-        if self._stack.currentIndex() == self._PAGE_NORMAL:
-            self._stack.setCurrentIndex(self._PAGE_NORMAL)
+        new.set_slide(int(config.get(self.SCREEN_ID, "slide_index", 0) or 0))
+        if config.mode == "standard" and self._standard_page() == self._PAGE_NORMAL:
+            self._sync_page()
 
     def _build_ui(self):
         self._stack = QStackedWidget()
@@ -233,7 +204,7 @@ class PresentationScreen(QMainWindow):
         self._stack.addWidget(self._checklist)              # 4
 
         # Both boards exist on both screens. Which one joins *this* screen's
-        # rotation is `BOARD_CONTENT`; either can still be pinned on either
+        # program pairs (app/program.py); either can still be pinned on either
         # screen, because a crew mid-debug should not have to care which panel
         # was configured for what.
         self._diagnostics = DiagnosticsOverlay(screen_id=self.SCREEN_ID)
@@ -252,10 +223,27 @@ class PresentationScreen(QMainWindow):
         self._analysis = AnalysisOverlay(screen_id=self.SCREEN_ID)
         self._stack.addWidget(self._analysis)               # 8
 
-        self._board_idx = (len(self.rotation_slides())
-                           if self.board_entry() is not None else None)
+        # "Did you know?": home's fun facts from TBA's award history
+        # (tba_fact). Pinned only, like the analysis board.
+        self._facts = FactsOverlay(screen_id=self.SCREEN_ID)
+        self._stack.addWidget(self._facts)                  # 9
+
+        # Our schedule today (Nexus): Next Match's partner in the program.
+        self._schedule = ScheduleOverlay(screen_id=self.SCREEN_ID)
+        self._stack.addWidget(self._schedule)               # 10
+
+        # Home's datasets (R10/R11): the Quality Award leaderboard, the
+        # season-by-season chart, and every other dataset, generically.
+        self._quality = QualityOverlay(screen_id=self.SCREEN_ID)
+        self._stack.addWidget(self._quality)                # 11
+        self._seasons = SeasonsOverlay(screen_id=self.SCREEN_ID)
+        self._stack.addWidget(self._seasons)                # 12
+        self._dataset = DatasetOverlay(screen_id=self.SCREEN_ID)
+        self._stack.addWidget(self._dataset)                # 13
 
         self._stack.setCurrentIndex(self._standard_page())
+        if self._standard_page() == self._PAGE_NORMAL:
+            self._sync_page()
 
         # The queue / inspection banner lies over every page along the bottom
         # — a child of the window, not a page, so no face has to know. It is
@@ -273,47 +261,18 @@ class PresentationScreen(QMainWindow):
         chosen = config.get(self.SCREEN_ID, "checklist_id")
         return int(chosen) if chosen else checklist.default_list_id()
 
-    def _board_page(self) -> int:
-        """The stack page for this screen's own board."""
-        return (self._PAGE_ROBOT_INFO if self.BOARD_CONTENT == "robot_info"
-                else self._PAGE_DIAGNOSTICS)
-
     def _standard_page(self) -> int:
         """Which page standard mode means for this screen right now."""
         content = config.get(self.SCREEN_ID, "content", "rotation")
         return self._CONTENT_PAGES.get(content, self._PAGE_NORMAL)
 
-    def _on_board(self) -> bool:
-        """True when the cycle is currently parked on the board."""
-        return (config.get(self.SCREEN_ID, "content", "rotation") == "rotation"
-                and self._stack.currentIndex() == self._board_page())
-
-    def _on_rotation_advance(self):
-        # A pinned page — checklist or either board — is not a slide. The
-        # 45-second timer must not walk off it while the crew is working.
-        if config.mode != "standard" or self._standard_page() != self._PAGE_NORMAL:
-            return
-
-        board = self._board_index()
-        if self._on_board():
-            # The board is the last stop; the cycle wraps from it to slide 0.
-            self._show_slide_page(0)
-        elif board is not None and self._slides.current_index >= board - 1:
-            self._show_board()
-        else:
-            self._slides.next_slide()
-
-    def _show_board(self):
-        """Put this screen's board on, as a stop in the cycle."""
-        self._stack.setCurrentIndex(self._board_page())
-        idx = self._board_index()
-        if idx is not None:
-            config.set(self.SCREEN_ID, "slide_index", idx)
-
-    def _show_slide_page(self, index: int):
-        self._slides.set_slide(index)
-        self._stack.setCurrentIndex(self._PAGE_NORMAL)
-        config.set(self.SCREEN_ID, "slide_index", index)
+    def _sync_page(self) -> None:
+        """Show the current stop: a slide on the slide page, or the face the
+        stop names (`Slide.face`) on its own page."""
+        entry = self._slides.current_slide
+        face = entry.face if entry is not None else ""
+        self._stack.setCurrentIndex(self._CONTENT_PAGES.get(face, self._PAGE_NORMAL)
+                                    if face else self._PAGE_NORMAL)
 
     def _on_mode_changed(self, mode: str):
         if mode == "lunch":
@@ -332,8 +291,9 @@ class PresentationScreen(QMainWindow):
             # rather than resuming on the board it happened to be parked on.
             page = self._standard_page()
             if page == self._PAGE_NORMAL:
-                self._slides.reset()
-            self._stack.setCurrentIndex(page)
+                self._sync_page()
+            else:
+                self._stack.setCurrentIndex(page)
 
     def _on_cad_active_changed(self, active: bool):
         if config.mode != "judges":
@@ -374,23 +334,19 @@ class PresentationScreen(QMainWindow):
         if screen != self.SCREEN_ID:
             return
         if key == "slide_index":
-            # The board is the cycle position past the last slide, so a jump to
-            # it arrives through the same key as any other slide.
-            board = self._board_index()
-            if board is not None and int(value) == board:
-                if config.get(self.SCREEN_ID, "content", "rotation") == "rotation":
-                    self._stack.setCurrentIndex(self._board_page())
-                return
+            # The program's position (app/rotation.py sets both screens). A
+            # pinned screen keeps following it, so it rejoins in step.
             self._slides.set_slide(int(value))
-            if (config.mode == "standard" and self._on_board()):
-                self._stack.setCurrentIndex(self._PAGE_NORMAL)
+            if config.mode == "standard" and self._standard_page() == self._PAGE_NORMAL:
+                self._sync_page()
             return
         if key == "content":
             if config.mode == "standard":
                 page = self._standard_page()
                 if page == self._PAGE_NORMAL:
-                    self._slides.reset()
-                self._stack.setCurrentIndex(page)
+                    self._sync_page()
+                else:
+                    self._stack.setCurrentIndex(page)
             return
         if key == "checklist_id":
             self._checklist.set_list(self._configured_list_id())

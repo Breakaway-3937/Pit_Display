@@ -95,7 +95,12 @@ TBA_TEAM, TBA_RIVAL, TBA_FACT = "tba_team", "tba_rival", "tba_fact"
 # `sync_verdict` (uid = machine id), pulled only. Other machines' requests
 # and manifests arrive in the feed and are ignored.
 BLOB_REQUEST, MACHINE_MANIFEST, SYNC_VERDICT = "blob_request", "machine_manifest", "sync_verdict"
-PULLED_ONLY = (TBA_EVENT, TBA_MATCH, TBA_TEAM, TBA_RIVAL, TBA_FACT, SYNC_VERDICT)
+# Home's standard datasets (home/REQUESTS.md R10/R11): generic, self-describing
+# tables for the display, uid = dataset_key. Pulled only. Today the ONLY TBA
+# data home sends (Brayden, 2026-10-02).
+HOME_DATASET = "home_dataset"
+PULLED_ONLY = (TBA_EVENT, TBA_MATCH, TBA_TEAM, TBA_RIVAL, TBA_FACT, SYNC_VERDICT,
+               HOME_DATASET)
 
 
 def short_match_key(match_key: str) -> str:

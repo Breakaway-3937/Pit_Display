@@ -15,10 +15,19 @@ from app.attribution import TBA_TEXT
 CREDIT = TBA_TEXT
 
 
+# A column's title for each category home sends (home/REQUESTS.md: facts are
+# Breakaway's or Arkansas's, "3937" first). Anything else reads as the league.
+TITLES = {"3937": "Breakaway", "arkansas": "Across Arkansas"}
+
+
+def title(category: str) -> str:
+    return TITLES.get(category, "Across the league")
+
+
 @dataclass(frozen=True)
 class Fact:
     key: str
-    category: str          # '3937' | 'league'
+    category: str          # '3937' | 'arkansas'
     text: str
 
 
@@ -33,4 +42,11 @@ def facts() -> list[Fact]:
                         COALESCE(sort, 9999), uid""")
     except Exception:
         return []
-    return [Fact(r["uid"], r["category"] or "", r["text"].strip()) for r in rows]
+    found = [Fact(r["uid"], r["category"] or "", r["text"].strip()) for r in rows]
+    if found:
+        return found
+    # Home sends only its standard datasets now (home/REQUESTS.md R10): the
+    # same sentences arrive as the `fun_facts` dataset, already in order.
+    from app import datasets
+    facts = [Fact(k, c, t) for k, c, t in datasets.fun_facts()]
+    return sorted(facts, key=lambda f: 0 if f.category == "3937" else 1)

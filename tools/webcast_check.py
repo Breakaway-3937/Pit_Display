@@ -310,6 +310,17 @@ def main() -> int:
     nm = face_payload("next_match", "next_match", "Next match")
     check("the Next Match face credits frc.nexus (a condition of the API's use)",
           "FRC.NEXUS" in str(nm.get("ledger_right", "")), str(nm.get("ledger_right")))
+    from app.db import db as _db
+    _db.execute("INSERT INTO tba_fact (uid, category, team_number, text, sort, data) "
+                "VALUES ('check_streak', '3937', '3937', 'Breakaway has brought home an "
+                "award 13 seasons in a row.', 1, '{}')")
+    fx = face_payload("facts", "facts", "Did you know?")
+    check("the facts face carries home's sentence, ours first",
+          (fx.get("facts") or {}).get("ours", [""])[0].startswith("Breakaway has brought"),
+          str(fx.get("facts"))[:120])
+    check("the facts face credits The Blue Alliance (a condition of the data's use)",
+          "POWERED BY THE BLUE ALLIANCE" in str(fx.get("ledger_right", "")),
+          str(fx.get("ledger_right")))
     config.set("presentation_a", "content", "rotation")
     pump(500)
 
@@ -327,15 +338,21 @@ def main() -> int:
     print("\n── It is live ─────────────────────────────────────────────", flush=True)
     before = len(listener.messages)
     index_before = (listener.latest() or {}).get("rotation", {}).get("index")
-    rotation.advance.emit()
+    # What the 45 s timer does: move the shared program (app/rotation.py),
+    # which then announces `advance`. Screens don't advance themselves.
+    rotation._step()
     pump(900)
     after = listener.latest() or {}
     check("a rotation advance pushes a new state",
           len(listener.messages) > before,
           f"{len(listener.messages) - before} messages")
-    check("the pushed state is the NEW slide, not the old one",
-          after.get("rotation", {}).get("index") != index_before,
-          f"{index_before} -> {after.get('rotation', {}).get('index')}")
+    # The new position, whatever the program's length (a fresh install's
+    # program can be a single stop, which wraps to itself).
+    check("the pushed state is the program's NEW position, not the old one",
+          after.get("rotation", {}).get("index") == rotation.index
+          and (rotation.index != index_before or after["rotation"].get("count") == 1),
+          f"{index_before} -> {after.get('rotation', {}).get('index')} "
+          f"(program at {rotation.index} of {after.get('rotation', {}).get('count')})")
 
     before = len(listener.messages)
     config.set_team(16)

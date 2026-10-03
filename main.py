@@ -280,6 +280,9 @@ def _boot(app: QApplication, splash):
         # the control screen (its Telemetry panel subscribes). Off with no
         # token. See app/db/sync/.
         mods["sync_service"].init_sync()
+        # The overhead program (app/program.py) rechecks its stops when facts,
+        # logs or the event change; it needs sync and nexus to exist first.
+        mods["rotation"].rotation.watch()
         # Robot-log analysis by a local model: reads the database, flashes the
         # strips when a board is published. Before the control screen (its
         # Analysis panel subscribes). See app/ai/.

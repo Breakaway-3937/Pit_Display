@@ -156,6 +156,293 @@
     return box;
   }
 
+  // ── "Did you know?": home's facts, ours left, the league's right ────────
+  // A port of facts_overlay.py. A column that can't show every fact pages:
+  // `factsStart` remembers where each column's page begins between renders,
+  // and the pager moves it on by however many fitted.
+  var factsStart = { ours: 0, league: 0 };
+  var factsPager = null;
+
+  function factsColumn(title, key, items) {
+    var col = h("div", "facts-col");
+    col.appendChild(h("div", "facts-title", title));
+    var list = h("div", "facts-list");
+    var start = items.length ? factsStart[key] % items.length : 0;
+    items.slice(start).concat(items.slice(0, start)).forEach(function (text) {
+      list.appendChild(h("div", "fact", text));
+    });
+    col.appendChild(list);
+    col.dataset.key = key;
+    col.dataset.count = items.length;
+    return col;
+  }
+
+  function factsPage() {
+    // Count what fitted in each column, then start the next page there.
+    var cols = el.stage.querySelectorAll(".facts-col");
+    var moved = false;
+    cols.forEach(function (col) {
+      var list = col.querySelector(".facts-list");
+      var shown = 0;
+      list.childNodes.forEach(function (f) {
+        if (f.offsetTop + f.offsetHeight <= list.clientHeight + 1) shown++;
+      });
+      var n = +col.dataset.count;
+      if (n && shown && shown < n) {
+        factsStart[col.dataset.key] = (factsStart[col.dataset.key] + shown) % n;
+        moved = true;
+      }
+    });
+    if (moved && state) render(state);
+  }
+
+  function faceFacts(data) {
+    if (data.empty) {
+      var box = h("div", "face stack");
+      box.appendChild(h("div", "eyebrow", "DID YOU KNOW"));
+      box.appendChild(h("div", "headline", "Facts are on their way"));
+      box.appendChild(h("div", "subline",
+        "Breakaway's award history and the league's records arrive with team sync, and appear here."));
+      return box;
+    }
+    var grid = h("div", "face facts" + (data.ours.length && data.league.length ? "" : " one"));
+    if (data.ours.length) grid.appendChild(factsColumn("BREAKAWAY", "ours", data.ours));
+    if (data.ours.length && data.league.length) grid.appendChild(h("div", "facts-rule"));
+    if (data.league.length) grid.appendChild(factsColumn(data.league_title || "ACROSS THE LEAGUE", "league", data.league));
+    if (!factsPager) factsPager = setInterval(factsPage, (data.page_s || 12) * 1000);
+    return grid;
+  }
+
+  // A face by its content key, for stops in the program.
+  function faceByName(face, data) {
+    if (face === "diagnostics" || face === "robot_info" || face === "analysis") {
+      return faceBoard(data && data.which ? data : { which: face, empty: true });
+    }
+    if (face === "next_match") return faceNextMatch(data);
+    if (face === "schedule") return faceSchedule(data);
+    if (face === "facts") return faceFacts(data);
+    if (face === "quality") return faceQuality(data);
+    if (face === "bk_seasons") return faceSeasons(data);
+    if (face === "dataset") return faceDataset(data);
+    return faceUnknown();
+  }
+
+  function notOnYet(eyebrow, line) {
+    var box = h("div", "face stack");
+    box.appendChild(h("div", "eyebrow", eyebrow));
+    box.appendChild(h("div", "headline", "Not on yet"));
+    box.appendChild(h("div", "subline", line));
+    return box;
+  }
+
+  function dsHead(face, d) {
+    var top = h("div", "ds-top");
+    top.appendChild(h("div", "ds-title", d.title || ""));
+    if (d.shown_of) top.appendChild(h("div", "ds-shown", d.shown_of.toUpperCase()));
+    face.appendChild(top);
+    if (d.description) face.appendChild(h("div", "ds-desc", d.description));
+  }
+
+  // ── Quality Award leaders (quality_overlay.py) ─────────────────────────
+  // Two columns of ranked bars; T-n for ties; Breakaway's bar the one red.
+  function faceQuality(d) {
+    if (!d || d.empty) return notOnYet("QUALITY AWARDS",
+      "The Quality Award leaderboard appears here once it arrives from home and an adult has turned it on.");
+    var face = h("div", "face ds");
+    dsHead(face, d);
+    var grid = h("div", "q-grid");
+    var half = Math.ceil(d.rows.length / 2);
+    [d.rows.slice(0, half), d.rows.slice(half)].forEach(function (chunk) {
+      var col = h("div", "q-col");
+      chunk.forEach(function (r) {
+        var row = h("div", "q-row" + (r.ours ? " ours" : ""));
+        row.appendChild(h("span", "q-rank", r.rank));
+        var team = h("span", "q-team", r.team);
+        if (r.nickname) team.appendChild(h("i", "q-nick", r.nickname));
+        row.appendChild(team);
+        var track = h("span", "q-track");
+        var bar = h("i", "q-bar");
+        bar.style.width = (100 * (+r.count || 0) / (d.top || 1)).toFixed(1) + "%";
+        track.appendChild(bar);
+        track.appendChild(h("b", "q-count", r.count == null ? "" : String(r.count)));
+        row.appendChild(track);
+        col.appendChild(row);
+      });
+      grid.appendChild(col);
+    });
+    face.appendChild(grid);
+    return face;
+  }
+
+  // ── Breakaway season by season (seasons_overlay.py) ────────────────────
+  // Stacked W/L/T bars, a win % line on its own axis, finish diamonds, a gap
+  // (never a zero) for a season with no record, awards as a number row.
+  function faceSeasons(d) {
+    if (!d || d.empty) return notOnYet("SEASON BY SEASON",
+      "Breakaway's seasons appear here once they arrive from home and an adult has turned them on.");
+    var face = h("div", "face ds");
+    var top = h("div", "ds-top");
+    top.appendChild(h("div", "ds-title", d.title || ""));
+    top.appendChild(h("div", "ds-legend",
+      "■ Wins  ▪ Losses  — Win %  ◆ Won an event  ◇ Finalist  # Awards"));
+    face.appendChild(top);
+    var ss = d.seasons, W = 1800, H = 560, L = 64, R = 84, PB = 130;
+    var pw = W - L - R, ph = H - PB, slot = pw / ss.length, bw = Math.min(64, slot * 0.56);
+    var most = 1;
+    ss.forEach(function (x) { most = Math.max(most, (x.wins || 0) + (x.losses || 0) + (x.ties || 0)); });
+    var topN = Math.max(10, Math.ceil(most / 10) * 10);
+    var NS = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", "0 -30 " + W + " " + (H + 30));
+    svg.setAttribute("class", "s-chart");
+    function el2(tag, attrs, text) {
+      var n = document.createElementNS(NS, tag);
+      for (var k in attrs) n.setAttribute(k, attrs[k]);
+      if (text !== undefined) n.textContent = text;
+      svg.appendChild(n);
+      return n;
+    }
+    [0, 0.5, 1].forEach(function (f) {
+      var y = ph - ph * f;
+      el2("line", { x1: L, x2: L + pw, y1: y, y2: y, "class": "s-rule" });
+      el2("text", { x: L - 14, y: y + 7, "class": "s-axis", "text-anchor": "end" }, String(Math.round(topN * f)));
+      el2("text", { x: L + pw + 14, y: y + 7, "class": "s-axis" }, Math.round(100 * f) + "%");
+    });
+    var pts = [];
+    ss.forEach(function (x, i) {
+      var cx = L + slot * (i + 0.5);
+      var rec = [x.wins, x.losses, x.ties].some(function (v) { return typeof v === "number"; });
+      if (rec) {
+        var base = ph;
+        [["wins", "s-win"], ["losses", "s-loss"], ["ties", "s-tie"]].forEach(function (k) {
+          var n = x[k[0]] || 0;
+          if (!n) return;
+          var hh = ph * n / topN;
+          el2("rect", { x: cx - bw / 2, y: base - hh, width: bw, height: hh, "class": k[1] });
+          base -= hh;
+        });
+        pts.push(typeof x.pct === "number" ? [cx, ph - ph * x.pct / 100] : null);
+      } else {
+        pts.push(null);
+        el2("text", { x: cx, y: ph - 10, "class": "s-remote", "text-anchor": "middle" }, "REMOTE");
+      }
+      el2("text", { x: cx, y: ph + 28, "class": "s-year", "text-anchor": "middle" }, String(x.year));
+      if (x.robot) el2("text", { x: cx, y: ph + 52, "class": "s-robot", "text-anchor": "middle" }, x.robot);
+      // The best finish has a row of its own, clear of the bars and the line.
+      if (x.finish === "won an event" || x.finish === "finalist") {
+        var my = ph + 76, r = 11;
+        el2("path", { d: "M" + cx + " " + (my - r) + "L" + (cx + r) + " " + my + "L" + cx + " " +
+          (my + r) + "L" + (cx - r) + " " + my + "Z",
+          "class": x.finish === "won an event" ? "s-won" : "s-fin" });
+      }
+      el2("text", { x: cx, y: ph + 120, "class": "s-awards", "text-anchor": "middle" },
+        x.awards == null ? "—" : String(x.awards));
+    });
+    var prev = null;
+    pts.forEach(function (pt) {
+      if (pt && prev) el2("line", { x1: prev[0], y1: prev[1], x2: pt[0], y2: pt[1], "class": "s-pct" });
+      prev = pt;
+    });
+    pts.forEach(function (pt) { if (pt) el2("circle", { cx: pt[0], cy: pt[1], r: 5, "class": "s-dot" }); });
+    face.appendChild(svg);
+    var notes = [];
+    if (ss.some(function (x) { return ![x.wins, x.losses, x.ties].some(function (v) { return typeof v === "number"; }); }))
+      notes.push("A gap is a season with no record (2021 was played remotely).");
+    if (ss.some(function (x) { return x.year === 2015; }))
+      notes.push("2015 ranked by average score, so it has few wins or losses.");
+    notes.forEach(function (n) { face.appendChild(h("div", "ds-desc", n)); });
+    return face;
+  }
+
+  // ── Any dataset (dataset_overlay.py) ───────────────────────────────────
+  // Picked by the server-synced clock, as the native face does: pairs that
+  // turn every period, A the first, B the second (wrapping on an odd count).
+  function datasetFor(d) {
+    var sets = d.sets || [];
+    if (!sets.length) return null;
+    var pairs = Math.ceil(sets.length / 2);
+    var p = Math.floor((Date.now() + clockSkew) / 1000 / (d.period_s || 30)) % pairs;
+    if (d.side !== "b") return sets[2 * p];
+    if (2 * p + 1 < sets.length) return sets[2 * p + 1];
+    return sets.length > 1 ? sets[0] : sets[2 * p];
+  }
+  var datasetShown = null;
+
+  function faceDataset(d) {
+    var ds = d && !d.empty ? datasetFor(d) : null;
+    datasetShown = ds ? ds.key : null;
+    if (!ds) return notOnYet("DATASETS",
+      "Home's datasets appear here once an adult has reviewed one and turned it on.");
+    var face = h("div", "face ds");
+    dsHead(face, ds);
+    var table = h("div", "ds-table");
+    table.style.gridTemplateColumns = "repeat(" + ds.headers.length + ", auto)";
+    ds.headers.forEach(function (t) { table.appendChild(h("span", "ds-th", t.toUpperCase())); });
+    ds.rows.forEach(function (r) {
+      r.cells.forEach(function (c) { table.appendChild(h("span", "ds-td" + (r.ours ? " ours" : ""), c)); });
+    });
+    face.appendChild(table);
+    return face;
+  }
+
+  // The generic dataset turns by the clock: re-render when its page changes.
+  setInterval(function () {
+    if (!state || state.on === false) return;
+    var d = state.face === "dataset" ? state.dataset
+          : (state.rotation && state.rotation.face === "dataset" ? state.rotation.dataset : null);
+    if (!d) return;
+    var ds = datasetFor(d);
+    if ((ds ? ds.key : null) !== datasetShown) render(state);
+  }, 1000);
+
+  // ── The event's schedule (schedule_overlay.py) ────────────────────────
+  // B's half of "Next match": every match, ours on a tile with our number
+  // bold, our next tagged NEXT, the one on the field ON FIELD, played ones
+  // dimmed, results and our record once TBA's arrive. Zero red: red and blue
+  // are column names, not colours.
+  function faceSchedule(data) {
+    if (data.empty || !data.rows || !data.rows.length) {
+      var box = h("div", "face stack");
+      box.appendChild(h("div", "eyebrow", "EVENT SCHEDULE"));
+      box.appendChild(h("div", "headline", "No schedule yet"));
+      box.appendChild(h("div", "subline", "The event's matches appear here once its schedule is out."));
+      return box;
+    }
+    var face = h("div", "face sched");
+    if (data.record) {
+      var rec = h("div", "sched-record");
+      rec.appendChild(h("span", "sched-record-label", "OUR RECORD"));
+      rec.appendChild(h("span", "sched-record-figure", data.record.join("–")));
+      face.appendChild(rec);
+    }
+    var head = h("div", "sched-row sched-head");
+    ["MATCH", "TIME", "RED", "BLUE", "RESULT"].forEach(function (t) {
+      head.appendChild(h("span", null, t));
+    });
+    face.appendChild(head);
+    data.rows.forEach(function (r) {
+      var dim = r.played && !r.current;
+      var row = h("div", "sched-row" + (r.ours ? " ours" : "") + (dim ? " played" : ""));
+      var label = h("span", "sched-label", r.short);
+      var tag = r.next ? "NEXT" : (r.current ? "ON FIELD" : "");
+      if (tag) label.appendChild(h("i", "sched-next", tag));
+      row.appendChild(label);
+      var at = r.at_ms ? new Date(r.at_ms) : null;
+      row.appendChild(h("span", "sched-mono",
+        at ? String(at.getHours()).padStart(2, "0") + ":" + String(at.getMinutes()).padStart(2, "0") : "—"));
+      ["red", "blue"].forEach(function (side) {
+        var cell = h("span", "sched-mono sched-teams");
+        r[side].forEach(function (t) { cell.appendChild(h("b", t === data.team ? "us" : null, t)); });
+        row.appendChild(cell);
+      });
+      var res = r.result;
+      row.appendChild(h("span", "sched-mono" + (r.outcome ? " sched-outcome" : ""),
+        res ? (r.outcome ? r.outcome + "  " : "") + res.red + "–" + res.blue : ""));
+      face.appendChild(row);
+    });
+    return face;
+  }
+
   function sparkline(shape, w, hgt) {
     if (!shape || shape.length < 2) return null;
     var lo = Math.min.apply(null, shape), hi = Math.max.apply(null, shape);
@@ -343,8 +630,9 @@
       return;
     }
     if (s.face === "rotation" && s.rotation) {
-      if (s.rotation.board) {
-        node = faceBoard(s.board || { which: s.rotation.board, empty: true });
+      if (s.rotation.face) {
+        // A stop that shows a whole face (app/program.py), with its data.
+        node = faceByName(s.rotation.face, s.rotation[s.rotation.face] || { empty: true });
       } else {
         var slide = s.rotation.slide || {};
         node = slide.kind === "figure" ? faceFigure(slide)
@@ -372,6 +660,16 @@
     } else if (s.face === "next_match") {
       node = faceNextMatch(s.next_match || { empty: true });
       el.ledgerLeft.textContent = "NEXT MATCH";
+    } else if (s.face === "schedule") {
+      node = faceSchedule(s.schedule || { empty: true, rows: [] });
+      el.ledgerLeft.textContent = "OUR SCHEDULE";
+    } else if (s.face === "quality" || s.face === "bk_seasons" || s.face === "dataset") {
+      node = faceByName(s.face, s[s.face] || { empty: true });
+      el.ledgerLeft.textContent = s.face === "quality" ? "QUALITY AWARD LEADERS"
+        : s.face === "bk_seasons" ? "SEASON BY SEASON" : "DATASETS";
+    } else if (s.face === "facts") {
+      node = faceFacts(s.facts || { empty: true, ours: [], league: [] });
+      el.ledgerLeft.textContent = "DID YOU KNOW";
     } else {
       node = faceUnknown();
       el.ledgerLeft.textContent = "";

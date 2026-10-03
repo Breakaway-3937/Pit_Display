@@ -89,6 +89,7 @@ def _slide(slide) -> dict[str, Any]:
         "unit": slide.unit,
         "items": list(slide.items),
         "from_log": bool(slide.is_from_log),
+        "credit": slide.credit,
     }
 
 
@@ -100,19 +101,48 @@ def _rotation_face(screen_id: str) -> dict[str, Any]:
     index = int(config.get(screen_id, "slide_index", 0) or 0) % count
     entry = entries[index]
 
-    # A board in the rotation is a Slide carrying the board's label; the page
-    # draws the board face for it rather than a slide.
-    board_label = cls.BOARD_LABELS.get(cls.BOARD_CONTENT)
-    is_board = board_label is not None and entry is board_label
-
-    face: dict[str, Any] = {
-        "index": index,
-        "count": count,
-        "board": cls.BOARD_CONTENT if is_board else "",
-    }
-    if not is_board:
+    # A stop that shows a whole face (app/program.py) carries the face's own
+    # data under its usual key, and the page draws that face for it.
+    face: dict[str, Any] = {"index": index, "count": count, "face": entry.face}
+    if entry.face:
+        face[entry.face] = (dataset_state(screen_id) if entry.face == "dataset"
+                            else _face_data(entry.face))
+    else:
         face["slide"] = _slide(entry)
     return face
+
+
+def _face_data(face: str) -> dict[str, Any]:
+    """One face's payload, the same one its pinned version sends."""
+    if face in ("diagnostics", "robot_info"):
+        return board_state(face)
+    if face == "analysis":
+        return analysis_board_state()
+    if face == "next_match":
+        return next_match_state()
+    if face == "schedule":
+        return schedule_state()
+    if face == "facts":
+        return facts_state()     # the program's fact stops are slides, not this face
+    if face == "quality":
+        return quality_state()
+    if face == "bk_seasons":
+        return seasons_state()
+    return {}
+
+
+# Whose data each face shows, when it isn't ours: the ledger credits it, a
+# condition of both APIs' use (app/attribution.py).
+def _credit(face: str) -> str:
+    from app.attribution import NEXUS_TEXT, TBA_TEXT
+    return {"next_match": NEXUS_TEXT, "schedule": NEXUS_TEXT, "facts": TBA_TEXT,
+            "quality": TBA_TEXT, "bk_seasons": TBA_TEXT, "dataset": TBA_TEXT
+            }.get(face, "").upper()
+
+
+def _schedule_credit(data: dict) -> str:
+    from app.attribution import NEXUS_TEXT, TBA_TEXT
+    return (NEXUS_TEXT + ("  ·  results " + TBA_TEXT if data.get("has_results") else "")).upper()
 
 
 def _dwell() -> dict[str, Any]:
@@ -188,7 +218,8 @@ def face_for(screen_id: str) -> str:
         return "judges"
     content = str(config.get(screen_id, "content", "rotation") or "rotation")
     return content if content in (
-        "rotation", "next_match", "checklist", "diagnostics", "robot_info", "analysis"
+        "rotation", "next_match", "checklist", "diagnostics", "robot_info", "analysis",
+        "facts", "schedule", "quality", "bk_seasons", "dataset"
     ) else "rotation"
 
 
@@ -233,7 +264,10 @@ def screen_state(screen_id: str, on: bool = True) -> dict[str, Any]:
 
     try:
         if face == "rotation":
-            state["rotation"] = _rotation_face(screen_id)
+            state["rotation"] = rot = _rotation_face(screen_id)
+            credit = _credit(rot.get("face", "")) or (rot.get("slide") or {}).get("credit", "")
+            if credit:
+                state["ledger_right"] = credit.upper()
         elif face == "checklist":
             state["checklist"] = _checklist_face(screen_id)
         elif face == "lunch":
@@ -242,6 +276,21 @@ def screen_state(screen_id: str, on: bool = True) -> dict[str, Any]:
             state["judges"] = _judges_face()
         elif face in ("diagnostics", "robot_info"):
             state["board"] = board_state(face)
+        elif face == "schedule":
+            state["schedule"] = sched = schedule_state()
+            state["ledger_right"] = _schedule_credit(sched)
+        elif face in ("quality", "bk_seasons", "dataset"):
+            # Home's datasets (app/datasets.py): TBA data, credited.
+            state[face] = (quality_state() if face == "quality" else
+                           seasons_state() if face == "bk_seasons" else
+                           dataset_state(screen_id))
+            state["ledger_right"] = _credit(face)
+        elif face == "facts":
+            state["facts"] = facts_state(screen_id)
+            # Home's facts are TBA data: the credit is a condition of its use
+            # (app/attribution.py), in the ledger as on the native face.
+            from app.attribution import TBA_TEXT
+            state["ledger_right"] = TBA_TEXT.upper()
         elif face == "analysis":
             state["board"] = analysis_board_state()
         elif face == "next_match":
@@ -290,6 +339,94 @@ def board_state(which: str) -> dict[str, Any]:
                     "status": m.status} for m in board.motors],
         "faults": [{"label": f.label, "value": f.value, "detail": f.detail,
                     "status": f.status} for f in board.faults],
+    }
+
+
+def schedule_state() -> dict[str, Any]:
+    """The event's schedule, ours marked, results and our record: the rows the
+    native face draws (`app/event_schedule.py`), times as Unix ms."""
+    from app import event_schedule
+    d = event_schedule.build(str(config.active_team.number))
+    rows = d["rows"]
+    start = event_schedule.window_start(rows)
+    return {"empty": not rows, "rows": rows[start:start + 14], "team": str(config.active_team.number),
+            "record": list(d["record"]) if d["record"] else None,
+            "has_results": d["has_results"]}
+
+
+def quality_state() -> dict[str, Any]:
+    """Home's `quality` dataset, as the native leaderboard draws it: rank (T-n
+    for ties), team, count, ours flagged (home's highlight)."""
+    from collections import Counter
+    from app import datasets
+    d = datasets.get("quality")
+    if d is None or not d.rows:
+        return {"empty": True}
+    ranks = [d.value(r, "quality_rank") for r in d.rows]
+    shared = Counter(ranks)
+    rows = []
+    for i, r in enumerate(d.rows):
+        team = datasets.team_number(d.value(r, "team_key"))
+        rank = ranks[i]
+        rows.append({"rank": "" if rank is None else (f"T-{rank}" if shared[rank] > 1 else str(rank)),
+                     "team": team, "nickname": datasets.nickname(team),
+                     "count": d.value(r, "top_quality"), "ours": d.is_highlight(i)})
+    top = max([x["count"] for x in rows if isinstance(x["count"], (int, float))] or [1])
+    return {"empty": False, "title": d.title, "description": d.description,
+            "shown_of": d.shown_of, "top": top, "rows": rows}
+
+
+def seasons_state() -> dict[str, Any]:
+    """Home's `bk_seasons`, oldest first, as the native chart reads it. A
+    season with no record has null W/L/T: the page draws a gap."""
+    from app import datasets
+    from app.widgets.seasons_overlay import seasons
+    d = datasets.get("bk_seasons")
+    ss = seasons(d) if d is not None else []
+    return {"empty": not ss, "title": d.title if d else "", "seasons": ss}
+
+
+def dataset_state(screen_id: str) -> dict[str, Any]:
+    """Every cleared generic dataset, as display text, ours flagged; the page
+    picks this screen's one by the server-synced clock, exactly as the native
+    face does (`dataset_overlay.side_dataset`: pairs turning every
+    `PERIOD_S`, B wrapping round on an odd count), so A, B and both
+    renderers agree without another push."""
+    from app import datasets
+    from app.widgets.dataset_overlay import PERIOD_S
+    sets = []
+    for d in datasets.generic():
+        if not d.columns:
+            continue
+        cols = datasets.visible_columns(d)
+        sets.append({"key": d.key, "title": d.title, "description": d.description,
+                     "shown_of": d.shown_of,
+                     "headers": [datasets.header(d.columns[i]) for i in cols],
+                     "rows": [{"cells": [datasets.cell(r[i] if i < len(r) else None) for i in cols],
+                               "ours": d.is_highlight(k)} for k, r in enumerate(d.rows)]})
+    return {"empty": not sets, "period_s": PERIOD_S,
+            "side": "b" if screen_id.endswith("_b") else "a", "sets": sets}
+
+
+def facts_state(screen_id: str = "") -> dict[str, Any]:
+    """Home's fun facts as the native face reads them: Screen A Breakaway's,
+    Screen B the others (a matched set, app/overhead.py). The page pages a
+    column that doesn't fit, as the native face does."""
+    from app import tba_facts
+    facts = tba_facts.facts()
+    ours = [f.text for f in facts if f.category == "3937"]
+    league = [f.text for f in facts if f.category != "3937"]
+    if screen_id.endswith("_a"):
+        league = []
+    elif screen_id.endswith("_b"):
+        ours = []
+    return {
+        "empty": not (ours or league),
+        "ours": ours,
+        "league": league,
+        "league_title": tba_facts.title(next(
+            (f.category for f in facts if f.category != "3937"), "")).upper(),
+        "page_s": 12,
     }
 
 

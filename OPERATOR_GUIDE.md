@@ -276,6 +276,18 @@ shared with the team; **Team music** turns that off for one machine.
 admin) hides it on every machine. The file stays until the deletion is
 approved at home.
 
+**The two overhead screens are one set.** Each screen's settings have a
+"Both screens show" box: pick Next match, and one screen shows the queue while
+the other shows the event's schedule with our matches marked (and our record
+once results arrive); pick Robot diagnostics, and one shows diagnostics, the
+other robot info. On Checklists, choose a list for each screen. Power, theme
+and which monitor stay separate for each screen.
+
+**"Did you know?"** is one of the things an overhead screen can show (pick it
+in that screen's content list): Breakaway's award history and records from
+across the league, sent from home. It turns to the next facts every 12 seconds
+when there are more than fit.
+
 **Every morning home checks each machine** against the master copy:
 Telemetry → Team sync says "In sync with home" or lists what's missing.
 

@@ -110,6 +110,7 @@ side effect. `main.py` does this at the top.
 | 13 | `_v13_tba` | `tba_event`, `tba_match`: TheBlueAlliance rows home pushes; pulled only. See [Analysis](#analysis) |
 | 14 | `_v14_session_origin` | `log_session.origin`, `origin_name`: the machine a session was imported on. Local cache of a hub fact; doesn't sync |
 | 15 | `_v15_tba_feeds` | `tba_team`, `tba_rival`, `tba_fact`: home's award feeds; pulled only |
+| 17 | `_v17_home_dataset` | `home_dataset`: home's standard datasets (R10/R11), pulled only; shown once cleared (`datasets` team setting) |
 | 16 | `_v16_relay` | R2 as a relay (R8): `sync_blob_request`, `sync_verdict`; `tracks.sha`, `sha_size`, `sha_mtime_ns`, `team_deleted` |
 
 **Never edit a migration that has shipped.** Add a new one. A migration must be
@@ -488,6 +489,16 @@ start_date, end_date)`, `tba_match(uid = match key, event_key, comp_level,
 match_key = the short 'qm14' a crew types, actual_ms = Unix ms or NULL)`.
 `app/ai/tools.py` `match_context()` reads them: the log's `match_key` first,
 else the played match within 15 minutes of the log's start.
+
+#### `home_dataset`
+Home's standard datasets (home/REQUESTS.md R10/R11), pulled only: `uid` =
+dataset key, `title`, `category`, `sort`, `data` the hub row whole
+(`columns`, `rows` in display order, `highlight`, `total_rows`,
+`truncated`). **Today the only TBA data home sends.** Read through
+`app/datasets.py`; nothing shows until the team setting `datasets`
+(`app/dataset_settings.py`) clears it. `quality` and `bk_seasons` have
+screens of their own; `fun_facts` feeds "Did you know?"; any other dataset
+uses the generic renderer.
 
 #### `tba_team`, `tba_rival`, `tba_fact`
 Home's award feeds (home/REQUESTS.md R5), pulled only like `tba_event`, `data`

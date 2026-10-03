@@ -119,7 +119,10 @@ class SlidePanel(Chassis):
         index %= count
         if index == self._index:
             return
-        self._outgoing = self._slides[self._index]
+        prev = self._slides[self._index]
+        # A face stop's placeholder was never on screen (the face's own page
+        # was): nothing to fade out.
+        self._outgoing = None if prev.face else prev
         self._index = index
         self._anim.stop()
         self._anim.start()
@@ -139,6 +142,10 @@ class SlidePanel(Chassis):
     @property
     def current_index(self) -> int:
         return self._index
+
+    @property
+    def current_slide(self) -> Slide | None:
+        return self._slides[self._index] if self._slides else None
 
     def apply_team(self, team):
         """Re-brand to the newly active team. The header reads config directly."""
@@ -204,7 +211,10 @@ class SlidePanel(Chassis):
         c = self.content_rect()
         rect = self.footer_rect()
         position = f"{self._index + 1:02d} / {len(self._slides):02d}"
-        label = f"ROTATION {self._screen_letter}"
+        current = self._slides[self._index] if self._slides else None
+        # Someone else's words carry their credit where our label would be.
+        label = (current.credit.upper() if current is not None and current.credit
+                 else f"ROTATION {self._screen_letter}")
 
         fm = QFontMetricsF(self.mono(20, 500, 0.12))
         gap = self.s(26)
@@ -327,9 +337,18 @@ class SlidePanel(Chassis):
         y += trace_w * 62 / 300 - self.s(12)
 
         y += self.s(12)
-        y = self.draw_wrapped(p, x, y, min(self.s(1300), rect.width()),
-                              slide.title, self.display(140, 700, -0.018),
-                              self.ink, line_height=1.0)
+        # 140px is the headline's maximum, not its size: a fact from home is a
+        # whole sentence, so step down until it and the body fit the stage
+        # (72px floor, far over the slide minimum).
+        width = min(self.s(1300), rect.width())
+        room = rect.bottom() - y - (self.s(34 + 34 * 1.5 * 3) if slide.body else 0)
+        px = 140
+        while px > 72 and self.draw_wrapped(
+                p, x, y, width, slide.title, self.display(px, 700, -0.018),
+                self.ink, line_height=1.0, measure_only=True) > y + room:
+            px -= 8
+        y = self.draw_wrapped(p, x, y, width, slide.title,
+                              self.display(px, 700, -0.018), self.ink, line_height=1.0)
 
         if slide.body:
             y += self.s(34)

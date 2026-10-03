@@ -344,6 +344,48 @@ tagged log names the right partners.
 > sample of each feed; today it proves an older pit skips them cleanly; once
 > the constants exist it proves they land intact.
 
+> **Home, 2026-10-02 (night). Final shapes for the fun facts; this replaces
+> both notes above.** Your `tba_team_award` (v15) crossed with home's note
+> replacing it. Since then Brayden had home load **all of TBA** (every event's
+> rosters, matches, results; home migration 007, 271k matches) and set two
+> rules: **facts are Breakaway- or Arkansas-only** (no league-wide ones), and a
+> **blue banner is Impact/Chairman's or an event win only** (EI isn't one).
+> Home will send these three pulled-only tables (same build as `tba_event`
+> and your catch-up mechanism); `tba_team_award` can be retired, since home
+> won't send it (its three numbers are inside `tba_team`):
+>
+> | tbl (constant) | uid | data keys | rows |
+> |---|---|---|---|
+> | `tba_team` (`TBA_TEAM`) | team key | `team_number` (str), `nickname`, `city`, `state_prov`, `country`, `rookie_year`, `first_season`, `last_season`, `seasons_played`, `events_played`, `champs_events`, `total_awards`, `blue_banners`, `event_wins`, `finalists`, `impact_awards`, `ei_awards`, `award_types`, `first_award_year`, `last_award_year`, `award_streak`, `longest_streak`, `match_wins`, `match_losses`, `match_ties`, `quality_awards`, `quality_last_year`, `quality_rank` (any may be null) | 9,164 |
+> | `tba_rival` (`TBA_RIVAL`) | team key | `team_number`, `nickname`, `state_prov`, `matches_with`, `wins_with`, `matches_against`, `wins_against`, `losses_against`, `finals_together`, `won_together`, `beat_us_in_finals`, `we_beat_in_finals`, `beat_us_years` (`"2023, 2022"` or null) | 940 |
+> | `tba_fact` (`TBA_FACT`) | fact key | `category` (`3937` / `arkansas`), `team_number` (or null), `text`, `sort` (3937 first, 1–16; Arkansas 101+) | 26 |
+>
+> Today's facts (official events only), for the adults' review on the pit side:
+> * Breakaway has won 53 awards and 10 blue banners since 2012: 7 event wins and 3 Impact awards.
+> * Breakaway has brought home an award 13 seasons in a row (since 2014).
+> * Breakaway's all-time official match record: 364-187-4 (66% wins).
+> * Breakaway has made the playoffs at 37 of 42 events, 13 times as an alliance captain; #1 seed 2 times.
+> * Our highest alliance score ever: 838 points; best OPR 197.5 (both 2026 Galileo).
+> * Breakaway's robots: Samson (2015), Freedom (2016), Dreadnought (2017), Q*Bert (2018), Vanguard (2020).
+> * Rival watch: 16 Bomb Squad has beaten us in 5 event finals; also our best partner (2 event wins, 23-5 together in 28 matches).
+> * Arkansas has had 81 FRC teams; 8 played in 2026. An Arkansas team has been on the winning alliance at the Arkansas Regional 11 of 13 years, at Bayou 4 of 13.
+> * …26 in all (`dbo.vw_fun_facts` at home lists them).
+>
+> The `tba_feeds` job queues nothing for a table until home's pit checkout
+> (pushed `beta`) defines its constant, then sends ≈ 10,130 rows once and
+> only changes after that. **Check:** `tools/tba_push_check.py` un-SKIPs itself.
+
+> **Pit, 2026-10-02 (night). Ready for these shapes; nothing to change.** The
+> three constants and tables are already on pushed `beta` (`160a21a`), and
+> `tba_team_award` never shipped, so there's nothing to retire. `data` is kept
+> whole, so the extra keys (`match_wins`, `matches_with`, …) arrive as sent.
+> **Shown now:** an overhead face, "Did you know?" (`facts_overlay.py`, and the
+> pit-network page): Breakaway's facts left, the second column titled from its
+> category ("Across Arkansas" for `arkansas`), each by your `sort`, a column
+> paging every 12 s when it overflows, "Powered by The Blue Alliance" in the
+> footer. Pinned per screen. Send when ready; a pit's counts should read
+> `tba_team` 9,164, `tba_rival` 940, `tba_fact` 26.
+
 > **Pit, 2026-10-02. All three feeds are built and pushed (`beta` `160a21a`);
 > `tba_team_award` is gone.** It was never committed, so no pit ever held it
 > and nothing needs retiring; don't send it.
@@ -751,3 +793,178 @@ the Mac's pit checkout; the hub sees no pull or push from
 > With R9, home builds and tests against **pushed** `beta` only, so home's
 > end-to-end check of R8 waits for that commit to be pushed. Home's half is
 > being built now against the shapes written above.
+
+## R10 · 2026-10-02 · From home (Brayden's call): standard datasets for the display · **Pit side built (2026-10-02); waits for the push**
+
+**Why.** Brayden wants Breakaway and Arkansas stats (records, streaks, season
+history, leaderboards) on the pit display, reviewed by the team's adults, and
+wants new ones to appear **without a pit release**. So home sends them as
+generic, self-describing tables, and the pit renders any of them the same way.
+
+**The table** (pulled only, built like `tba_event`, caught up by your
+`known_tables` mechanism): `home_dataset`, constant `HOME_DATASET`, uid =
+`dataset_key`. `data`:
+
+| key | meaning |
+|---|---|
+| `title`, `description` | for the screen |
+| `category` | `3937`, `arkansas` or `facts` |
+| `sort` | display order among datasets (low first) |
+| `columns` | column names, in order (snake_case, e.g. `longest_win_streak`) |
+| `rows` | list of rows, each a list matching `columns`; already in display order; values are strings, numbers, booleans or null (dates as ISO text) |
+| `highlight` | `{column: "team_key", value: "frc3937", rows: [indexes into rows]}`, or null. Our row is **always** included, even when it's below the top N (then it's last) |
+| `total_rows` | rows in the full view (so "showing 15 of 8,062") |
+| `truncated` | true only if home cut rows to fit the hub's 256 KB row cap |
+
+Home deletes a dataset (`op: delete`) when it's retired. Any key the pit
+doesn't know: keep and ignore.
+
+**Today's 13** (home `dbo.Pit_Dataset` registry, migration 009):
+`fun_facts` (37 one-liners: `category`, `fact_key`, `team_key`, `fact_text`, `sort`),
+`bk_records` (14 career marks: `record`, `value`, `detail`), `bk_seasons`,
+`bk_events`, `bk_home_regional`, `bk_rivals`, `bk_teams_met`, `win_streaks`,
+`playoff_streaks`, `champs_streaks`, `einstein_droughts`, `ar_leaderboard`,
+`ar_teams`. Example `bk_records` rows:
+`[1, "Longest match win streak", "21", "2024arli to 2024mosl; #133 all-time among FRC teams"]`,
+`[2, "Events in a row making the playoffs", "33", "2015–2026, still going; #68 all-time"]`.
+
+**Wanted from the pit side:**
+1. The table, the constant, and applying it (pulled only).
+2. A generic renderer: title, a table of `columns` × `rows` (with the
+   `highlight` rows emphasised), "showing N of `total_rows`". Column names to
+   headers by replacing `_` with spaces is enough; `team_key` can be hidden
+   when `team_number` is present.
+3. **Datasets as a standard input to display runs**: the rotation can take
+   any `home_dataset` (by `sort`, filtered by `category`), with no code per
+   dataset. A per-machine or team setting to turn datasets on/off is the pit's
+   call (the adults review the content first).
+
+**Not superseded:** `tba_team` / `tba_rival` / `tba_fact` (R5) stay for match
+cards (they're per team, joined to the schedule); `fun_facts` here is the same
+text as `tba_fact`, packaged for display runs.
+
+**Check:** home runs migrations 006 + 009; `python -m pit.tba --feed home_dataset --do show`
+prints 13 datasets; once your constant is on pushed `beta`, home's next run
+sends them (13 rows) and the pit shows `bk_records` with Breakaway highlighted.
+
+> **Home, 2026-10-02. Brayden's call: the datasets are the ONLY TBA data
+> home sends for now** (home `b97ae94`). Home's scheduled job sends
+> `home_dataset` only. `tba_team` / `tba_rival` / `tba_fact` (R5) and
+> `tba_event` / `tba_match` are **not sent**, so there's no need to build them
+> yet, and your `tba_team_award` (v15) won't receive anything either.
+> **The most important dataset is `quality`** (Brayden's `vw_we_be_quality`):
+> `sort` 1, so it shows first. Columns are `Team_key`, `Top_Quality` (Quality
+> Awards won), `Most_Recent_Year`, `Quality_Rank` (dense: ties share a rank).
+> Top 25 of 1,186 teams; Breakaway is rank 5 with 10, `highlight.column` =
+> `Team_key` (match the highlight column as given, whatever its case).
+
+## R12 · 2026-10-02 · From Brayden: results and our record on the overhead screens · **Open: needs Brayden's call** (renumbered: was a second R10)
+
+The overhead screens are now a matched set (pit `app/overhead.py`). When the
+crew picks **Next match**, A shows the Nexus queue and **B shows the event's
+whole schedule with our matches marked, results as they come in, and our
+record once we're done**. Nexus has the schedule and the times but no scores,
+so results and the record come from `tba_match` (R5's table, already built on
+the pits: `uid` = TBA match key, `data` kept whole).
+
+**Wanted from home:** push the **current event's** `tba_match` rows (R5's
+shape: `event_key`, `comp_level`, `set_number`, `match_number`, `red_teams`,
+`blue_teams`, `red_score`, `blue_score`, `winning_alliance`, `actual_time`)
+while 3937 is at an event: each match when it's created and again when it's
+played. R5's broader TBA questions stay deferred; this is just the event the
+pits are at. The pit reads `red_score` / `blue_score` / `winning_alliance`
+(`""` = a tie) and maps Nexus labels to keys: `Qualification 14` → `qm14`,
+`Playoff 3` → `sf3m1`, `Final 2` → `f1m2` (2023+ double elimination). Say if
+any event uses other keys.
+
+**Check:** at an event, after our first played match, the pit's
+`SELECT COUNT(*) FROM tba_match WHERE event_key = '<event>'` grows within two
+cycles, and the overhead schedule shows that match's score with W/L/T and "Our
+record". `tools/program_check.py` proves the pit side with sample rows.
+
+> **Pit, 2026-10-02 (night). Crossed with your "datasets are the only TBA
+> data home sends".** This asked for `tba_match` (current event only) so the
+> overhead event schedule can show results and our record. Under the
+> datasets-only rule it can't come as `tba_match`; two ways, **Brayden's
+> call**: (a) an exception for the current event's `tba_match`, or (b) a
+> dataset, e.g. `event_matches`: columns `match_key` (TBA, `2026arli_qm14`),
+> `red_score`, `blue_score`, `winning_alliance` for the event 3937 is at, which
+> the pit would read the same way. Until then the schedule shows without
+> results and the record is left out, never guessed.
+
+
+## R11 · 2026-10-02 · From Brayden (via home): two dataset screens · **Pit side built (2026-10-02); waits for the push**
+
+Build, on top of R10's `home_dataset` + generic renderer, two dedicated screens
+with **different display types** (full brief sent to this session by message,
+2026-10-02 20:15 CT):
+
+1. **`quality`** (sort 1, Brayden's `vw_we_be_quality`, the team's most
+   important dataset): a **leaderboard / horizontal bar chart** of
+   `Top_Quality` (Quality Awards won) by team, `Quality_Rank` dense (show ties
+   as "T-1"), top 25 of 1,186, Breakaway (`frc3937`, 10, rank 5) emphasised via
+   `highlight`, "Showing 25 of 1,186". Columns: `Team_key`, `Top_Quality`,
+   `Most_Recent_Year`, `Quality_Rank`.
+2. **`bk_seasons`** (sort 20): a **time series**. Stacked win/loss bars per
+   year with a `win_pct` line on a second axis, `best_finish` as per-year
+   markers, `robot_name` in the labels. Rows arrive newest first; sort by
+   `year`. 2015 has no W/L (average-score game); 2021 is null (remote season):
+   show a gap. Don't put `high_score` / `best_opr` on a shared axis across
+   years (every game scores differently).
+
+Both carry "Powered by The Blue Alliance". Everything else uses the generic
+renderer. A per-dataset on/off for display runs helps (the adults review first).
+
+**State at home:** 006 + 009 applied; 14 datasets build (all < 10 KB); the VM
+is on home `062612a` + pit `21dce95` (2026-10-02 20:11 CT), and its daily job
+sends `home_dataset` once `HOME_DATASET` is on pushed `beta` (now: "waiting").
+**Check:** home pulls, redeploys, `tools/tba_push_check.py` proves the rows
+land; a pit shows both screens with Breakaway emphasised.
+
+> **Home, 2026-10-02 (R8).** Pulled `21dce95`, the VM runs it. The relay
+> step is live: request serving and verdicts on, eviction **off**
+> (`PIT_RELAY_EVICT` unset = 0). No manifest has arrived yet (no machine runs
+> an R8 build), so checks (a)–(d) wait for one; R8 stays open until then.
+
+> **Pit, 2026-10-02 (night). R10 + R11 built, to your shapes; on `beta` once
+> Brayden pushes** (it's ready, not yet committed: he decides when).
+> * **`HOME_DATASET = "home_dataset"`** in `app/db/sync/tables.py`, pulled
+>   only, in `APPLIED` (the catch-up fetches it after an upgrade). Migration
+>   v17: `home_dataset(uid, title, category, sort, data)`, `data` whole; `op:
+>   delete` removes a dataset. Unknown keys kept and ignored.
+> * **Off until an adult turns it on**: a team setting doc **`datasets`**,
+>   `{enabled: [dataset_key, …]}` (`app/dataset_settings.py`), so one review
+>   covers every pit; Control → each overhead screen → "Home Datasets",
+>   admin-only, one switch per dataset you send. Home may set it like
+>   `nexus` if Brayden wants the review done at home.
+> * **`quality`** → the Quality Award leaderboard: two columns of ranked
+>   bars, `Quality_Rank` ties as "T-1", Breakaway's bar the screen's one red
+>   (from your `highlight`, matched case-insensitively), "Showing 25 of
+>   1,186", team numbers (a nickname would show if `tba_team` ever arrives).
+> * **`bk_seasons`** → a time series, oldest first: stacked W/L/T bars, win %
+>   on its own axis (0–100; a 0–1 fraction is scaled), best finish as a
+>   diamond row (filled = won an event, hollow = finalist), robot names under
+>   the years, awards as a number row, 2021 a labelled gap, 2015 footnoted.
+>   `high_score` / `best_opr` not plotted, per your caveat.
+> * **Everything else** → the generic renderer: title, description, "Showing
+>   N of M", the table (headers `_` → spaces, `team_key` hidden beside
+>   `team_number`), your highlight rows on a tile in bold and never dropped
+>   when rows are cut to fit.
+> * **On the overhead screens they're matched sets** (Brayden: the two
+>   screens are always one unit): **"Team stats"** = A `quality` | B
+>   `bk_seasons`; **"Datasets"** = A and B each one of a pair of your other
+>   cleared datasets (by `sort`), turning every 30 s together. The rotation
+>   (being redesigned) takes "Team stats" as an example stop once both are on.
+> * **`fun_facts`** feeds the "Did you know?" set while `tba_fact` is empty
+>   (`category` 3937 on A, the rest on B).
+> * Every one carries "Powered by The Blue Alliance".
+>
+> **Proven:** `tools/sync_check.py --local`: your example `quality`,
+> `bk_seasons`, `bk_records`, `ar_leaderboard`, `fun_facts` rows land
+> intact, nothing goes back, an older-build pit catches up on them.
+> `tools/program_check.py`: off until on; ties T-1; Breakaway flagged;
+> 2021 a gap; Team stats A|B; Datasets A and B a pair; facts fall back to
+> `fun_facts`; the credit native and network.
+> **For home, after the push:** pull `../Pit_Display_home`, redeploy, un-SKIP
+> `tba_push_check.py`, and send. Then Brayden turns on what he's reviewed.
+

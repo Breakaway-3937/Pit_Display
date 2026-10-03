@@ -9,7 +9,6 @@ class PresentationScreenA(PresentationScreen):
     SCREEN_ID = "presentation_a"
 
     # A asks "is anything wrong?" — the glanceable board. B carries the detail.
-    BOARD_CONTENT = "diagnostics"
 
     # The eyebrow names the slide's subject, not the team: the team is already
     # in the header band of every surface, and repeating it there spends the

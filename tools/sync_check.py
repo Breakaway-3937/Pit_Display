@@ -172,6 +172,53 @@ HOME_FEEDS = [
 ]
 
 
+# Home's standard datasets (R10/R11), with home's own example values.
+_SEASONS = [  # year, robot, events, W, L, T, win_pct, best_finish, awards
+    (2026, None, 3, 26, 18, 0, 59, "finalist", 4), (2025, None, 4, 44, 20, 0, 69, "won an event", 5),
+    (2024, None, 3, 36, 15, 0, 71, "won an event", 5), (2023, None, 4, 47, 16, 0, 75, "won an event", 7),
+    (2022, None, 3, 34, 13, 0, 72, "finalist", 4), (2021, None, 1, None, None, None, None, "quals only", 2),
+    (2020, "Vanguard", 2, 10, 5, 0, 67, "finalist", 3), (2019, None, 3, 21, 16, 1, 55, "semifinals", 2),
+    (2018, "Q*Bert", 3, 27, 14, 0, 66, "finalist", 3), (2017, "Dreadnought", 3, 25, 17, 1, 58, "won an event", 2),
+    (2016, "Freedom", 3, 26, 15, 0, 63, "finalist", 5), (2015, "Samson", 2, 2, 0, 1, 67, "won an event", 2),
+    (2014, None, 3, 31, 14, 0, 69, "won an event", 6), (2013, None, 2, 15, 11, 1, 56, "quarterfinals", 0),
+    (2012, None, 2, 20, 13, 0, 61, "quarterfinals", 3)]
+HOME_DATASETS = [
+    {"tbl": "home_dataset", "uid": "quality", "op": "upsert", "base": 0, "data": {
+        "title": "Quality Award leaders", "description": "Most Quality Awards won, every FRC team",
+        "category": "3937", "sort": 1,
+        "columns": ["Team_key", "Top_Quality", "Most_Recent_Year", "Quality_Rank"],
+        "rows": [["frc254", 16, 2026, 1], ["frc67", 16, 2025, 1], ["frc148", 15, 2024, 2],
+                 ["frc2056", 13, 2025, 3], ["frc118", 11, 2026, 4], ["frc3937", 10, 2026, 5]],
+        "highlight": {"column": "Team_key", "value": "frc3937", "rows": [5]},
+        "total_rows": 1186, "truncated": False}},
+    {"tbl": "home_dataset", "uid": "bk_seasons", "op": "upsert", "base": 0, "data": {
+        "title": "Breakaway season by season", "category": "3937", "sort": 20,
+        "columns": ["year", "robot_name", "events", "wins", "losses", "ties", "win_pct",
+                    "best_finish", "awards"],
+        "rows": [list(r) for r in _SEASONS], "highlight": None,
+        "total_rows": 15, "truncated": False}},
+    {"tbl": "home_dataset", "uid": "bk_records", "op": "upsert", "base": 0, "data": {
+        "title": "Breakaway's records", "category": "3937", "sort": 10,
+        "columns": ["rank", "record", "value", "detail"],
+        "rows": [[1, "Longest match win streak", "21", "2024arli to 2024mosl; #133 all-time"],
+                 [2, "Events in a row making the playoffs", "33", "2015–2026, still going; #68 all-time"]],
+        "highlight": None, "total_rows": 14, "truncated": False}},
+    {"tbl": "home_dataset", "uid": "ar_leaderboard", "op": "upsert", "base": 0, "data": {
+        "title": "Arkansas all-time awards", "category": "arkansas", "sort": 30,
+        "columns": ["rank", "team_key", "team_number", "awards"],
+        "rows": [[1, "frc16", "16", 117], [2, "frc3937", "3937", 53]],
+        "highlight": {"column": "team_key", "value": "frc3937", "rows": [1]},
+        "total_rows": 81, "truncated": False}},
+    {"tbl": "home_dataset", "uid": "fun_facts", "op": "upsert", "base": 0, "data": {
+        "title": "Fun facts", "category": "facts", "sort": 5,
+        "columns": ["category", "fact_key", "team_key", "fact_text", "sort"],
+        "rows": [["3937", "our_streak", "frc3937",
+                  "Breakaway has brought home an award 13 seasons in a row (since 2014).", 1],
+                 ["arkansas", "ar_teams", None, "Arkansas has had 81 FRC teams; 8 played in 2026.", 101]],
+        "highlight": None, "total_rows": 37, "truncated": False}},
+]
+
+
 def relay_section(a, b, url: str, home_token: str) -> None:
     """R8: R2 as a relay. The pit side of home's checks (a), (b), (c), (e):
     the night window holds bytes (not rows), a pit asks home for bytes the
@@ -581,8 +628,13 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
           and a.one("SELECT match_key FROM tba_match WHERE uid = '2026check_qm14'") == "qm14")
     check("…and a pit never sends them back (pulled only)",
           a.one("SELECT COUNT(*) FROM sync_outbox WHERE tbl LIKE 'tba_%'") == 0)
-    home.push(HOME_FEEDS, force=True)
+    home.push(HOME_FEEDS + HOME_DATASETS, force=True)
     a.sync()
+    q = json.loads(a.one("SELECT data FROM home_dataset WHERE uid = 'quality'") or "{}")
+    check("home's datasets land (home_dataset, pulled only), rows and highlight intact",
+          a.one("SELECT COUNT(*) FROM home_dataset") == len(HOME_DATASETS)
+          and q.get("highlight", {}).get("rows") == [5] and q.get("total_rows") == 1186
+          and a.one("SELECT COUNT(*) FROM sync_outbox WHERE tbl = 'home_dataset'") == 0)
     us = json.loads(a.one("SELECT data FROM tba_team WHERE uid = 'frc3937'") or "{}")
     check("home's award feeds land: tba_team, tba_rival, tba_fact (pulled only)",
           a.one("SELECT nickname FROM tba_team WHERE uid = 'frc16'") == "Bomb Squad"
@@ -594,7 +646,7 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     # none. Its first cycle on this build must fetch them once.
     from app.db.sync import tables as sync_tables
     b.sync()
-    for t in ("tba_team", "tba_rival", "tba_fact"):
+    for t in ("tba_team", "tba_rival", "tba_fact", "home_dataset"):
         b.sql(f"DELETE FROM {t}")
     b.sql("UPDATE sync_meta SET v = ? WHERE k = 'known_tables'",
           (json.dumps(sorted(sync_tables.CATCH_UP_BASELINE)),))
@@ -603,6 +655,7 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
           b.one("SELECT COUNT(*) FROM tba_team") == 2
           and b.one("SELECT COUNT(*) FROM tba_rival") == 1
           and b.one("SELECT COUNT(*) FROM tba_fact") == 1
+          and b.one("SELECT COUNT(*) FROM home_dataset") == len(HOME_DATASETS)
           and "tba_fact" in json.loads(
               b.one("SELECT v FROM sync_meta WHERE k = 'known_tables'")),
           str(rb.errors))

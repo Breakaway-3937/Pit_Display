@@ -53,6 +53,8 @@ class _SyncService(QObject):
     progress = pyqtSignal(str)             # "Uploading qm14.wpilog…"
     applied = pyqtSignal(object)           # set[str] of what landed
     boards_changed = pyqtSignal()          # analysis boards from home
+    facts_changed = pyqtSignal()           # home's fun facts (tba_fact) moved
+    datasets_changed = pyqtSignal()        # home's datasets, or which are on
 
     def __init__(self, db_path):
         super().__init__()
@@ -272,6 +274,11 @@ class _SyncService(QObject):
             attempt(lambda: music.scan_folder(docs.root(docs.MUSIC)))
         if "analysis_board" in applied:
             self.boards_changed.emit()
+        if "tba_fact" in applied:
+            self.facts_changed.emit()
+        if applied & {"home_dataset", "setting:datasets"}:
+            self.datasets_changed.emit()
+            self.facts_changed.emit()          # fun_facts rides in a dataset now
         if applied & {"analysis_run", "analysis_feedback", "analysis_board"}:
             from app.ai.service import analysis
             attempt(analysis.runs_changed.emit)

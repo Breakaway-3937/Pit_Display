@@ -669,6 +669,15 @@ class Engine:
             with self._guarded(conn):
                 if op == "delete":
                     conn.execute(f"DELETE FROM {tbl} WHERE uid = ?", (uid,))
+                elif tbl == tables.HOME_DATASET:
+                    conn.execute(
+                        """INSERT INTO home_dataset (uid, title, category, sort, data)
+                           VALUES (?, ?, ?, ?, ?)
+                           ON CONFLICT (uid) DO UPDATE SET title = excluded.title,
+                             category = excluded.category, sort = excluded.sort,
+                             data = excluded.data, updated_at = datetime('now')""",
+                        (uid, data.get("title"), data.get("category"), data.get("sort"),
+                         json.dumps(data)))
                 elif tbl == tables.SYNC_VERDICT:
                     conn.execute(
                         """INSERT INTO sync_verdict (uid, data) VALUES (?, ?)

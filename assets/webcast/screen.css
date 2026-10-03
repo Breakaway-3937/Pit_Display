@@ -241,6 +241,119 @@ body[data-side="right"] .ledger { flex-direction: row-reverse; }
 .check-row.done .tick { background: #2E8B7F; border-color: #2E8B7F; }
 .check-row.done { color: var(--muted); }
 
+/* ── "Did you know?" (facts_overlay.py) ──────────────────────────────────
+   Two columns, 96 apart with a rule between; a column title in muted Chakra
+   caps; each fact a 36px Roboto sentence at 1.3, ruled above, 34 between.
+   Zero red. A column that overflows is clipped and paged by screen.js. */
+body[data-face="facts"] .stage { justify-content: flex-start; }
+.facts {
+  display: grid; grid-template-columns: 1fr calc(2 * var(--u)) 1fr;
+  column-gap: calc(47 * var(--u)); height: 100%; min-height: 0;
+}
+.facts.one { grid-template-columns: 1fr; }
+.facts-rule { background: var(--rule); }
+.facts-col { display: flex; flex-direction: column; min-height: 0; }
+.facts-title {
+  font-family: var(--display); font-weight: 600; letter-spacing: .16em;
+  font-size: calc(24 * var(--u)); color: var(--muted);
+  margin-bottom: calc(30 * var(--u));
+}
+.facts-list { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.fact {
+  font-family: var(--sans); font-weight: 400;
+  font-size: calc(36 * var(--u)); line-height: 1.3; color: var(--ink);
+  border-top: calc(2 * var(--u)) solid var(--rule);
+  padding: calc(17 * var(--u)) 0 calc(17 * var(--u));
+}
+
+/* ── The event's schedule (schedule_overlay.py) ─────────────────────────
+   Columns at 0 / 20 / 32 / 56 / 80 % of the stage; 72 a row. Our rows on the
+   plate's tile (radius 10) with our number bold; NEXT / ON FIELD as white
+   pills; played rows faint. Zero red: red and blue are column names. */
+body[data-face="schedule"] .stage { justify-content: flex-start; }
+.sched { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.sched-record { display: flex; align-items: baseline; gap: calc(26 * var(--u));
+  height: calc(62 * var(--u)); flex: none; }
+.sched-record-label { font-family: var(--display); font-weight: 600; letter-spacing: .16em;
+  font-size: calc(24 * var(--u)); color: var(--muted); }
+.sched-record-figure { font-family: var(--display); font-weight: 700;
+  font-size: calc(40 * var(--u)); color: var(--ink); }
+.sched-row {
+  display: grid; grid-template-columns: 20% 12% 24% 24% 20%;
+  align-items: center; height: calc(72 * var(--u)); flex: none;
+  border-top: calc(2 * var(--u)) solid var(--rule);
+  font-family: var(--sans); font-weight: 500; font-size: calc(28 * var(--u));
+  color: var(--body);
+}
+.sched-row.ours { border-top-color: transparent; background: var(--rule);
+  border-radius: calc(10 * var(--u)); margin: 0 calc(-12 * var(--u));
+  padding: 0 calc(12 * var(--u)); }
+.sched-head {
+  border-top: 0; height: calc(44 * var(--u)); align-items: start;
+  font-family: var(--display); font-weight: 600; letter-spacing: .16em;
+  font-size: calc(22 * var(--u)); color: var(--muted);
+}
+.sched-label {
+  font-family: var(--display); font-weight: 700; font-size: calc(32 * var(--u));
+  color: var(--ink); display: flex; align-items: center; gap: calc(16 * var(--u));
+}
+.sched-mono { font-family: var(--mono); font-size: calc(28 * var(--u)); }
+.sched-teams b { font-weight: 500; margin-right: calc(22 * var(--u)); }
+.sched-teams b.us, .sched-outcome { font-weight: 800; color: var(--ink); }
+.sched-next {
+  font-style: normal; font-family: var(--display); font-weight: 700;
+  font-size: calc(17 * var(--u)); letter-spacing: .14em;
+  background: var(--ink); color: var(--plate);
+  border-radius: calc(16 * var(--u)); padding: calc(6 * var(--u)) calc(13 * var(--u));
+}
+.sched-row.played, .sched-row.played .sched-label,
+.sched-row.played b.us, .sched-row.played .sched-outcome { color: var(--faint); }
+
+/* ── Home's datasets (quality_overlay / seasons_overlay / dataset_overlay)
+   Title 44 Chakra, description 24 muted, "Showing N of M" mono top right.
+   Quality: two columns of bars, Breakaway's the one red. Seasons: an SVG
+   in the native geometry. Generic: a table, ours on a tile, bold. */
+body[data-face="quality"] .stage, body[data-face="bk_seasons"] .stage,
+body[data-face="dataset"] .stage { justify-content: flex-start; }
+.ds { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.ds-top { display: flex; justify-content: space-between; align-items: baseline; }
+.ds-title { font-family: var(--display); font-weight: 700; font-size: calc(44 * var(--u)); color: var(--ink); }
+.ds-shown { font-family: var(--mono); font-size: calc(22 * var(--u)); letter-spacing: .08em; color: var(--muted); }
+.ds-legend { font-family: var(--sans); font-size: calc(20 * var(--u)); color: var(--body); }
+.ds-desc { font-family: var(--sans); font-size: calc(24 * var(--u)); color: var(--muted);
+  margin: calc(10 * var(--u)) 0 calc(20 * var(--u)); }
+.q-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: calc(96 * var(--u)); flex: 1 1 auto; }
+.q-col { display: flex; flex-direction: column; }
+.q-row { display: grid; grid-template-columns: calc(84 * var(--u)) calc(150 * var(--u)) 1fr;
+  align-items: center; height: calc(52 * var(--u)); }
+.q-rank { font-family: var(--mono); font-weight: 600; font-size: calc(24 * var(--u)); color: var(--muted); }
+.q-team { font-family: var(--display); font-weight: 700; font-size: calc(30 * var(--u)); color: var(--body); }
+.q-nick { font-style: normal; font-family: var(--sans); font-weight: 400; font-size: calc(20 * var(--u));
+  color: var(--muted); margin-left: calc(12 * var(--u)); }
+.q-track { display: flex; align-items: center; gap: calc(14 * var(--u)); padding-right: calc(64 * var(--u)); }
+.q-bar { display: block; height: calc(18 * var(--u)); border-radius: calc(9 * var(--u));
+  background: #59595B; min-width: calc(18 * var(--u)); }
+.q-count { font-family: var(--mono); font-weight: 700; font-size: calc(26 * var(--u)); color: var(--body); }
+.q-row.ours .q-rank, .q-row.ours .q-team, .q-row.ours .q-count { color: var(--ink); }
+.q-row.ours .q-bar { background: var(--red); }
+.s-chart { width: 100%; flex: 1 1 auto; min-height: 0; }
+.s-rule { stroke: var(--rule); stroke-width: 2; }
+.s-axis { font-family: var(--mono); font-size: 20px; fill: var(--faint); }
+.s-win { fill: var(--ink); } .s-loss { fill: #59595B; } .s-tie { fill: var(--faint); }
+.s-pct { stroke: var(--muted); stroke-width: 3; } .s-dot { fill: var(--muted); }
+.s-won { fill: var(--ink); } .s-fin { fill: none; stroke: var(--ink); stroke-width: 2.5; }
+.s-remote { font-family: var(--mono); font-size: 18px; letter-spacing: .1em; fill: var(--faint); }
+.s-year { font-family: var(--mono); font-weight: 600; font-size: 22px; fill: var(--body); }
+.s-robot { font-family: var(--sans); font-size: 17px; fill: var(--muted); }
+.s-awards { font-family: var(--display); font-weight: 700; font-size: 26px; fill: var(--ink); }
+.ds-table { display: grid; column-gap: calc(28 * var(--u)); align-content: start; overflow: hidden; }
+.ds-th { font-family: var(--display); font-weight: 600; letter-spacing: .14em;
+  font-size: calc(20 * var(--u)); color: var(--muted); padding-bottom: calc(12 * var(--u)); }
+.ds-td { font-family: var(--sans); font-size: calc(26 * var(--u)); color: var(--body);
+  border-top: calc(1 * var(--u)) solid var(--rule); padding: calc(10 * var(--u)) 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ds-td.ours { color: var(--ink); font-weight: 700; background: var(--rule); }
+
 /* ── Boards ───────────────────────────────────────────────────────────── */
 .board-status {
   font-family: var(--display); font-weight: 700;

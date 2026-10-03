@@ -51,6 +51,12 @@ class Slide:
     unit: str = ""
     # `roster` archetype: the cells of the grid.
     items: tuple[str, ...] = field(default_factory=tuple)
+    # A stop that shows a whole face instead of a slide (`app/program.py`):
+    # the content key of the page, e.g. "diagnostics", "schedule".
+    face: str = ""
+    # Who the words belong to, when it isn't us: the ledger shows it in place
+    # of "ROTATION A" (TBA facts: "Powered by The Blue Alliance").
+    credit: str = ""
 
     @classmethod
     def of(cls, value) -> "Slide":
