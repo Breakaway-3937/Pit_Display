@@ -133,12 +133,12 @@ def _qss(p: dict) -> str:
     }}
 
     /* ── Inputs ─────────────────────────────────────────────────────────── */
-    QLineEdit, QTextEdit {{
+    QLineEdit, QTextEdit, QPlainTextEdit {{
         background-color: {p["input_bg"]}; border: 1px solid {p["input_border"]};
         border-radius: {brand.R_BTN}px; padding: 7px 11px; color: {p["ink"]};
         selection-background-color: {brand.RED}; selection-color: {brand.WHITE};
     }}
-    QLineEdit:focus, QTextEdit:focus {{ border-color: {brand.RED}; }}
+    QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {{ border-color: {brand.RED}; }}
 
     /* In-cell editors reuse the QLineEdit rule above, but a table row is only
        ~30px tall — 7px of vertical padding plus a 10px radius leaves almost no

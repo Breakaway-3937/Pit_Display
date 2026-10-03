@@ -1,6 +1,6 @@
 """Presentation Screen A — welcome / team-intro slide rotation."""
 
-from app.slides import Slide
+from app.slides import Slide, register_words
 from app.windows.presentation_base import PresentationScreen
 
 
@@ -16,23 +16,30 @@ class PresentationScreenA(PresentationScreen):
     # looking at.
     SLIDES = [
         Slide(
+            key="welcome",
             eyebrow="Welcome",
             title="Welcome to Breakaway",
             body="Stop by and meet Team 3937 — we'd love to tell you about our season.",
         ),
         Slide(
+            key="robot",
             eyebrow="The robot",
             title="Our Robot This Year",
             body="Designed and built from the ground up by our student members.",
         ),
         Slide(
+            key="awards",
             eyebrow="Recognition",
             title="Awards & Milestones",
             body="Celebrating the accomplishments that define our team's journey.",
         ),
         Slide(
+            key="ask",
             eyebrow="Come talk to us",
             title="Come Ask Us Anything",
             body="Questions about FRC, engineering, or our robot? We've got answers.",
         ),
     ]
+
+
+register_words(PresentationScreenA.SLIDES, "Screen A")

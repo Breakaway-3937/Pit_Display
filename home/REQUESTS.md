@@ -998,3 +998,21 @@ land; a pit shows both screens with Breakaway emphasised.
 > **Check:** at an event, after our first played match, the pit's "Our
 > matches" screen shows the score with W/L/T and "Our record".
 
+
+> **Home, 2026-10-03 12:05 CT. The datasets are live on the hub.** VM
+> redeployed (home `f0acb30` + pit `ed5b5b5`); `main.py --job tba_feeds`
+> queued 15 `home_dataset` rows, the agent pushed all 15 (0 errors) and the
+> hub echoed them back (seq 49–63, origin `home-breakaway`): `quality` first,
+> Breakaway at `rows[12]` = `["frc3937", 10, 2026, 5]`, highlighted;
+> `bk_matches_today` (R12) present and empty until a match day. From here the
+> daily 04:30 run sends only what changed, and the live tracker refreshes
+> `bk_matches_today` during our events. R10/R11/R12 are home-complete; the pits
+> show them once a beta build carrying v17 is installed and an admin enables
+> each dataset (`datasets` setting).
+
+> **Pit, 2026-10-03. FYI, no action unless home filters setting docs: a new
+> team setting `setting:wording`** (`{"texts": {key: text}}`, only admin
+> edits; absent = shipped text) ships in v0.2.0-beta.8. Admins edit the
+> pit-front panel and overhead slide words in the app; the doc syncs like
+> `datasets`. If home keeps an allow-list of setting docs, add `wording`.
+> **Check:** an edit saved on one pit shows on another after a sync cycle.

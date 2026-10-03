@@ -47,6 +47,7 @@ from app.widgets.network_panel import NetworkPanel
 from app.widgets.robot_panel import RobotLogPanel
 from app.widgets.update_panel import UpdatePanel
 from app.widgets.nexus_panel import NexusPanel
+from app.widgets.wording_panel import WordingPanel
 from app.widgets.toggle_switch import ToggleSwitch
 from app.leds import leds
 from app.webcast import lan_address, webcast
@@ -56,7 +57,7 @@ from app.webcast import settings as webcast_settings
 # the pit owns, so they get their own sidebar group and their own panels.
 # Robot Logs is not its own entry any more: it is a section of Telemetry,
 # which is the home of every kind of telemetry the pit has — robot and link.
-SYSTEMS = ["leds", "music", "batteries", "network", "analysis", "nexus", "updates"]
+SYSTEMS = ["leds", "music", "batteries", "network", "analysis", "nexus", "wording", "updates"]
 
 # A window kept alive only for the pit network is laid out and painted but
 # never mapped to a display. Measured: a presentation screen renders its whole
@@ -65,7 +66,8 @@ SYSTEMS = ["leds", "music", "batteries", "network", "analysis", "nexus", "update
 _NO_SCREEN = Qt.WidgetAttribute.WA_DontShowOnScreen
 SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music", "batteries": "Batteries",
                  "network": "Telemetry", "robot": "Robot Logs", "analysis": "Analysis",
-                 "nexus": "Event Feed", "updates": "Software Updates"}
+                 "nexus": "Event Feed", "wording": "Screen Wording",
+                 "updates": "Software Updates"}
 
 # One muted line under each panel's title — where the thing physically is and
 # what it is doing, which is what an operator standing at the panel needs
@@ -729,6 +731,7 @@ class _StandardSlidePicker(QWidget):
         config.mode_changed.connect(lambda _m: self._refresh_enabled())
         config.team_changed.connect(self._on_team_changed)
         config.logs_changed.connect(self._rebuild)
+        config.wording_changed.connect(self._rebuild)
         # The program's stops change with its data (app/program.py).
         from app.rotation import rotation
         rotation.program_changed.connect(self._rebuild)
@@ -1332,6 +1335,8 @@ class SystemSettingsPanel(QWidget):
         "nexus": "Live match queuing, the pit map, inspection and alliances "
                  "from frc.nexus — where our next match is, without running "
                  "back from the field.",
+        "wording": "What the pit-front panel and the overhead slides say. "
+                   "Edits show at once and reach every pit. Admin only.",
         "updates": "What this machine is running, and how it gets the next "
                    "build off GitHub. Never during an event.",
     }
@@ -1352,7 +1357,8 @@ class SystemSettingsPanel(QWidget):
         self.body = {"leds": LEDPanel, "music": MusicPanel, "batteries": BatteryPanel,
                      "network": NetworkPanel, "robot": RobotLogPanel,
                      "analysis": AnalysisPanel,
-                     "nexus": NexusPanel, "updates": UpdatePanel}[system_id]()
+                     "nexus": NexusPanel, "wording": WordingPanel,
+                     "updates": UpdatePanel}[system_id]()
         outer.addWidget(self.body)
         outer.addStretch()
 

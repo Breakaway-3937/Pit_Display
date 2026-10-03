@@ -53,7 +53,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
 
-from app import brand, paths
+from app import brand, paths, wording
 from app.cad_assets import cad_assets
 from app.config import config
 from app.touch import is_touch
@@ -65,8 +65,10 @@ from app.widgets.chassis import PlatePanel
 
 # ── Content model ─────────────────────────────────────────────────────────────
 # Each tab has an id, a short tab-bar label, an eyebrow, a title, and a kind.
-# "cards" tabs list items; each item = {name, blurb, optional detail, optional
-# subs}. `detail` is the longer text shown when the card is tapped (falls back
+# "cards" tabs list items; each item = {id, name, blurb, optional detail,
+# optional subs}. `id` is the item's stable name for app/wording.py (an admin
+# can edit name, blurb and detail in the app; the text here is the shipped
+# default), so never change an id once shipped. `detail` is the longer text shown when the card is tapped (falls back
 # to blurb). Editing this list is all the team needs to reshape the board.
 
 TABS: list[dict] = [
@@ -84,7 +86,7 @@ TABS: list[dict] = [
         "title": "Legislation",
         "kind": "cards",
         "items": [
-            {"name": "The Bill — Act 472",
+            {"id": "act472", "name": "The Bill — Act 472",
              "blurb": "We pioneered and passed Act 472, Arkansas's first state "
                       "funding for competitive robotics teams — signed into law "
                       "by the Governor in April 2025.",
@@ -99,7 +101,7 @@ TABS: list[dict] = [
                        "April 2025 Act 472 was signed into law. We're now helping "
                        "the AR Dept. of Education write the rules, and plan to "
                        "publish a playbook so other teams can do the same."},
-            {"name": "Museum of Discovery",
+            {"id": "museum", "name": "Museum of Discovery",
              "blurb": "Our 10+ year partnership with the Museum of Discovery "
                       "(MoD) in Little Rock has grown from 1 to 3 annual events, "
                       "reaching 3,500+ people and raising $10K+ for MoD.",
@@ -120,17 +122,17 @@ TABS: list[dict] = [
         "title": "Outreach & Events",
         "kind": "cards",
         "items": [
-            {"name": "Girls in STEM Camp",
+            {"id": "girls_stem", "name": "Girls in STEM Camp",
              "blurb": "For 2 years, team members have served as guest mentors at "
                       "the Museum of Discovery's Girls in STEM Camp, helping girls "
                       "see themselves in STEM."},
             # NOTE: "Tinkerfest" in the team outline = MoD's original in Little Rock.
-            {"name": "Tinkerfest (Little Rock)",
+            {"id": "tinkerfest_lr", "name": "Tinkerfest (Little Rock)",
              "blurb": "For 10+ years we've run a LEGO robotics booth at MoD's "
                       "Tinkerfest STEM festival (2,500+ visitors/year), plus BIT "
                       "Kits and QR-linked at-home activities — 600+ kits since 2024."},
             # NOTE: read the outline's "Circe Tinkerfest" as SEARCY Tinkerfest — confirm.
-            {"name": "Searcy Tinkerfest",
+            {"id": "tinkerfest_searcy", "name": "Searcy Tinkerfest",
              "blurb": "Inspired by MoD, we started our own Tinkerfest in Searcy — "
                       "now a STEM field trip at the Arkansas Regional reaching "
                       "1,800+ students from 13 schools across 9 districts.",
@@ -141,12 +143,12 @@ TABS: list[dict] = [
                        "matches and join pit tours, interactive STEM booths, and "
                        "team Q&A. Since 2023 it's grown to 1,800+ students from 13 "
                        "schools across 9 districts and 8 communities in 4 counties."},
-            {"name": "Foster Care",
+            {"id": "foster_care", "name": "Foster Care",
              "blurb": "Since 2024 we've partnered with 2 local foster-care "
                       "organizations, providing 100+ dual-activity BIT Kits to "
                       "visit centers so parents and children can build together, "
                       "plus fundraising help and a summer STEM session."},
-            {"name": "FIRST in Arkansas",
+            {"id": "first_arkansas", "name": "FIRST in Arkansas",
              "blurb": "We host or co-host every FRC event in Arkansas and have "
                       "mentored 15+ teams — including 100% of AR FRC teams.",
              "detail": "We host or co-host every FRC touchpoint in Arkansas: FRC "
@@ -168,14 +170,14 @@ TABS: list[dict] = [
         "title": "Community Camps & Clubs",
         "kind": "cards",
         "items": [
-            {"name": "LEGO Club",
+            {"id": "lego_club", "name": "LEGO Club",
              "blurb": "Our 10-week LEGO Club (since 2016) teaches K–6 students to "
                       "design, build, and code LEGO Education robots — 240+ "
                       "students over the last 3 years."},
-            {"name": "LEGO Camp",
+            {"id": "lego_camp", "name": "LEGO Camp",
              "blurb": "A one-week LEGO summer camp we've run with our school for "
                       "10+ years, introducing young students to robotics."},
-            {"name": "Downtown Discovery Camp",
+            {"id": "downtown_camp", "name": "Downtown Discovery Camp",
              "blurb": "We partner with community summer programs like Downtown "
                       "Discovery Camp to run robot demos and hands-on STEM "
                       "activities for local kids."},
@@ -188,11 +190,11 @@ TABS: list[dict] = [
         "title": "Award Submissions",
         "kind": "cards",
         "items": [
-            {"name": "Executive Summaries",
+            {"id": "exec_summaries", "name": "Executive Summaries",
              "blurb": "Our answers to the 13 FIRST Impact Award questions — the "
                       "data and stories behind our reach: 9K+ served, 100% of AR "
                       "FRC teams, Act 472, and more."},
-            {"name": "Impact Essay",
+            {"id": "impact_essay", "name": "Impact Essay",
              "blurb": "“What began as a sketch is now a growing network that "
                       "makes STEM accessible across Arkansas.” Our FIRST Impact "
                       "Award essay, told through the 5 E's.",
@@ -205,7 +207,7 @@ TABS: list[dict] = [
                        "FRC teams, and passed Act 472. “To Breakaway, impact is "
                        "not just a statistic; it is an investment into our state. "
                        "We are changing the map of Arkansas.”"},
-            {"name": "Woodie Flowers Essay",
+            {"id": "woodie_flowers", "name": "Woodie Flowers Essay",
              "blurb": "Honoring Head Coach Brian Jones, who founded Breakaway in "
                       "2011 and leads “without limits.”",
              "detail": "“If I have seen further, it is by standing on the "
@@ -219,7 +221,7 @@ TABS: list[dict] = [
                        "carpet, lending spare parts, and sending our own members "
                        "to help other teams. To Coach, “without limits” means "
                        "never giving up on FIRST in Arkansas."},
-            {"name": "KPIs",
+            {"id": "kpis", "name": "KPIs",
              "blurb": "We're developing Key Performance Indicators to pair "
                       "qualitative relationship data with our quantitative reach, "
                       "adding dimension to the full scope of our impact."},
@@ -304,26 +306,74 @@ class _CardButton(RoundedFrame):
 _MISSION_LINE = " · ".join(name.upper() for name, _ in _ABOUT_ES_DETAIL)
 
 # The law gets the surface's one red, so it is pulled out of the card list by
-# name rather than by position — reordering TABS must not move the red.
-_ACT_NAME = "The Bill — Act 472"
+# id rather than by position — reordering TABS must not move the red.
+_ACT_ID = "act472"
 
 
 def _act_item() -> dict:
     for tab in TABS:
         for item in tab.get("items", []):
-            if item["name"] == _ACT_NAME:
+            if item["id"] == _ACT_ID:
                 return item
-    return {"name": _ACT_NAME, "blurb": "", "detail": ""}
+    return {"id": _ACT_ID, "name": "Act 472", "blurb": "", "detail": ""}
 
 
 def _program_items() -> list[tuple[str, dict]]:
-    """(category, item) for every card in the grid, Act 472 excluded."""
+    """(tab id, item) for every card in the grid, Act 472 excluded."""
     out = []
     for tab in TABS:
         for item in tab.get("items", []):
-            if item["name"] != _ACT_NAME:
-                out.append((tab["eyebrow"], item))
+            if item["id"] != _ACT_ID:
+                out.append((tab["id"], item))
     return out
+
+
+# ── Editable wording (app/wording.py) ────────────────────────────────────────
+# Every word a visitor reads on this panel is a wording field: the text above
+# and below is the shipped default, an admin's edit (Control → Screen Wording)
+# replaces it live. Keys are fixed; the board looks text up by key at build
+# time and again on `config.wording_changed`.
+_FRONT = "Front panel"
+
+
+def _register_words() -> None:
+    f = wording.field
+    f("board/mission", "Every kid can", "Mission (the big line)", f"{_FRONT} · Top", 24)
+    f("board/mission_line", _MISSION_LINE, "Mission rail (small caps)", f"{_FRONT} · Top", 60)
+    act = _act_item()
+    g = f"{_FRONT} · Act 472 (the red plate)"
+    f("board/act/eyebrow", "Advocacy · Arkansas", "Eyebrow", g, 32)
+    f("board/act/stamp", "SIGNED  ·  APRIL 2025", "Stamp (top right)", g, 28)
+    f("board/act/title", "Act 472", "Headline", g, 16)
+    f("board/act/body", "Arkansas's first state funding for competitive robotics teams — "
+      "written, argued and passed by this team over 24+ months.", "Sentence", g, 160, True)
+    f("board/act/rail", "CAPITOL DAY: 6 FRC + 4 VEX TEAMS · SENATE & HOUSE TESTIMONY · "
+      "TAP FOR MORE", "Rail (small caps)", g, 90)
+    f("board/act/detail", act.get("detail") or act.get("blurb", ""),
+      "Tap-for-more text", g, 1200, True)
+    g = f"{_FRONT} · Reach figures"
+    for i, (number, caption) in enumerate(_ABOUT_STATS):
+        f(f"board/stat/{i}/number", number, f"Figure {i + 1}", g, 7)
+        f(f"board/stat/{i}/caption", caption, f"Figure {i + 1} caption", g, 28)
+    g = f"{_FRONT} · Headings"
+    f("board/programs/title", "What we run", "Program cards heading", g, 24)
+    f("board/programs/hint", "TAP ANY CARD", "Program cards hint", g, 20)
+    f("board/sponsors", "Sponsors", "Sponsors label", g, 16)
+    for tab in TABS:
+        f(f"board/tab/{tab['id']}", tab["eyebrow"], f"{tab['tab']}: category on the sheet",
+          f"{_FRONT} · Program cards", 32)
+        for item in tab.get("items", []):
+            if item["id"] == _ACT_ID:
+                continue
+            g = f"{_FRONT} · Card: {item['name']}"
+            f(f"board/card/{item['id']}/name", item["name"], "Name", g, 36)
+            f(f"board/card/{item['id']}/blurb", item.get("blurb", ""), "Card text", g,
+              max(160, int(len(item.get("blurb", "")) * 1.5)), True)
+            f(f"board/card/{item['id']}/detail", item.get("detail") or item.get("blurb", ""),
+              "Tap-for-more text", g, 1200, True)
+
+
+_register_words()
 
 
 # ── Base type sizes, in design px against the 1080 width ─────────────────────
@@ -539,9 +589,11 @@ class InteractiveBoard(PlatePanel):
         self._cad_host: QWidget | None = None
         self._cad_view = None
         self._sheet: "_DetailSheet | None" = None
+        self._worded: list[tuple[QLabel, str]] = []   # (label, wording key)
 
         self._build()
         config.team_changed.connect(self._repaint_on_team)
+        config.wording_changed.connect(self._on_wording_changed)
         cad_assets.subsystem_focused.connect(self._on_subsystem_focused)
         cad_assets.config_changed.connect(self._rebuild_chips)
 
@@ -549,6 +601,17 @@ class InteractiveBoard(PlatePanel):
         # A bound method, not a lambda: this widget is destroyed with its
         # screen, and only a QObject method slot is auto-disconnected.
         self.update()
+
+    def _bind(self, lbl: QLabel, key: str) -> QLabel:
+        """Show wording field `key` in `lbl`, and keep showing it as admins edit."""
+        self._worded.append((lbl, key))
+        return lbl
+
+    def _on_wording_changed(self):
+        # In place: rebuilding would tear the borrowed CAD viewer out.
+        for lbl, key in self._worded:
+            lbl.setText(wording.text(key))
+        self.updateGeometry()
 
     # ── Type helpers (registered so everything scales together) ───────────
     # Labels get NO Qt object names: the app QSS role rules carry font sizes,
@@ -654,11 +717,12 @@ class InteractiveBoard(PlatePanel):
         row = QHBoxLayout(host)
         row.setContentsMargins(0, 0, 0, 18)
         row.setSpacing(22)
-        self._mission_lbl = self._disp("Every kid can", FS_MISSION, _Demi,
-                                       "ink", track=120)
+        self._mission_lbl = self._bind(self._disp(wording.text("board/mission"), FS_MISSION,
+                                                  _Demi, "ink", track=120), "board/mission")
         row.addWidget(self._mission_lbl)
         row.addStretch(1)
-        row.addWidget(self._mono(_MISSION_LINE, FS_RAIL))
+        row.addWidget(self._bind(self._mono(wording.text("board/mission_line"), FS_RAIL),
+                                 "board/mission_line"))
         return host
 
     def _cad_band(self) -> QWidget:
@@ -749,50 +813,54 @@ class InteractiveBoard(PlatePanel):
             chip.set_active(chip.sub_id == focused)
 
     def _act_plate(self) -> QWidget:
-        item = _act_item()
+        w, b = wording.text, self._bind
         # The surface's one red: a filled field with white type. Never red
         # letterforms — red on carbon is 2.8:1 and forbidden for text.
         plate = _CardButton(fill=brand.RED, border=None, accent=brand.RED,
                             radius=brand.R_CARD)
-        plate.clicked.connect(
-            lambda: self._open_sheet("Advocacy · Arkansas", "Act 472",
-                                     item.get("detail") or item.get("blurb", "")))
+        plate.clicked.connect(self._open_act)
         lay = QVBoxLayout(plate)
         lay.setContentsMargins(34, 30, 34, 30)
         lay.setSpacing(14)
 
         top = QHBoxLayout()
-        top.addWidget(self._disp("Advocacy · Arkansas", FS_ACT_EYE, _Demi,
-                                 "rgba(255,255,255,0.82)", track=120))
+        top.addWidget(b(self._disp(w("board/act/eyebrow"), FS_ACT_EYE, _Demi,
+                                   "rgba(255,255,255,0.82)", track=120), "board/act/eyebrow"))
         top.addStretch(1)
-        top.addWidget(self._mono("SIGNED  ·  APRIL 2025", FS_RAIL,
-                                 "rgba(255,255,255,0.82)"))
+        top.addWidget(b(self._mono(w("board/act/stamp"), FS_RAIL,
+                                   "rgba(255,255,255,0.82)"), "board/act/stamp"))
         lay.addLayout(top)
 
-        lay.addWidget(self._disp("Act 472", FS_ACT, _Bold, brand.WHITE, track=98))
-        lay.addWidget(self._body_lbl(
-            "Arkansas's first state funding for competitive robotics teams — "
-            "written, argued and passed by this team over 24+ months.",
-            FS_ACT_BODY, brand.WHITE))
-        lay.addWidget(self._mono(
-            "CAPITOL DAY: 6 FRC + 4 VEX TEAMS · SENATE & HOUSE TESTIMONY · "
-            "TAP FOR MORE", FS_RAIL, "rgba(255,255,255,0.82)", track=106))
+        lay.addWidget(b(self._disp(w("board/act/title"), FS_ACT, _Bold, brand.WHITE,
+                                   track=98), "board/act/title"))
+        lay.addWidget(b(self._body_lbl(w("board/act/body"), FS_ACT_BODY, brand.WHITE),
+                        "board/act/body"))
+        rail = b(self._mono(w("board/act/rail"), FS_RAIL, "rgba(255,255,255,0.82)",
+                            track=106), "board/act/rail")
+        rail.setWordWrap(True)       # an edited rail may run longer than the shipped one
+        lay.addWidget(rail)
         return plate
+
+    def _open_act(self):
+        # Read at tap time, so an edit made since the board was built shows.
+        self._open_sheet(wording.text("board/act/eyebrow"), wording.text("board/act/title"),
+                         wording.text("board/act/detail"))
 
     def _stat_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setSpacing(14)
-        for number, caption in _ABOUT_STATS:
+        for i, _stat in enumerate(_ABOUT_STATS):
             tile = RoundedFrame(fill=self.tile, border=self.rule,
                                 radius=brand.R_CARD)
             self._cards.append(tile)
             v = QVBoxLayout(tile)
             v.setContentsMargins(22, 20, 22, 20)
             v.setSpacing(10)
-            v.addWidget(self._disp(number, FS_STAT_NUM, _Bold, "ink",
-                                   track=99))
-            cap = self._disp(caption, FS_STAT_CAP, _Demi, "muted",
-                             track=114)
+            v.addWidget(self._bind(self._disp(wording.text(f"board/stat/{i}/number"),
+                                              FS_STAT_NUM, _Bold, "ink", track=99),
+                                   f"board/stat/{i}/number"))
+            cap = self._bind(self._disp(wording.text(f"board/stat/{i}/caption"), FS_STAT_CAP,
+                                        _Demi, "muted", track=114), f"board/stat/{i}/caption")
             # "Volunteer Hrs / Year" does not fit a quarter of a 768px panel on
             # one line, and an unwrapped caption is simply cut in half.
             cap.setWordWrap(True)
@@ -811,10 +879,11 @@ class InteractiveBoard(PlatePanel):
         lay.setSpacing(14)
 
         head = QHBoxLayout()
-        head.addWidget(self._disp("What we run", FS_SECTION, _Demi, "ink",
-                                  track=120))
+        head.addWidget(self._bind(self._disp(wording.text("board/programs/title"), FS_SECTION,
+                                             _Demi, "ink", track=120), "board/programs/title"))
         head.addStretch(1)
-        head.addWidget(self._mono("TAP ANY CARD", FS_RAIL))
+        head.addWidget(self._bind(self._mono(wording.text("board/programs/hint"), FS_RAIL),
+                                  "board/programs/hint"))
         lay.addLayout(head)
 
         # Every card is here, two across. The comp shows four at rest; the rest
@@ -829,23 +898,31 @@ class InteractiveBoard(PlatePanel):
         grid = QGridLayout(inner)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(14)
-        for i, (category, item) in enumerate(_program_items()):
-            grid.addWidget(self._program_card(category, item), i // 2, i % 2)
+        for i, (tab_id, item) in enumerate(_program_items()):
+            grid.addWidget(self._program_card(tab_id, item), i // 2, i % 2)
         lay.addWidget(inner)
         return band
 
-    def _program_card(self, category: str, item: dict) -> QWidget:
+    def _program_card(self, tab_id: str, item: dict) -> QWidget:
         card = _CardButton(fill=self.tile, border=self.rule,
                            accent=brand.N400, radius=brand.R_CARD)
         self._cards.append(card)
+        key = f"board/card/{item['id']}"
+        # The card's own signal, so the lambda dies with the card; the words
+        # are read at tap time so an edit since the build shows.
         card.clicked.connect(
-            lambda: self._open_sheet(category, item["name"],
-                                     item.get("detail") or item.get("blurb", "")))
+            lambda: self._open_sheet(wording.text(f"board/tab/{tab_id}"),
+                                     wording.text(f"{key}/name"),
+                                     wording.text(f"{key}/detail")))
         v = QVBoxLayout(card)
         v.setContentsMargins(24, 22, 24, 22)
         v.setSpacing(10)
-        v.addWidget(self._disp(item["name"], FS_CARD, _Bold, "ink"))
-        v.addWidget(self._body_lbl(item.get("blurb", ""), FS_CARD_BODY))
+        name = self._bind(self._disp(wording.text(f"{key}/name"), FS_CARD, _Bold, "ink"),
+                          f"{key}/name")
+        name.setWordWrap(True)
+        v.addWidget(name)
+        v.addWidget(self._bind(self._body_lbl(wording.text(f"{key}/blurb"), FS_CARD_BODY),
+                               f"{key}/blurb"))
         v.addStretch(1)
         return card
 
@@ -855,8 +932,8 @@ class InteractiveBoard(PlatePanel):
         row = QHBoxLayout(band)
         row.setContentsMargins(0, 18, 0, 0)
         row.setSpacing(18)
-        row.addWidget(self._disp("Sponsors", FS_STAT_CAP, _Demi, "faint",
-                                 track=120))
+        row.addWidget(self._bind(self._disp(wording.text("board/sponsors"), FS_STAT_CAP, _Demi,
+                                            "faint", track=120), "board/sponsors"))
         for filename, ground in _SPONSORS:
             plate = RoundedFrame(fill=brand.WHITE, border=None,
                                  radius=brand.R_MEDIA)

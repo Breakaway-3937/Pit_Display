@@ -214,6 +214,25 @@ found the most problems.
 
 ---
 
+## Screen wording
+
+Control → Pit Systems → **Screen Wording** (unlock with the Breakaway mark
+first) changes what the pit-front panel and the overhead slides say, with no
+new build. Pick a part of a screen, edit, and press **Save to every screen**:
+the screens change straight away, and every other pit gets the edit with team
+sync.
+
+- Each box shows how many characters it holds against its limit. The limit
+  keeps the words inside their place on screen; Save refuses while one is over.
+- **Shipped text** puts a box back to what the build came with. Emptying a box
+  does the same.
+- "Tap-for-more text" is what opens when a visitor taps a card or the red Act
+  472 plate.
+- Only words change here. Adding a new card or slide, or moving one, is
+  still a code change.
+
+---
+
 ## Checklists
 
 Control → Presentation A or B → **Standard content → Checklist** puts a list on

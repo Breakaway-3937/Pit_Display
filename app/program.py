@@ -52,10 +52,11 @@ class Stop:
 
 
 # ── EXAMPLES ONLY (see the module note): one authored pair, to prove slide
-# stops still pair. (key, A's title, B's title), titles as in
-# presentation_a.py / presentation_b.py.
+# stops still pair. (key, A's slide, B's slide), by `Slide.key` in
+# presentation_a.py / presentation_b.py (keys, because titles are editable:
+# app/wording.py).
 STORY = [
-    ("hello",     "Welcome to Breakaway",  "Come Ask Us Anything"),
+    ("hello",     "welcome",  "ask"),
 ]
 # Where the data stops sit among the story stops.
 DATA_AFTER = "hello"
@@ -92,10 +93,11 @@ def next_facts() -> None:
 def _authored() -> dict[str, Slide]:
     from app.windows.presentation_a import PresentationScreenA
     from app.windows.presentation_b import PresentationScreenB
+    from app.slides import worded
     out = {}
     for s in list(PresentationScreenA.SLIDES) + list(PresentationScreenB.SLIDES):
-        slide = Slide.of(s)
-        out.setdefault(slide.title, slide)
+        slide = worded(Slide.of(s))          # admin edits applied (app/wording.py)
+        out.setdefault(slide.key or slide.title, slide)
     return out
 
 
@@ -157,8 +159,8 @@ def stops() -> list[Stop]:
     """The program as it stands now, the same list for both screens."""
     authored = _authored()
     out: list[Stop] = []
-    for key, a_title, b_title in STORY:
-        a, b = authored.get(a_title), authored.get(b_title)
+    for key, a_key, b_key in STORY:
+        a, b = authored.get(a_key), authored.get(b_key)
         if a is not None and b is not None:
             out.append(Stop(key, a, b))
         if key == DATA_AFTER:

@@ -348,6 +348,20 @@ identity → CAD → Act 472 → reach → programs → sponsors (the footer, pi
   Act 472 plate.
 - Type scales from the panel's width (`_apply_scale`).
 
+### Screen wording (`app/wording.py`, `wording_panel.py`)
+
+Admins edit the pit-front panel's words and the authored slides' eyebrow,
+title and body in the app (Pit Systems → Screen Wording). **Every such text
+is a `wording.field(key, default, …)`, registered by the module that shows
+it**; the code's text is the default forever, an edit (team setting
+`wording`, synced) overrides it, and an empty edit falls back. **Keys are
+fixed once shipped**: board cards carry an `id`, slides a `Slide.key`, and
+`program.STORY` pairs slides by key, never by (editable) title. The board
+updates labels in place on `config.wording_changed` (never rebuild it: it
+holds the CAD viewer); slides rebuild. Each field has a `max_len` that keeps
+it inside its layout. New visitor-facing text on these surfaces should be a
+field.
+
 ## Theming and the red budget
 
 Both stylesheets render from one QSS template (`app/theme.py`) over the
@@ -381,7 +395,7 @@ Touch targets ≥ 46px. **The body scrolls as one** (`_body_scroll`, sidebar and
 settings together) under a fixed top bar.
 
 **Pit Systems:** LED Strips, Music, Batteries (mock-up), **Telemetry** (sidebar
-id `network`), **Analysis** (runs and the crew's ratings), Event Feed,
+id `network`), **Analysis** (runs and the crew's ratings), Event Feed, Screen Wording (admin),
 Software Updates.
 
 **Telemetry (`network_panel.py`) is the home of all telemetry.** It has the

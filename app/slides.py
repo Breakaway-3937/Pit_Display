@@ -57,6 +57,9 @@ class Slide:
     # Who the words belong to, when it isn't us: the ledger shows it in place
     # of "ROTATION A" (TBA facts: "Powered by The Blue Alliance").
     credit: str = ""
+    # A stable name for an authored slide (app/wording.py keys its editable
+    # words by it; app/program.py pairs by it). Titles can be edited; keys can't.
+    key: str = ""
 
     @classmethod
     def of(cls, value) -> "Slide":
@@ -74,6 +77,32 @@ class Slide:
 
 def coerce(values) -> list[Slide]:
     return [Slide.of(v) for v in values]
+
+
+def register_words(slides, screen_label: str) -> None:
+    """Make each keyed slide's eyebrow, title and body admin-editable."""
+    from app import wording
+    group = f"Overhead slides · {screen_label}"
+    for s in slides:
+        if not s.key:
+            continue
+        wording.field(f"slide/{s.key}/eyebrow", s.eyebrow, f"{s.title}: eyebrow", group, 32)
+        wording.field(f"slide/{s.key}/title", s.title, f"{s.title}: headline", group, 48)
+        if s.body:
+            wording.field(f"slide/{s.key}/body", s.body, f"{s.title}: sentence", group,
+                          160, multiline=True)
+
+
+def worded(slide: Slide) -> Slide:
+    """The slide with any admin edits to its words applied."""
+    if not slide.key:
+        return slide
+    from dataclasses import replace
+    from app import wording
+    return replace(slide,
+                   eyebrow=wording.text(f"slide/{slide.key}/eyebrow") or slide.eyebrow,
+                   title=wording.text(f"slide/{slide.key}/title") or slide.title,
+                   body=wording.text(f"slide/{slide.key}/body") if slide.body else slide.body)
 
 
 # ── Pulling the numeral out of a title ──────────────────────────────────────

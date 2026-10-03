@@ -316,6 +316,75 @@ def main() -> int:
             painted.append(page)
     check("every new face paints on both screens", len(painted) == 12)
 
+    print("\nScreen wording (admins edit it in the app)")
+    from app import wording
+    from app.db.sync.docs import SETTING_DOCS
+    from app import overhead
+    overhead.choose("rotation")
+    rotation._set(0)
+    qapp.processEvents()
+    keys_before = program.keys()
+    first = page_of(a)
+    wording.set_texts({"slide/welcome/title": "Hello from the pit",
+                       "slide/ask/body": "Ask the crew anything at all."})
+    qapp.processEvents()
+    check("an edited slide headline shows on A at once, still paired",
+          page_of(a) == "slide:Hello from the pit" and a._slides.count == b._slides.count,
+          f"{first} → {page_of(a)}")
+    check("B's edited sentence is on its slide",
+          b._slides.current_slide is not None
+          and b._slides.current_slide.body == "Ask the crew anything at all.")
+    check("the program's stops don't move for a wording edit",
+          program.keys() == keys_before)
+    from app.widgets.interactive_board import InteractiveBoard
+    board = InteractiveBoard()
+    board.resize(1080, 1920)
+    board.grab()
+    texts = lambda: {l.text() for l, _k in board._worded}
+    before = id(board.layout())
+    check("the board shows shipped text by default", {"Act 472", "What we run", "Sponsors"} <= texts())
+    wording.set_texts({"board/act/title": "Act 472 (2025)",
+                       "board/card/lego_club/blurb": "Ten weeks of LEGO robots for K–6."})
+    qapp.processEvents()
+    check("board edits land in place (labels updated, nothing rebuilt)",
+          {"Act 472 (2025)", "Ten weeks of LEGO robots for K–6."} <= texts()
+          and id(board.layout()) == before)
+    wording.set_texts({"board/act/title": "", "slide/welcome/title": "Welcome to Breakaway"})
+    qapp.processEvents()
+    check("emptied or set back to shipped, a field falls back (and isn't stored)",
+          "Act 472" in texts() and not wording.is_edited("board/act/title")
+          and not wording.is_edited("slide/welcome/title")
+          and page_of(a) == "slide:Welcome to Breakaway")
+    check("too long is capped at the field's limit",
+          len(wording.text("slide/ask/body")) <= 160)
+    check("wording is a team setting (syncs to every pit)",
+          SETTING_DOCS.get("wording") == ("app.wording", ("texts",))
+          and "slide/ask/body" in wording.load()["texts"])
+    from app.admin import init_admin, admin
+    init_admin()
+    from app.widgets.wording_panel import WordingPanel
+    panel = WordingPanel()
+    groups = [panel._groups.itemText(i) for i in range(panel._groups.count())]
+    check("the editor lists the front panel and both screens' slides",
+          any(g.startswith("Front panel") for g in groups)
+          and "Overhead slides · Screen A" in groups and "Overhead slides · Screen B" in groups,
+          f"{len(groups)} groups, {len(wording.fields())} fields")
+    check("hidden while the admin lock is closed",
+          not panel._body.isVisibleTo(panel) and panel._locked.isVisibleTo(panel))
+    panel._groups.setCurrentText("Overhead slides · Screen A")
+    row = next(r for r in panel._field_rows if r.field.key == "slide/robot/title")
+    row.editor.setText("Meet the robot")
+    panel._on_save()
+    qapp.processEvents()
+    check("saving from the editor reaches the screens",
+          wording.text("slide/robot/title") == "Meet the robot"
+          and program._authored()["robot"].title == "Meet the robot",
+          panel._status.text())
+    wording.set_texts({k: "" for k in wording.load()["texts"]})
+    panel.deleteLater()
+    board.deleteLater()
+    qapp.processEvents()
+
     print("\nData goes away")
     nexus._status = None
     rotation.refresh()

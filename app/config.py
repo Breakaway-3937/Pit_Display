@@ -51,6 +51,9 @@ class _AppConfig(QObject):
     # picker rebuilds. It lives here, beside team and mode, rather than in a
     # tenth singleton created for one signal.
     logs_changed = pyqtSignal()
+    # Admin-edited screen wording changed (app/wording.py): the pit-front panel
+    # updates its labels in place, the overhead slides rebuild.
+    wording_changed = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -106,6 +109,10 @@ class _AppConfig(QObject):
     def notify_logs_changed(self) -> None:
         """Tell every screen the imported-log set has changed."""
         self.logs_changed.emit()
+
+    def notify_wording_changed(self) -> None:
+        """Tell every screen an admin edited its wording (app/wording.py)."""
+        self.wording_changed.emit()
 
 
 config: _AppConfig = LazyProxy("config", "init_config")  # type: ignore[assignment]

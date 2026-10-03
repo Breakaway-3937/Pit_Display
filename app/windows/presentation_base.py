@@ -138,6 +138,7 @@ class PresentationScreen(QMainWindow):
         # both boards, with no power-cycle. This is what `reload_slides()` was
         # written for.
         config.logs_changed.connect(self.reload_slides)
+        config.wording_changed.connect(self.reload_slides)   # admin edits (app/wording.py)
         cad_assets.cad_active_changed.connect(self._on_cad_active_changed)
         cad_assets.subsystem_focused.connect(self._on_subsystem_focused)
         cad_assets.model_changed.connect(self._cad_view.reload_model)
@@ -157,7 +158,8 @@ class PresentationScreen(QMainWindow):
             return program.side(cls.SCREEN_ID)
         except Exception:
             # Bad data must never stop the audience screens from coming up.
-            return coerce(cls.SLIDES)
+            from app.slides import worded
+            return [worded(s) for s in coerce(cls.SLIDES)]
 
     @classmethod
     def rotation_entries(cls) -> list[Slide]:

@@ -534,7 +534,7 @@ Every pit machine's team data meets at the hub (`sync.bh-stack.com`,
 | Scope | What | How |
 |---|---|---|
 | Team-owned rows | `led_presets`, `eq_presets`, `playlists`, `playlist_items`, `checklist`, `checklist_item` (not `done`), `admin_credential`, `device` (the CAN names) | triggers → `sync_outbox` → hub; `app/db/sync/tables.py` `SPECS` |
-| Team settings | `nexus.json`'s event and feed keys; `update.json`'s `auto_check`, `check_interval_hours` | `tbl = "setting"`, by hash (`docs.py`) |
+| Team settings | `nexus.json`'s event and feed keys; `update.json`'s `auto_check`, `check_interval_hours`; `transfer`; `datasets.json`'s `enabled`; `wording.json`'s `texts` (admin-edited screen words, key → text; only edits are stored, absent = shipped text) | `tbl = "setting"`, by hash (`docs.py`) |
 | Team files | `assets/judges_slides/*`, `assets/cad/*` in the data tree; **every scanned song** as `music/<sha[:16]>_<file name>` (received ones land in the data tree's `music/`) | `tbl = "file"` → an R2 blob by SHA-256. **R2 is a relay** (R8): bytes move only in the night window; see Rules 8–11 |
 | Machine-produced | `log_session` (hand-edited fields in the row; the data as a **bundle**; the original log as a zstd **raw** blob only with `upload_raw`, off by default) | `bundle.py`, `columns.py` |
 | TheBlueAlliance | `tba_event`, `tba_match`, `tba_team`, `tba_rival`, `tba_fact` (home pushes; `home/REQUESTS.md` R5) | pulled only; the engine special-cases them |

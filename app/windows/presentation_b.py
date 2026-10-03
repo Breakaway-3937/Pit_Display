@@ -1,6 +1,6 @@
 """Presentation Screen B — process / outreach / sponsor slide rotation."""
 
-from app.slides import Slide, ROSTER
+from app.slides import Slide, register_words, ROSTER
 from app.windows.presentation_base import PresentationScreen
 
 
@@ -12,12 +12,14 @@ class PresentationScreenB(PresentationScreen):
 
     SLIDES = [
         Slide(
+            key="process",
             eyebrow="Our process",
             title="Our Design Process",
             body="Every mechanism starts with student-led research, prototyping, "
                  "and iteration.",
         ),
         Slide(
+            key="outreach",
             eyebrow="Community",
             title="Community Outreach",
             body="Beyond the field — workshops, demos, and inspiring the next "
@@ -28,6 +30,7 @@ class PresentationScreenB(PresentationScreen):
         # white media plates and the surface spends **no** red at all. The
         # cells are placeholders until artwork is supplied — see OPERATOR_GUIDE.md.
         Slide(
+            key="sponsors",
             kind=ROSTER,
             eyebrow="Our partners",
             title="Thank You, Sponsors",
@@ -35,3 +38,6 @@ class PresentationScreenB(PresentationScreen):
                  "partners.",
         ),
     ]
+
+
+register_words(PresentationScreenB.SLIDES, "Screen B")

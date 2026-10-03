@@ -40,6 +40,8 @@ SETTING_DOCS: dict[str, tuple[str, tuple[str, ...]]] = {
     "transfer": ("app.db.sync.transfer", ("start", "end", "enforce")),
     # Which of home's datasets the adults have cleared for the screens.
     "datasets": ("app.dataset_settings", ("enabled",)),
+    # Admin-edited screen wording (app/wording.py): one edit, every pit.
+    "wording": ("app.wording", ("texts",)),
 }
 
 FILE_ROOTS: dict[str, tuple[str, ...]] = {

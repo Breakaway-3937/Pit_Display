@@ -276,6 +276,9 @@ class _SyncService(QObject):
             self.boards_changed.emit()
         if "tba_fact" in applied:
             self.facts_changed.emit()
+        if "setting:wording" in applied:
+            from app.config import config
+            attempt(config.notify_wording_changed)
         if applied & {"home_dataset", "setting:datasets"}:
             self.datasets_changed.emit()
             self.facts_changed.emit()          # fun_facts rides in a dataset now
