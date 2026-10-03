@@ -10,7 +10,10 @@ Two jobs:
    every future import and survive deleting the log they came from.
 
 2. **Import.** Runs on a worker thread — a 3.85 GB file takes about a minute and
-   would otherwise freeze the whole app.
+   would otherwise freeze the whole app. **Import a folder** takes a whole
+   drive at once (`app/robot/batch.py`): every log in every subfolder is copied
+   onto this machine first, logs imported before are staged in a pop-up
+   (skip, or re-import), and the rest import newest first, one at a time.
 
 Naming is not admin-gated: it is data entry, and getting the pit's motor names
 right matters more than protecting them. Deleting a session is gated, because
@@ -21,8 +24,8 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QMessageBox, QProgressBar, QSpinBox, QTableWidget, QTableWidgetItem,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QLabel,
+    QLineEdit, QMessageBox, QProgressBar, QSpinBox, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -31,7 +34,7 @@ from app.admin import admin
 from app.config import config
 from app.db import db
 from app.robot import (
-    ImportError_, delete_session, import_log, owlet, repository as repo,
+    ImportError_, batch, delete_session, import_log, owlet, repository as repo,
 )
 from app.widgets.brand_widgets import RoundedButton, RoundedFrame, eyebrow, mono_font
 from app.widgets.helpers import divider, label
@@ -73,6 +76,167 @@ class _ImportWorker(QThread):
             self.failed.emit(f"Import failed: {exc}")
 
 
+class _CopyWorker(QThread):
+    """Batch step 1: find every log under the folder and copy it onto this
+    machine (`batch.copy_in`). Nothing is imported here."""
+
+    progressed = pyqtSignal(str, float)
+    finished_ok = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, root: Path, db_path: Path, parent=None):
+        super().__init__(parent)
+        self._root = root
+        self._db_path = db_path
+        self.stop = False
+
+    def run(self):
+        try:
+            self.progressed.emit(f"Looking through {self._root.name} and every folder in it…", 0.0)
+            plan = batch.find_logs(self._root)
+            batch.mark_duplicates(plan, self._db_path)
+            batch.copy_in(plan, progress=lambda m, f: self.progressed.emit(m, f),
+                          cancelled=lambda: self.stop)
+            self.finished_ok.emit(plan)
+        except batch.CopyError as exc:
+            self.failed.emit(str(exc))
+        except Exception as exc:                       # pragma: no cover
+            self.failed.emit(f"Copying failed: {exc}")
+
+
+class _BatchImportWorker(QThread):
+    """Batch step 3: import the queue one file at a time, from the local
+    copies. A file that fails is reported and the rest carry on."""
+
+    progressed = pyqtSignal(str, float)
+    file_done = pyqtSignal(str, str)          # file name, "" or the error
+    all_done = pyqtSignal(int, list)          # imported, [(name, error)]
+
+    def __init__(self, jobs: list, db_path: Path, parent=None):
+        super().__init__(parent)
+        self._jobs = jobs                     # [(batch.Found, session id to replace or None)]
+        self._db_path = db_path
+        self.stop = False
+
+    def run(self):
+        ok, failed = 0, []
+        n = len(self._jobs)
+        for i, (f, replace) in enumerate(self._jobs, 1):
+            if self.stop:
+                break
+            head = f"Importing {i} of {n}: {f.name}"
+            self.progressed.emit(head, (i - 1) / n)
+            try:
+                if replace is not None:
+                    delete_session(replace, self._db_path)
+                import_log(f.dest, self._db_path, archive_path=f.dest,
+                           progress=lambda m, frac, head=head, i=i:
+                               self.progressed.emit(f"{head} · {m}", (i - 1 + frac) / n))
+                ok += 1
+                self.file_done.emit(f.name, "")
+            except ImportError_ as exc:
+                failed.append((f.name, str(exc)))
+                self.file_done.emit(f.name, str(exc))
+            except Exception as exc:                   # pragma: no cover
+                failed.append((f.name, f"Import failed: {exc}"))
+                self.file_done.emit(f.name, str(exc))
+        self.all_done.emit(ok, failed)
+
+
+class _DuplicatesDialog(QDialog):
+    """
+    Logs in the folder that were imported before. They're already copied onto
+    this machine either way; this only decides whether to import them again.
+    Re-importing replaces the earlier session, so it's offered only for a
+    session imported on this machine and only with the admin lock open
+    (deleting a session is admin-only); otherwise the box says why not.
+    """
+
+    def __init__(self, dups: list, unlocked: bool, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Already imported")
+        self.setMinimumWidth(720)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 22, 24, 22)
+        lay.setSpacing(12)
+        head = label(f"{len(dups)} of these logs were imported before", "stat_value")
+        head.setWordWrap(True)
+        lay.addWidget(head)
+        note = label("They're copied onto this machine either way. Tick any to import "
+                     "again; that replaces the earlier session. Unticked ones are "
+                     "skipped.", "stat_label")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+
+        table = QTableWidget(len(dups), 3)
+        table.setHorizontalHeaderLabels(["Re-import", "Log", "Imported before"])
+        table.verticalHeader().setVisible(False)
+        table.verticalHeader().setDefaultSectionSize(46)
+        hh = table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self._boxes: list[tuple[QCheckBox, object]] = []
+        for r, f in enumerate(dups):
+            prev = f.duplicate_of
+            box = QCheckBox()
+            local = batch.is_local(prev)
+            box.setEnabled(local and unlocked)
+            if not local:
+                box.setToolTip("Imported on another pit and synced here; it can only "
+                               "be replaced where it was imported.")
+            elif not unlocked:
+                box.setToolTip("Replacing a session is admin-only: unlock with the "
+                               "Breakaway mark first.")
+            cell = QWidget()
+            cl = QHBoxLayout(cell)
+            cl.setContentsMargins(12, 0, 12, 0)
+            cl.addWidget(box)
+            table.setCellWidget(r, 0, cell)
+            name = QTableWidgetItem(str(f.rel))
+            name.setFlags(name.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(r, 1, name)
+            where = (f"session {prev['id']}, imported {_local_time(prev.get('imported_at'))}"
+                     if local else f"synced from {prev.get('origin_name') or 'another pit'}")
+            when = QTableWidgetItem(where)
+            when.setFlags(when.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(r, 2, when)
+            self._boxes.append((box, f))
+        table.setMinimumHeight(min(420, 60 + 46 * len(dups)))
+        lay.addWidget(table)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        skip = RoundedButton("Skip all of these", variant="secondary")
+        skip.setMinimumHeight(46)
+        skip.clicked.connect(self._skip_all)
+        buttons.addWidget(skip)
+        go = RoundedButton("Continue", variant="primary")
+        go.setMinimumHeight(46)
+        go.clicked.connect(self.accept)
+        buttons.addWidget(go)
+        lay.addLayout(buttons)
+
+    def _skip_all(self):
+        for box, _f in self._boxes:
+            box.setChecked(False)
+        self.accept()
+
+    def chosen(self) -> list:
+        """The duplicates to import again, as (Found, session id to replace)."""
+        return [(f, f.duplicate_of["id"]) for box, f in self._boxes if box.isChecked()]
+
+
+def _local_time(utc: str | None) -> str:
+    """SQLite's datetime('now') (UTC) as this machine's local time."""
+    from datetime import datetime, timezone
+    try:
+        t = datetime.fromisoformat(str(utc)).replace(tzinfo=timezone.utc).astimezone()
+        return t.strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return str(utc or "")[:16]
+
+
 def _origin(s) -> tuple[str, str]:
     """(the From cell, its tooltip): which machine holds the original log."""
     if not str(s["source_file"] or "").startswith("sync:"):
@@ -90,6 +254,8 @@ class RobotLogPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker: _ImportWorker | None = None
+        self._copier: _CopyWorker | None = None
+        self._batch: _BatchImportWorker | None = None
         self._loading = False
         self._build()
         admin.lock_state_changed.connect(self._apply_lock)
@@ -113,10 +279,20 @@ class RobotLogPanel(QWidget):
 
         row = QHBoxLayout()
         row.setSpacing(8)
-        self._import_btn = RoundedButton("Choose log file…", variant="primary",
+        # The folder is the primary: the whole drive in one go is what a
+        # five-minute window with the robot needs.
+        self._folder_btn = RoundedButton("Import a folder…", variant="primary",
+                                         accent=config.active_team.primary_color)
+        self._folder_btn.clicked.connect(self._choose_folder)
+        row.addWidget(self._folder_btn)
+        self._import_btn = RoundedButton("One file…", variant="secondary",
                                          accent=config.active_team.primary_color)
         self._import_btn.clicked.connect(self._choose_file)
         row.addWidget(self._import_btn)
+        self._stop_btn = RoundedButton("Stop", variant="ghost")
+        self._stop_btn.clicked.connect(self._stop_batch)
+        self._stop_btn.setVisible(False)
+        row.addWidget(self._stop_btn)
         self._import_status = label("", "stat_label")
         self._import_status.setWordWrap(True)
         row.addWidget(self._import_status, stretch=1)
@@ -132,9 +308,12 @@ class RobotLogPanel(QWidget):
 
         root.addSpacing(6)
         import_help = label(
-            "A .hoot straight off the controller or a .wpilog off the roboRIO. "
-            "A .hoot is extracted with owlet first, so it takes longer than its "
-            "size suggests; the app stays usable throughout.", "stat_label")
+            "Import a folder takes a whole drive: every .hoot and .wpilog in it and "
+            "in every folder inside it is copied onto this machine first (the drive "
+            "can come out once copying is done), logs imported before are listed "
+            "for you to skip or import again, and the rest import newest first. "
+            "A .hoot is extracted with owlet, so it takes longer than its size "
+            "suggests; the app stays usable throughout.", "stat_label")
         import_help.setWordWrap(True)
         root.addWidget(import_help)
 
@@ -400,12 +579,111 @@ class RobotLogPanel(QWidget):
         if path:
             self.start_import(Path(path))
 
-    def start_import(self, path: Path):
-        if self._worker is not None and self._worker.isRunning():
+    def _busy(self) -> bool:
+        return any(w is not None and w.isRunning()
+                   for w in (self._worker, self._copier, self._batch))
+
+    def _set_busy(self, busy: bool, batch_run: bool = False) -> None:
+        self._import_btn.setEnabled(not busy)
+        self._folder_btn.setEnabled(not busy)
+        self._stop_btn.setVisible(busy and batch_run)
+        self._progress.setVisible(busy)
+        if busy:
+            self._progress.setValue(0)
+            self._import_status.setStyleSheet("")
+
+    # ── Batch: a whole folder ─────────────────────────────────────────────
+
+    def _choose_folder(self):
+        path = QFileDialog.getExistingDirectory(self, "Choose the folder with the robot logs")
+        if path:
+            self.start_batch(Path(path))
+
+    def start_batch(self, root: Path):
+        if self._busy():
             return
-        self._import_btn.setEnabled(False)
-        self._progress.setVisible(True)
-        self._progress.setValue(0)
+        self._set_busy(True, batch_run=True)
+        self._import_status.setText(f"Looking through {root.name}…")
+        self._copier = _CopyWorker(root, Path(db.path))
+        self._copier.progressed.connect(self._on_progress)
+        self._copier.finished_ok.connect(self._on_copied)
+        self._copier.failed.connect(self._on_failed)
+        self._copier.start()
+
+    def _stop_batch(self):
+        for w in (self._copier, self._batch):
+            if w is not None and w.isRunning():
+                w.stop = True
+        self._import_status.setText("Stopping after this file…")
+
+    def _on_copied(self, plan):
+        stopped = self._copier is not None and self._copier.stop
+        copied = sum(f.copied for f in plan.found)
+        if not plan.found:
+            self._set_busy(False)
+            self._import_status.setText(
+                f"No .hoot or .wpilog files in {plan.root.name} or the folders inside it."
+                + (f" ({len(plan.empty)} empty file(s) skipped.)" if plan.empty else ""))
+            return
+        safe = (f"{len(plan.found)} log(s) are on this machine ({copied} copied now). "
+                "The drive can come out.")
+        if stopped:
+            self._set_busy(False)
+            self._import_status.setText("Stopped while copying. " + safe.replace(
+                f"{len(plan.found)} log(s) are", "The logs copied so far are"))
+            return
+        jobs = [(f, None) for f in plan.queue]
+        if plan.duplicates:
+            self._import_status.setText(safe + " Some were imported before.")
+            dlg = _DuplicatesDialog(plan.duplicates, admin.unlocked, self)
+            dlg.exec()
+            again = dlg.chosen()
+            jobs += sorted(again, key=lambda j: j[0].started or "", reverse=True)
+        self._batch_skipped = len(plan.duplicates) - (len(jobs) - len(plan.queue))
+        self._batch_empty = len(plan.empty)
+        self._batch_safe = safe
+        if not jobs:
+            self._set_busy(False)
+            self._import_status.setText(safe + " Nothing new to import.")
+            return
+        self._batch = _BatchImportWorker(jobs, Path(db.path))
+        self._batch.progressed.connect(self._on_progress)
+        self._batch.file_done.connect(self._on_batch_file)
+        self._batch.all_done.connect(self._on_batch_done)
+        self._batch.start()
+
+    def _on_batch_file(self, _name: str, error: str):
+        if not error:
+            # Each log reaches the boards as it lands, not at the end.
+            self.refresh()
+            config.notify_logs_changed()
+
+    def _on_batch_done(self, ok: int, failed: list):
+        stopped = self._batch is not None and self._batch.stop
+        self._set_busy(False)
+        parts = [f"Imported {ok} log(s)."]
+        if self._batch_skipped:
+            parts.append(f"{self._batch_skipped} already imported, skipped.")
+        if self._batch_empty:
+            parts.append(f"{self._batch_empty} empty file(s) skipped.")
+        if stopped:
+            parts.append("Stopped early; run the folder again to finish (imported "
+                         "ones are recognised).")
+        if failed:
+            parts.append(f"{len(failed)} couldn't be read: "
+                         + "; ".join(f"{n} ({e[:80]})" for n, e in failed[:3])
+                         + ("…" if len(failed) > 3 else ""))
+            self._import_status.setStyleSheet(
+                f"color: {brand.STATUS_PENDING}; background: transparent;")
+        self._import_status.setText(" ".join(parts))
+        self.refresh()
+
+    # ── One file ──────────────────────────────────────────────────────────
+
+    def start_import(self, path: Path):
+        if self._busy():
+            return
+        self._set_busy(True)
         self._import_status.setText(f"Reading {path.name}…")
         self._worker = _ImportWorker(path, db_path=Path(db.path))
         self._worker.progressed.connect(self._on_progress)
@@ -418,8 +696,7 @@ class RobotLogPanel(QWidget):
         self._progress.setValue(int(frac * 1000))
 
     def _on_done(self, result):
-        self._import_btn.setEnabled(True)
-        self._progress.setVisible(False)
+        self._set_busy(False)
         note = ""
         if result.new_devices:
             note = (f" · {len(result.new_devices)} new device(s) need names: "
@@ -441,8 +718,7 @@ class RobotLogPanel(QWidget):
         config.notify_logs_changed()
 
     def _on_failed(self, message: str):
-        self._import_btn.setEnabled(True)
-        self._progress.setVisible(False)
+        self._set_busy(False)
         self._import_status.setText(message)
         self._import_status.setStyleSheet(
             f"color: {brand.RED}; background: transparent;")
@@ -473,5 +749,5 @@ class RobotLogPanel(QWidget):
         self._delete_note.setVisible(not unlocked)
 
     def _on_team_changed(self, team):
-        for b in (self._import_btn, self._add_btn):
+        for b in (self._folder_btn, self._import_btn, self._add_btn):
             b.set_accent(team.primary_color)

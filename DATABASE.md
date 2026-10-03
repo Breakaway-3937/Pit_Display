@@ -317,7 +317,7 @@ One row per imported file.
 | `device_serial`, `started_at` | parsed from the filename |
 | `duration_s` | length of the log in seconds |
 | `raw_rows`, `stored_rows` | compression audit — **read it against `source_kind`**. A hoot compresses ~19×; a wpilog is *already* change-only and lands near 1.1×, which is normal and not a fault. A hoot far off 19× is the cheapest signal that the export format changed |
-| `source_bytes`, `archive_path` | provenance for re-import after eviction |
+| `source_bytes`, `archive_path` | provenance for re-import after eviction. `archive_path` is this machine's own copy when the log came in through **Import a folder** (`app/robot/batch.py`, `robot_logs/` in the data tree). `source_name` + `source_bytes` is how a batch recognises a log imported before, from any path or pit |
 | `match_key`, `notes`, `keep` | operator metadata; `keep = 1` exempts from future eviction. `match_key` is pre-filled from the filename when it carries a match (`FRC_…_Q15` → `qm15`) and is editable either way |
 
 #### `device` — the CAN-id → English name map

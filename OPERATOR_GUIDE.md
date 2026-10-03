@@ -160,6 +160,17 @@ match Onshape exactly.
 
 ## Robot logs
 
+**Import a folder** (Telemetry → Robot logs) is the fast way off the robot:
+pick the folder (the whole USB stick, or the roboRIO's log dump) and every
+`.hoot` and `.wpilog` in it, and in every folder inside it, is copied onto
+this machine first. When the status line says "The drive can come out", it
+can. Logs imported before (from anywhere) are listed in a pop-up: tick any
+to import again (that replaces the earlier session; admin only), or skip
+them. The rest import newest first while you keep working; **Stop** stops
+after the current file, and running the same folder again picks up where it
+left off. Copies live in the `robot_logs` folder beside the database, so
+check free space now and then.
+
 **Control → Pit Systems → Telemetry → Robot telemetry → Choose log file…**
 
 | File | Where it comes from |

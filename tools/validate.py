@@ -62,6 +62,7 @@ CHECKS: list[tuple[str, list[str], bool, str]] = [
     ("program_check", ["tools/program_check.py"], False, ""),
     ("ai_check", ["tools/ai_check.py"], False, ""),
     ("import_check", ["tools/import_check.py"], False, ""),
+    ("batch_check", ["tools/batch_check.py"], False, ""),
     ("sync_check", ["tools/sync_check.py", "--local"], False, ""),
     ("relay_check", ["tools/relay_check.py", "--local"], True, ""),
     ("check_installer", ["tools/check_installer.py"], False, ""),

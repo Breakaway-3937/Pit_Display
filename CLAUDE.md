@@ -661,6 +661,13 @@ DATABASE.md; read them before writing a query.
   CAN names carry over; `import_check` pins the result.
 - **Fun-fact slides: every number is real**, and jokes are at our own expense.
 - CAN naming is data entry (not gated); deleting a session is gated.
+- **Import a folder** (`batch.py`, Brayden 2026-10-03: five minutes with the
+  robot): every `.hoot`/`.wpilog` in every subfolder is **copied onto the
+  machine first** (`robot_logs/`, `.part` then rename, an identical copy
+  reused), then logs imported before (same name + size, any path or pit) are
+  staged in a pop-up (skip / re-import; replacing needs the admin lock and a
+  session imported here), then the rest import newest first. Skips `._` twins,
+  hidden folders, empty files. `tools/batch_check.py`.
 
 ## Pit LAN screens (`app/webcast/`)
 

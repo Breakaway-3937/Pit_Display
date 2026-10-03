@@ -259,9 +259,14 @@ def import_log(
     path: str | Path,
     db_path: str | Path,
     progress: Callable[[str, float], None] | None = None,
+    archive_path: str | Path | None = None,
 ) -> ImportResult:
     """
     Import one log — a `.hoot` or a `.wpilog`.
+
+    `archive_path` is this machine's own copy of the file when it was copied
+    in (`app/robot/batch.py`); the session records it so the original can be
+    found (and uploaded with `upload_raw`) after the drive is gone.
 
     `progress(message, fraction)` is called periodically. Raises ImportError_ if
     the file was already imported, cannot be read, or has no parseable rows —
@@ -298,10 +303,10 @@ def import_log(
         cur = conn.execute(
             """INSERT INTO log_session
                    (source_file, source_name, source_kind, device_serial,
-                    started_at, match_key, source_bytes)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    started_at, match_key, source_bytes, archive_path)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (str(path), path.name, src.kind, meta.serial, meta.started,
-             meta.match_key, total_bytes),
+             meta.match_key, total_bytes, str(archive_path) if archive_path else None),
         )
         session_id = cur.lastrowid
 
