@@ -1,6 +1,10 @@
 """
-The event's match schedule, our matches marked, our record: B's half of the
+Breakaway's matches today, with results and our record: B's half of the
 "Next match" set (`app/overhead.py`; A shows the Nexus queue).
+
+**Only our matches** (Brayden, 2026-10-02: "I need only the matches for
+Breakaway on the day's match schedule"). Results will come from the VM's send
+(home/REQUESTS.md R12).
 
 No Qt: the native face (`schedule_overlay.py`) and the pit-network page
 (`webcast/state.py`) read the same rows.
@@ -39,8 +43,38 @@ def short(label: str) -> str:
     return (label or "").replace("Qualification", "Qual")
 
 
+# The VM's send (home/REQUESTS.md R12): Breakaway's matches today as a
+# home dataset, columns match_key (TBA, '2026arli_qm14'), red_score,
+# blue_score, winning_alliance ('' = tie). Read first; `tba_match` is the
+# fallback should home ever send that table.
+RESULTS_DATASET = "bk_matches_today"
+
+
+def _dataset_results(event_key: str) -> dict[str, dict[str, Any]]:
+    from app import datasets
+    d = datasets.get(RESULTS_DATASET, enabled_only=False)
+    if d is None:
+        return {}
+    out = {}
+    for row in d.rows:
+        key = str(d.value(row, "match_key") or "")
+        ev, _, suffix = key.partition("_")
+        if not suffix or (event_key and ev != event_key):
+            continue
+        red, blue = d.value(row, "red_score"), d.value(row, "blue_score")
+        if red is None and blue is None:
+            continue
+        out[suffix] = {"red_score": red, "blue_score": blue,
+                       "winning_alliance": d.value(row, "winning_alliance") or ""}
+    return out
+
+
 def _results(event_key: str) -> dict[str, dict[str, Any]]:
-    """TBA results for this event, by match-key suffix. {} when none synced."""
+    """Results for this event, by match-key suffix: the VM's dataset first,
+    then `tba_match`. {} when neither has arrived."""
+    found = _dataset_results(event_key)
+    if found:
+        return found
     if not event_key:
         return {}
     try:
@@ -89,6 +123,8 @@ def build(team: str, now_ms: int | None = None) -> dict[str, Any]:
         t = m.times
         at = t.estimated_start or t.estimated_queue or t.scheduled_start
         ours = m.alliance_of(team) or ""
+        if not ours:
+            continue                       # only Breakaway's matches
         res = results.get(tba_suffix(m.label) or "")
         result = None
         outcome = ""

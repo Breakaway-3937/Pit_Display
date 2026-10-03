@@ -217,9 +217,9 @@ def main() -> int:
     from app import event_schedule
     d0 = event_schedule.build("16")
     ours = [r for r in d0["rows"] if r["ours"]]
-    check("every match at the event, ours marked",
-          len(d0["rows"]) > len(ours) > 0 and d0["record"] is None,
-          f"{len(d0['rows'])} matches, {len(ours)} ours, no results yet")
+    check("only Breakaway's matches (Brayden), no results yet",
+          len(d0["rows"]) == len(ours) > 0 and d0["record"] is None,
+          f"{len(d0['rows'])} rows, {len(ours)} ours")
     ev = nexus.event_key
     played = [r for r in ours if event_schedule.tba_suffix(r["label"])][:3]
     for r, (red, blue, win) in zip(played, ((120, 98, "red"), (90, 101, "blue"), (77, 77, ""))):

@@ -77,8 +77,8 @@ STATS = Stop("stats",
                    "Breakaway's record, finishes and awards, 2012 to now."))
 EVENT = Stop("event",
              _face("next_match", "Event", "Next match", "When we go, off the Nexus feed."),
-             _face("schedule", "Event", "Event schedule",
-                   "Every match at the event, ours marked, our record."))
+             _face("schedule", "Event", "Our matches",
+                   "Breakaway's matches today, results and our record."))
 
 _fact_offset = 0
 

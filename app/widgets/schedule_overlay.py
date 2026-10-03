@@ -55,14 +55,14 @@ class ScheduleOverlay(Chassis):
         side = "A" if self.screen_id.endswith("_a") else "B"
         live = bool(self._data()["rows"])
         return [("dot", brand.STATUS_ONLINE if live else brand.STATUS_IDLE, live),
-                ("mono", f"SCREEN {side}  /  EVENT SCHEDULE")]
+                ("mono", f"SCREEN {side}  /  OUR MATCHES")]
 
     def footer_items(self) -> tuple[str, str]:
         d = self._data()
         right = NEXUS_TEXT.upper()
         if d["has_results"]:
             right += "  ·  RESULTS " + TBA_TEXT.upper()
-        return "EVENT SCHEDULE", right
+        return "OUR MATCHES TODAY", right
 
     def paint_stage(self, p: QPainter, rect: QRectF):
         d = self._data()
@@ -150,11 +150,11 @@ class ScheduleOverlay(Chassis):
         y = rect.y() + rect.height() * 0.18
         p.setFont(self.display(24, 600, 0.16))
         p.setPen(QColor(self.muted))
-        p.drawText(QPointF(rect.x(), y + p.fontMetrics().ascent()), "EVENT SCHEDULE")
+        p.drawText(QPointF(rect.x(), y + p.fontMetrics().ascent()), "OUR MATCHES")
         y = self.draw_wrapped(p, rect.x(), y + self.s(60), rect.width(),
-                              "No schedule yet", self.display(108, 700, -0.02),
+                              "No matches yet", self.display(108, 700, -0.02),
                               self.ink, 1.0)
         self.draw_wrapped(
             p, rect.x(), y + self.s(24), min(self.s(1200), rect.width()),
-            "The event's matches appear here once its schedule is out.",
+            "Our matches appear here once the event's schedule is out.",
             self.body(32), self.body_ink, 1.4)

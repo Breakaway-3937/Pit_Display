@@ -403,9 +403,9 @@
   function faceSchedule(data) {
     if (data.empty || !data.rows || !data.rows.length) {
       var box = h("div", "face stack");
-      box.appendChild(h("div", "eyebrow", "EVENT SCHEDULE"));
-      box.appendChild(h("div", "headline", "No schedule yet"));
-      box.appendChild(h("div", "subline", "The event's matches appear here once its schedule is out."));
+      box.appendChild(h("div", "eyebrow", "OUR MATCHES"));
+      box.appendChild(h("div", "headline", "No matches yet"));
+      box.appendChild(h("div", "subline", "Our matches appear here once the event's schedule is out."));
       return box;
     }
     var face = h("div", "face sched");
@@ -662,7 +662,7 @@
       el.ledgerLeft.textContent = "NEXT MATCH";
     } else if (s.face === "schedule") {
       node = faceSchedule(s.schedule || { empty: true, rows: [] });
-      el.ledgerLeft.textContent = "OUR SCHEDULE";
+      el.ledgerLeft.textContent = "OUR MATCHES TODAY";
     } else if (s.face === "quality" || s.face === "bk_seasons" || s.face === "dataset") {
       node = faceByName(s.face, s[s.face] || { empty: true });
       el.ledgerLeft.textContent = s.face === "quality" ? "QUALITY AWARD LEADERS"

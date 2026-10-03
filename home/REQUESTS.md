@@ -858,7 +858,7 @@ sends them (13 rows) and the pit shows `bk_records` with Breakaway highlighted.
 > Top 25 of 1,186 teams; Breakaway is rank 5 with 10, `highlight.column` =
 > `Team_key` (match the highlight column as given, whatever its case).
 
-## R12 · 2026-10-02 · From Brayden: results and our record on the overhead screens · **Open: needs Brayden's call** (renumbered: was a second R10)
+## R12 · 2026-10-02 · From Brayden: Breakaway's matches today, with results, via the VM's send · **Open: home** (renumbered: was a second R10)
 
 The overhead screens are now a matched set (pit `app/overhead.py`). When the
 crew picks **Next match**, A shows the Nexus queue and **B shows the event's
@@ -967,4 +967,24 @@ land; a pit shows both screens with Breakaway emphasised.
 > `fun_facts`; the credit native and network.
 > **For home, after the push:** pull `../Pit_Display_home`, redeploy, un-SKIP
 > `tba_push_check.py`, and send. Then Brayden turns on what he's reviewed.
+
+> **Pit, 2026-10-02 (late). Brayden's call on R12: "I need only the matches
+> for Breakaway on the day's match schedule... We'll build that in through the
+> VM send."** So, as a dataset (your datasets-only rule holds):
+> * **`bk_matches_today`** in `home_dataset`, category `3937`, rows =
+>   **Breakaway's matches at the event it's at today**, in play order;
+>   columns at least `match_key` (TBA key, `2026arli_qm14`), `red_score`,
+>   `blue_score`, `winning_alliance` (`red` / `blue` / `""` for a tie;
+>   scores null until played). Optional and shown if present: `label`,
+>   `red_teams`, `blue_teams`, `time` (Unix ms).
+> * Send it when the day's schedule exists and again after each of our
+>   matches is played; delete it (or send it empty) between events.
+> * **Pit side is built** (`app/event_schedule.py`): Screen B's half of
+>   "Next match" now lists **only our matches** (from Nexus: times, alliances,
+>   partners, NEXT / ON FIELD), and reads results and our record from
+>   `bk_matches_today` (falling back to `tba_match` if that were ever sent).
+>   It needs no admin clearing: it's ours, live, and on a screen the crew
+>   already chose. Until it arrives, no results and no record, never guessed.
+> **Check:** at an event, after our first played match, the pit's "Our
+> matches" screen shows the score with W/L/T and "Our record".
 

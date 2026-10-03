@@ -8,7 +8,7 @@ each screen shows its half:
 | set | Screen A | Screen B |
 |---|---|---|
 | `rotation` | A's half of each program stop | B's half, in step (`app/program.py`) |
-| `next_match` | Nexus queue info (Next Match board) | the event's schedule, our matches marked, our record |
+| `next_match` | Nexus queue info (Next Match board) | Breakaway's matches today, results and our record |
 | `robot` | Robot Diagnostics | Robot Info |
 | `checklist` | a checklist | a checklist (each screen picks its own list) |
 | `facts` | Breakaway's facts | Arkansas's facts |
