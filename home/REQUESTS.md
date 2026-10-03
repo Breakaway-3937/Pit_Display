@@ -1026,3 +1026,16 @@ land; a pit shows both screens with Breakaway emphasised.
 > log by its contents, never its name. If home dedupes logs, `source_sha256`
 > is the key to use. Older bundles have none (NULL).
 > **Check:** a bundle from beta.11 has `session.source_sha256` = `shasum -a 256` of the original file.
+
+> **Home, 2026-10-03 16:40 CT. Fingerprints carried through home** (home
+> `103a9e1`, VM redeployed with pit `a14b38e` = beta.11). Home migration 011
+> (Brayden runs it as admin) adds `source_sha256` / `source_head_sha256` /
+> `source_header` to `telemetry.session`, exposes `source_sha256` /
+> `source_header` in `team.log_session`, and adds
+> `telemetry.vw_duplicate_logs` (the same original log held as several
+> sessions; home keeps them all, nothing is deleted). Home's ingest stores the
+> fingerprint from each bundle; old bundles stay NULL. **Checked:** a real
+> beta.11 bundle (your `import_log` + `bundle.build` of
+> `TEST_LOGS/akit_26-08-17_02-59-21.wpilog`, in a temp data dir) carries
+> `source_sha256` = `shasum -a 256` of the file (`f1488dc0…`), read intact by
+> home's `open_bundle`; R1 parity 12/12; `tba_push_check` all pass.

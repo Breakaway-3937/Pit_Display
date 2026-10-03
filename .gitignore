@@ -65,3 +65,19 @@ ai.json
 
 # tools/validate.py: check logs and the --app test install, rebuilt each run
 .validation/
+
+# Written into the checkout when the app runs from it (paths.data): team
+# settings and machine state, never source. Brayden 2026-10-03: the repo is
+# public, so nothing the app writes may be committable by `git add -A`.
+wording.json
+datasets.json
+transfer.json
+update_check.log
+# Import a folder's copies of robot logs (app/robot/batch.py)
+robot_logs/
+# Synced team files (app/db/sync/docs.py FILE_ROOTS): songs, judges artwork,
+# the CAD model. Only the CAD subsystem map is source.
+music/
+assets/judges_slides/
+assets/cad/*
+!assets/cad/subsystems.json
