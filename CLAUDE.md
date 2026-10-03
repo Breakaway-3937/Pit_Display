@@ -25,9 +25,8 @@ never read this Mac's own `data/`**: in a checkout `paths.seed_user_data()`
 doesn't seed the database (it's the developer's, not a seed), so a scratch
 tree starts as CI's seed does; `ai_check` imports `TEST_LOGS/fixture_faults_2026-07-29.pitlog.zst`.
 The dev Mac's own app never syncs with the team (`sync.json` off).
-`tools/import_check.py` pins every test log's complete import; **owlet 26.3.0
-(macOS) cuts the end off ~73% of hoot conversions while reporting 100%**, so
-its hoot step fails until that's resolved (see its docstring).
+`tools/import_check.py` pins every test log's complete import (the hoot ten
+times: `--hoot-runs 10`).
 
 The individual checks, each exit 0/1:
 `--self-check`, `tools/relay_check.py` (`--local` against `wrangler dev`),
@@ -613,8 +612,8 @@ so no EQ. **libVLC is the engine because it's the only one with an EQ.**
 
 ## Robot logs (`app/robot/`)
 
-`.hoot` (owlet → `.wpilog` in scratch space) and `.wpilog` are each a
-`_Source` yielding `(t_ms, device_type, can_id, signal, num, label)`;
+`.hoot` (owlet → **`.mcap`** in scratch space → `mcap.py` + `flatbuf.py`)
+and `.wpilog` are each a `_Source` yielding `(t_ms, device_type, can_id, signal, num, label)`;
 storage can't tell them apart. **Add a format by writing a `_Source`.**
 **There is no text stage and no `.txt` input**, by decision: logs go from
 `.hoot`/`.wpilog` straight to the database. Don't add one back. Schema,
@@ -631,6 +630,16 @@ DATABASE.md; read them before writing a query.
 - Scratch goes to `$PIT_LOG_SCRATCH` → temp → beside the source, never a log
   archive. **The duplicate check runs before owlet.**
 - `owlet.describe()` names OS, CPU and binary; `_PATTERNS` picks by platform.
+- **Never read a hoot through owlet's `.wpilog`.** owlet 26.3.0's wpilog writer
+  cut the end off 11 of 15 conversions of the same hoot while printing 100%
+  and exiting 0, and wrote some samples twice (2026-10-02; ruled out: reading
+  early, path reuse, the file, the licence check, Apple Silicon). Its `.mcap`
+  is byte-identical every run and complete. `mcap.py` reads it (LZ4 chunks:
+  `lz4`, named in the spec, guarded by the self-check's `owlet` line) and
+  `flatbuf.py` decodes CTRE's FlatBuffers by the schema inside the file.
+  owlet's mcap repeats every signal in every frame: a sample is new only when
+  its own `timestampSec` moved. Rows match the wpilog path's identities, so
+  CAN names carry over; `import_check` pins the result.
 - **Fun-fact slides: every number is real**, and jokes are at our own expense.
 - CAN naming is data entry (not gated); deleting a session is gated.
 

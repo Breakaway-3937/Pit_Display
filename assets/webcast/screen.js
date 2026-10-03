@@ -224,6 +224,7 @@
     if (face === "quality") return faceQuality(data);
     if (face === "bk_seasons") return faceSeasons(data);
     if (face === "dataset") return faceDataset(data);
+    if (face === "fact_card") return faceFactCard(data);
     return faceUnknown();
   }
 
@@ -385,9 +386,41 @@
     return face;
   }
 
+  // ── Fun-fact cards (fact_card_overlay.py) ──────────────────────────────
+  // A: a Breakaway record as a figure card; B: a "Did you know?" sentence as
+  // a statement card. Card n of each deck, by the server-synced clock.
+  var cardShown = null;
+  function cardFor(d) {
+    var deck = d.deck || [];
+    if (!deck.length) return null;
+    var n = Math.floor((Date.now() + clockSkew) / 1000 / (d.period_s || 15));
+    return deck[n % deck.length];
+  }
+  function faceFactCard(d) {
+    var c = d && !d.empty ? cardFor(d) : null;
+    cardShown = c ? JSON.stringify(c) : null;
+    if (!c) return notOnYet("FUN FACTS",
+      "Breakaway's records and facts appear here once they arrive from home and an adult has turned them on.");
+    if (c.kind === "record") {
+      var box = h("div", "face card-record");
+      box.appendChild(h("div", "eyebrow", "BREAKAWAY'S RECORDS"));
+      box.appendChild(h("div", "card-value", c.value));
+      box.appendChild(h("div", "card-record-name", c.record));
+      if (c.detail) box.appendChild(h("div", "subline", c.detail));
+      return box;
+    }
+    return faceStatement({ eyebrow: "Did you know?" + (c.category === "arkansas" ? "  ·  Arkansas" : ""),
+                           title: c.text });
+  }
+
   // The generic dataset turns by the clock: re-render when its page changes.
   setInterval(function () {
     if (!state || state.on === false) return;
+    if (state.face === "fact_card" && state.fact_card) {
+      var c = cardFor(state.fact_card);
+      if ((c ? JSON.stringify(c) : null) !== cardShown) render(state);
+      return;
+    }
     var d = state.face === "dataset" ? state.dataset
           : (state.rotation && state.rotation.face === "dataset" ? state.rotation.dataset : null);
     if (!d) return;
@@ -663,6 +696,9 @@
     } else if (s.face === "schedule") {
       node = faceSchedule(s.schedule || { empty: true, rows: [] });
       el.ledgerLeft.textContent = "OUR MATCHES TODAY";
+    } else if (s.face === "fact_card") {
+      node = faceFactCard(s.fact_card || { empty: true });
+      el.ledgerLeft.textContent = s.screen && s.screen.slice(-1) === "b" ? "DID YOU KNOW" : "BREAKAWAY'S RECORDS";
     } else if (s.face === "quality" || s.face === "bk_seasons" || s.face === "dataset") {
       node = faceByName(s.face, s[s.face] || { empty: true });
       el.ledgerLeft.textContent = s.face === "quality" ? "QUALITY AWARD LEADERS"

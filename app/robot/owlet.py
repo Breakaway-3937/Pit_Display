@@ -216,7 +216,8 @@ def clear_scratch(path: Path) -> None:
 
 
 def convert(hoot: Path, out: Path,
-            progress: Callable[[str], None] | None = None) -> Path:
+            progress: Callable[[str], None] | None = None,
+            fmt: str = "mcap") -> Path:
     """
     Extract `hoot` to `out` as a wpilog. Returns `out`.
 
@@ -234,7 +235,10 @@ def convert(hoot: Path, out: Path,
             f"Alternatively, convert the .hoot yourself and import the .wpilog.")
     _prepare(exe)
 
-    args = [str(exe), "-f", "wpilog", str(hoot), str(out)]
+    # mcap, not wpilog: owlet 26.3.0's wpilog writer cuts the end off most
+    # conversions and still exits 0 (app/robot/mcap.py has the evidence);
+    # its mcap is byte-identical every run and complete.
+    args = [str(exe), "-f", fmt, str(hoot), str(out)]
     result = _run(args, progress)
 
     if result.returncode != 0 and _is_licence_failure(result):

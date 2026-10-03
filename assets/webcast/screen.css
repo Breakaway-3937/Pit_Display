@@ -354,6 +354,15 @@ body[data-face="dataset"] .stage { justify-content: flex-start; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ds-td.ours { color: var(--ink); font-weight: 700; background: var(--rule); }
 
+/* ── Fun-fact record card (fact_card_overlay.py): the value as a figure
+   (300 at most), the record named at 64, home's detail as the subline. */
+.card-record .card-value { font-family: var(--display); font-weight: 700;
+  font-size: calc(260 * var(--u)); line-height: .9; letter-spacing: -.03em; color: var(--ink);
+  margin: calc(20 * var(--u)) 0 calc(28 * var(--u)); white-space: nowrap; }
+.card-record-name { font-family: var(--display); font-weight: 700; font-size: calc(64 * var(--u));
+  line-height: 1.05; color: var(--ink); max-width: calc(1500 * var(--u)); }
+.card-record .subline { margin-top: calc(24 * var(--u)); max-width: calc(1300 * var(--u)); }
+
 /* ── Boards ───────────────────────────────────────────────────────────── */
 .board-status {
   font-family: var(--display); font-weight: 700;

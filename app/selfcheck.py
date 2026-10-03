@@ -200,6 +200,15 @@ def _check_owlet() -> Result:
         from app.robot import owlet
         described = owlet.describe()
         binary = owlet.find_owlet()
+        # A hoot is read as owlet's .mcap, LZ4 chunks: without lz4 every hoot
+        # import fails, and only an import would find out.
+        try:
+            import lz4.frame
+            lz4.frame.decompress(lz4.frame.compress(b"pit"))
+        except Exception as e:
+            return Result("owlet", False,
+                          f"{described}\nlz4 is missing from this build ({type(e).__name__}): "
+                          ".hoot import (owlet's .mcap) cannot work")
         if binary is None:
             return Result("owlet", True,
                           f"{described}\nNo binary for this platform — .hoot "

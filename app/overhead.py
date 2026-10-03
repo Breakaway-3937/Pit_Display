@@ -14,6 +14,7 @@ each screen shows its half:
 | `facts` | Breakaway's facts | Arkansas's facts |
 | `analysis` | the newest analysis board | Robot Info (the same log, motor by motor) |
 | `stats` | the Quality Award leaderboard | Breakaway season by season |
+| `fun` | a Breakaway record, as a figure card | a "Did you know?" sentence, as a card (turning together) |
 | `datasets` | home's datasets, the first of each pair | the second, turning together |
 
 **Shared: the set, and the rotation's position. Per screen: everything
@@ -40,6 +41,7 @@ SETS: dict[str, tuple[str, str]] = {
     "facts":      ("facts",       "facts"),
     "analysis":   ("analysis",    "robot_info"),
     "stats":      ("quality",     "bk_seasons"),
+    "fun":        ("fact_card",   "fact_card"),
     "datasets":   ("dataset",     "dataset"),
 }
 LABELS = {
@@ -50,6 +52,7 @@ LABELS = {
     "facts":      "Did you know?",
     "analysis":   "Analysis board",
     "stats":      "Team stats",
+    "fun":        "Fun facts",
     "datasets":   "Datasets",
 }
 

@@ -219,7 +219,7 @@ def face_for(screen_id: str) -> str:
     content = str(config.get(screen_id, "content", "rotation") or "rotation")
     return content if content in (
         "rotation", "next_match", "checklist", "diagnostics", "robot_info", "analysis",
-        "facts", "schedule", "quality", "bk_seasons", "dataset"
+        "facts", "schedule", "quality", "bk_seasons", "dataset", "fact_card"
     ) else "rotation"
 
 
@@ -279,6 +279,9 @@ def screen_state(screen_id: str, on: bool = True) -> dict[str, Any]:
         elif face == "schedule":
             state["schedule"] = sched = schedule_state()
             state["ledger_right"] = _schedule_credit(sched)
+        elif face == "fact_card":
+            state["fact_card"] = fact_card_state(screen_id)
+            state["ledger_right"] = _credit("dataset")
         elif face in ("quality", "bk_seasons", "dataset"):
             # Home's datasets (app/datasets.py): TBA data, credited.
             state[face] = (quality_state() if face == "quality" else
@@ -406,6 +409,19 @@ def dataset_state(screen_id: str) -> dict[str, Any]:
                                "ours": d.is_highlight(k)} for k, r in enumerate(d.rows)]})
     return {"empty": not sets, "period_s": PERIOD_S,
             "side": "b" if screen_id.endswith("_b") else "a", "sets": sets}
+
+
+def fact_card_state(screen_id: str) -> dict[str, Any]:
+    """This screen's whole fun-fact deck and the period; the page picks the
+    card by the server-synced clock, exactly as the native face does
+    (`datasets.card`), so A, B and both renderers turn together."""
+    from app import datasets
+    if screen_id.endswith("_b"):
+        deck = [{"kind": "fact", "category": c, "text": t} for _k, c, t in datasets.fun_facts()]
+    else:
+        deck = [{"kind": "record", "record": r, "value": v, "detail": d}
+                for r, v, d in datasets.records()]
+    return {"empty": not deck, "period_s": datasets.CARD_PERIOD_S, "deck": deck}
 
 
 def facts_state(screen_id: str = "") -> dict[str, Any]:

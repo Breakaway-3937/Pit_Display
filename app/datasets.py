@@ -26,7 +26,40 @@ from typing import Any
 from app import dataset_settings
 
 # Datasets with a screen of their own; everything else is generic.
-DEDICATED = {"quality": "quality", "bk_seasons": "bk_seasons"}
+DEDICATED = {"quality": "quality", "bk_seasons": "bk_seasons", "bk_records": "fact_card"}
+RECORDS_KEY = "bk_records"
+CARD_PERIOD_S = 15
+
+
+def records() -> list[tuple[str, str, str]]:
+    """(record, value, detail) from home's `bk_records`, in its order, once cleared."""
+    d = get(RECORDS_KEY)
+    if d is None:
+        return []
+    out = []
+    for row in d.rows:
+        rec, val = d.value(row, "record"), d.value(row, "value")
+        if rec and val is not None:
+            out.append((str(rec), cell(val), str(d.value(row, "detail") or "")))
+    return out
+
+
+def card(screen_id: str, now_s: float) -> dict | None:
+    """This screen's fun-fact card now: A a Breakaway record, B a "Did you
+    know?" sentence, both turning every CARD_PERIOD_S by the clock, card n
+    opposite card n (DRAFT pairing). None when that deck is empty."""
+    n = int(now_s // CARD_PERIOD_S)
+    if screen_id.endswith("_b"):
+        facts = fun_facts()
+        if not facts:
+            return None
+        key, cat, text = facts[n % len(facts)]
+        return {"kind": "fact", "category": cat, "text": text}
+    recs = records()
+    if not recs:
+        return None
+    rec, val, detail = recs[n % len(recs)]
+    return {"kind": "record", "record": rec, "value": val, "detail": detail}
 # Text for the facts screens rather than a table of its own.
 FACTS_KEY = "fun_facts"
 
@@ -175,9 +208,8 @@ def nickname(team: str) -> str:
 
 def fun_facts() -> list[tuple[str, str, str]]:
     """(key, category, text) from home's `fun_facts` dataset, by its `sort`.
-    Read whether or not it's cleared: the facts screens are cleared on their
-    own (the "Did you know?" set)."""
-    d = get(FACTS_KEY, enabled_only=False)
+    Only once an adult has cleared it, like every dataset."""
+    d = get(FACTS_KEY)
     if d is None:
         return []
     out = []

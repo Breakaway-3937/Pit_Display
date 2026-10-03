@@ -251,9 +251,13 @@ def main() -> int:
     db.execute("DELETE FROM tba_fact")
     check("off until an adult turns them on", datasets.all_datasets() == []
           and state.quality_state()["empty"])
-    check("facts come from home's fun_facts dataset when tba_fact is empty",
-          [f.key for f in __import__("app.tba_facts", fromlist=["x"]).facts()] == ["our_streak", "ar_teams"])
-    dataset_settings.save(enabled=["quality", "bk_seasons", "bk_records", "ar_leaderboard"])
+    tf = __import__("app.tba_facts", fromlist=["x"])
+    check("fun_facts stays off the screens until an adult clears it", tf.facts() == [])
+    dataset_settings.save(enabled=["fun_facts"])
+    check("cleared, facts come from home's fun_facts dataset (tba_fact is empty)",
+          [f.key for f in tf.facts()] == ["our_streak", "ar_teams"])
+    dataset_settings.save(enabled=["quality", "bk_seasons", "bk_records", "ar_leaderboard",
+                                   "fun_facts"])
     rotation.refresh()
     qapp.processEvents()
     check("cleared: the program gains the Team stats stop (A quality | B seasons)",
@@ -281,18 +285,36 @@ def main() -> int:
     qapp.processEvents()
     from app.widgets.dataset_overlay import side_dataset
     da, dbb = side_dataset("presentation_a", 0), side_dataset("presentation_b", 0)
-    check("Datasets: A and B show the two of a pair (generic renderer)",
-          page_of(a) == page_of(b) == "dataset" and da and dbb and da.key != dbb.key
-          and {da.key, dbb.key} == {"bk_records", "ar_leaderboard"},
+    check("Datasets: the generic set is every other cleared one (records have cards)",
+          page_of(a) == page_of(b) == "dataset" and da and da.key == "ar_leaderboard",
           f"{da and da.key} | {dbb and dbb.key}")
     wd = state.dataset_state("presentation_b")
     ar = next(x for x in wd["sets"] if x["key"] == "ar_leaderboard")
     check("generic: team_key hidden beside team_number, our row flagged",
           "Team key" not in ar["headers"] and [r["ours"] for r in ar["rows"]] == [False, True],
           str(ar["headers"]))
-    for w in (a, b):
-        w._stack.currentWidget().grab()          # paint every new face once
-    check("the new faces paint without error", True)
+    overhead.choose("fun")
+    qapp.processEvents()
+    ca, cb = datasets.card("presentation_a", 0), datasets.card("presentation_b", 0)
+    check("Fun facts: A a Breakaway record card | B a 'Did you know?' card",
+          page_of(a) == page_of(b) == "fact_card" and ca["kind"] == "record"
+          and ca["value"] == "21" and cb["kind"] == "fact"
+          and cb["text"].startswith("Breakaway has brought"), f"{ca} | {cb}")
+    check("cards turn together by the clock (15 s)",
+          datasets.card("presentation_a", 15)["record"] != ca["record"]
+          and datasets.card("presentation_b", 15)["text"] != cb["text"])
+    fc = state.screen_state("presentation_b")
+    check("network: B's deck and the TBA credit",
+          len(fc["fact_card"]["deck"]) == 2 and "BLUE ALLIANCE" in fc["ledger_right"])
+    # Paint every new face once, on both screens: a paint error is a crash.
+    painted = []
+    for page in ("quality", "bk_seasons", "dataset", "fact_card", "schedule", "facts"):
+        for w in (a, b):
+            face = w._stack.widget(w._CONTENT_PAGES[page])
+            face.resize(1920, 1080)
+            face.grab()
+            painted.append(page)
+    check("every new face paints on both screens", len(painted) == 12)
 
     print("\nData goes away")
     nexus._status = None

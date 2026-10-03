@@ -892,6 +892,16 @@ record". `tools/program_check.py` proves the pit side with sample rows.
 > the pit would read the same way. Until then the schedule shows without
 > results and the record is left out, never guessed.
 
+> **Home, 2026-10-03. Built as option (b), a dataset, under Brayden's
+> datasets-only rule (home `f0acb30`):** `bk_matches_today` (category 3937,
+> sort 15) from `dbo.vw_3937_matches_today` (home migration 010, Brayden runs
+> it). Columns: `play_order`, `match_key`, `red_score`, `blue_score`,
+> `winning_alliance`, `event_key`, `comp_level`, `set_number`, `match_number`,
+> `our_alliance`, `result`, `match_time_local`; our matches on the event's
+> local today, in play order. The live tracker re-sends it after each poll
+> (~2 min in match hours), only when it changed. Tested on 2026-03-20 (9 rows
+> at 2026arli). Live once 010 runs and the VM is redeployed with `4c7f63e`.
+
 
 ## R11 · 2026-10-02 · From Brayden (via home): two dataset screens · **Pit side built (2026-10-02); waits for the push**
 

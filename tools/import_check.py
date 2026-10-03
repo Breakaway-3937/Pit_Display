@@ -10,12 +10,12 @@ counts: raw records read, rows stored, duration. A `.wpilog` is imported twice
 (our reader must be deterministic); a `.hoot` goes through CTRE's owlet first
 and is imported `--hoot-runs` times.
 
-**Why the hoot runs repeat.** owlet 26.3.0 on macOS was measured
-(2026-10-02) to cut the end off ~73% of `.wpilog` conversions of the same
-hoot while reporting 100% and exiting 0: the short outputs are the complete
-one minus its last seconds on every signal. The pit runs the Windows build;
-this check is how to find out whether it does the same. A failure here is a
-real one: an import that would silently lose the end of a match.
+**Why the hoot runs repeat.** owlet 26.3.0's `.wpilog` writer cut the end
+off ~73% of conversions of the same hoot while reporting 100% (2026-10-02;
+five other explanations tested and ruled out, see app/robot/mcap.py), so a
+hoot is now read as owlet's `.mcap`, which is byte-identical every run. This
+check is what keeps it honest: a failure here is an import that would
+silently lose data.
 """
 
 from __future__ import annotations
@@ -36,8 +36,10 @@ from app.console import use_utf8  # noqa: E402
 GOLDEN = {
     "akit_26-08-17_02-43-54.wpilog": (932381, 875223, 939.414),
     "akit_26-08-17_02-59-21.wpilog": (389619, 364485, 391.411),
-    # The complete owlet conversion (9,501,728 bytes on macOS, owlet 26.3.0).
-    "rio_2026-08-17_03-42-54.hoot": (590619, 36781, 42.669),
+    # Read as owlet's .mcap (app/robot/mcap.py): every sample once, the whole
+    # 42.669 s, every run. (owlet's .wpilog of it was complete in 4 runs of 15,
+    # and wrote 238 samples twice even then.)
+    "rio_2026-08-17_03-42-54.hoot": (590381, 36759, 42.669),
 }
 
 _IMPORT = r"""

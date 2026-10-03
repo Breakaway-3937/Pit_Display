@@ -113,6 +113,37 @@ class ImportResult:
 # whatever it holds — a file handle, an mmap, or a scratch directory holding a
 # gigabyte of converted log.
 
+class _McapSource:
+    """owlet's `.mcap` of a hoot (app/robot/mcap.py: why not its `.wpilog`)."""
+
+    kind = "hoot"
+
+    def __init__(self, path: Path):
+        from app.robot import mcap
+        self._reader = mcap.Reader(path)
+        try:
+            self._reader.open()
+        except mcap.McapError as err:
+            raise ImportError_(str(err)) from err
+
+    def rows(self) -> Iterator[Row]:
+        yield from self._reader.rows()
+
+    def fraction(self) -> float:
+        return self._reader.fraction()
+
+    def close(self) -> None:
+        self._reader.close()
+
+    @property
+    def skipped(self) -> int:
+        return self._reader.skipped
+
+    @property
+    def enum_overflow(self) -> set[str]:
+        return self._reader.enum_overflow
+
+
 class _WpilogSource:
     """A WPILib DataLog — the robot's own, or one owlet extracted from a hoot."""
 
@@ -162,11 +193,11 @@ class _HootSource:
             self._dir = owlet.scratch_dir(path)
         except owlet.OwletError as err:
             raise ImportError_(str(err)) from err
-        self._inner: _WpilogSource | None = None
+        self._inner: _McapSource | None = None
         try:
             say(f"Extracting {path.name} with owlet…", 0.01)
             out = owlet.convert(
-                path, self._dir / (path.stem + ".wpilog"),
+                path, self._dir / (path.stem + ".mcap"),
                 progress=lambda line: say(f"owlet: {line}", 0.02))
         except owlet.OwletError as err:
             owlet.clear_scratch(self._dir)
@@ -174,7 +205,7 @@ class _HootSource:
         except Exception:
             owlet.clear_scratch(self._dir)
             raise
-        self._inner = _WpilogSource(out)
+        self._inner = _McapSource(out)
 
     def rows(self) -> Iterator[Row]:
         assert self._inner is not None

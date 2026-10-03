@@ -162,6 +162,10 @@ datas += _webengine_support()
 
 hiddenimports = [
     "app.db.migrations",     # imported for its registration side effect only
+    # A hoot is read as owlet's .mcap, whose chunks are LZ4 (app/robot/mcap.py
+    # imports lz4.frame lazily, inside a function, so name it here).
+    # `--self-check`'s `owlet` line fails if it didn't make it in.
+    "lz4.frame",
     "PyQt6.QtWebEngineCore",
     "PyQt6.QtWebEngineWidgets",
     # The pit-LAN screens and the Nexus relay socket. Both are imported

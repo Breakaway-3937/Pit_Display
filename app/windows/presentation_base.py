@@ -61,6 +61,7 @@ from app.widgets.schedule_overlay import ScheduleOverlay
 from app.widgets.quality_overlay import QualityOverlay
 from app.widgets.seasons_overlay import SeasonsOverlay
 from app.widgets.dataset_overlay import DatasetOverlay
+from app.widgets.fact_card_overlay import FactCardOverlay
 from app.widgets.diagnostics_overlay import DiagnosticsOverlay
 from app.widgets.robot_info_overlay import RobotInfoOverlay
 from app.widgets.lunch_overlay import LunchOverlay
@@ -90,6 +91,7 @@ class PresentationScreen(QMainWindow):
     _PAGE_QUALITY     = 11
     _PAGE_SEASONS     = 12
     _PAGE_DATASET     = 13
+    _PAGE_FACT_CARD   = 14
 
     _CONTENT_PAGES = {
         "checklist":   _PAGE_CHECKLIST,
@@ -102,6 +104,7 @@ class PresentationScreen(QMainWindow):
         "quality":     _PAGE_QUALITY,
         "bk_seasons":  _PAGE_SEASONS,
         "dataset":     _PAGE_DATASET,
+        "fact_card":   _PAGE_FACT_CARD,
     }
 
 
@@ -240,6 +243,9 @@ class PresentationScreen(QMainWindow):
         self._stack.addWidget(self._seasons)                # 12
         self._dataset = DatasetOverlay(screen_id=self.SCREEN_ID)
         self._stack.addWidget(self._dataset)                # 13
+        # Fun facts: a Breakaway record (A) | a "Did you know?" sentence (B).
+        self._fact_card = FactCardOverlay(screen_id=self.SCREEN_ID)
+        self._stack.addWidget(self._fact_card)              # 14
 
         self._stack.setCurrentIndex(self._standard_page())
         if self._standard_page() == self._PAGE_NORMAL:
