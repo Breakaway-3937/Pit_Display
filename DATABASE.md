@@ -110,6 +110,7 @@ side effect. `main.py` does this at the top.
 | 13 | `_v13_tba` | `tba_event`, `tba_match`: TheBlueAlliance rows home pushes; pulled only. See [Analysis](#analysis) |
 | 14 | `_v14_session_origin` | `log_session.origin`, `origin_name`: the machine a session was imported on. Local cache of a hub fact; doesn't sync |
 | 15 | `_v15_tba_feeds` | `tba_team`, `tba_rival`, `tba_fact`: home's award feeds; pulled only |
+| 18 | `_v18_log_fingerprint` | `log_session.source_sha256`, `source_head_sha256`, `source_header`: a log's identity is its contents (every byte; the first 64 KiB; the header text), never its name. Carried in bundles |
 | 17 | `_v17_home_dataset` | `home_dataset`: home's standard datasets (R10/R11), pulled only; shown once cleared (`datasets` team setting) |
 | 16 | `_v16_relay` | R2 as a relay (R8): `sync_blob_request`, `sync_verdict`; `tracks.sha`, `sha_size`, `sha_mtime_ns`, `team_deleted` |
 
@@ -317,7 +318,8 @@ One row per imported file.
 | `device_serial`, `started_at` | parsed from the filename |
 | `duration_s` | length of the log in seconds |
 | `raw_rows`, `stored_rows` | compression audit — **read it against `source_kind`**. A hoot compresses ~19×; a wpilog is *already* change-only and lands near 1.1×, which is normal and not a fault. A hoot far off 19× is the cheapest signal that the export format changed |
-| `source_bytes`, `archive_path` | provenance for re-import after eviction. `archive_path` is this machine's own copy when the log came in through **Import a folder** (`app/robot/batch.py`, `robot_logs/` in the data tree). `source_name` + `source_bytes` is how a batch recognises a log imported before, from any path or pit |
+| `source_bytes`, `archive_path` | provenance for re-import after eviction. `archive_path` is this machine's own copy when the log came in through **Import a folder** (`app/robot/batch.py`, `robot_logs/` in the data tree). The copy is **deleted once its data is in the database** (kept while `upload_raw` still has to upload it; the engine deletes it after), and `archive_path` cleared |
+| `source_sha256`, `source_head_sha256`, `source_header` | (v18) **how a log is recognised: by contents, never its name.** SHA-256 of every byte (the same file), of the first 64 KiB (the same recording at another length), and the header as text (`WPILOG 1.0 AdvantageKit`, `roboRIO Native CAN Bus`). Filled at import, carried in the bundle's `session` table; NULL for sessions imported before v18 until their file is seen again (`batch.backfill`) |
 | `match_key`, `notes`, `keep` | operator metadata; `keep = 1` exempts from future eviction. `match_key` is pre-filled from the filename when it carries a match (`FRC_…_Q15` → `qm15`) and is editable either way |
 
 #### `device` — the CAN-id → English name map

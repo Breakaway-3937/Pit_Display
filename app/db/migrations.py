@@ -811,3 +811,25 @@ def _v17_home_dataset(conn: sqlite3.Connection) -> None:
         """
     )
 
+
+
+@register_migration
+def _v18_log_fingerprint(conn: sqlite3.Connection) -> None:
+    """
+    A log's identity is its contents, never its name (Brayden, 2026-10-03):
+    `source_sha256` is SHA-256 of every byte, `source_head_sha256` of the first
+    64 KiB (the format header and the start of the recording: the same
+    recording copied at a different length shares it), `source_header` the
+    header as text ("WPILOG 1.0 AdvantageKit", "roboRIO Native CAN Bus").
+    Filled at import (`app/robot/batch.py`), carried in bundles. Sessions
+    imported earlier are NULL until their file is seen again.
+    """
+    conn.executescript(
+        """
+        ALTER TABLE log_session ADD COLUMN source_sha256 TEXT;
+        ALTER TABLE log_session ADD COLUMN source_head_sha256 TEXT;
+        ALTER TABLE log_session ADD COLUMN source_header TEXT;
+        CREATE INDEX log_session_sha ON log_session(source_sha256);
+        CREATE INDEX log_session_head ON log_session(source_head_sha256);
+        """
+    )

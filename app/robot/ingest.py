@@ -260,13 +260,17 @@ def import_log(
     db_path: str | Path,
     progress: Callable[[str, float], None] | None = None,
     archive_path: str | Path | None = None,
+    fp=None,
 ) -> ImportResult:
     """
     Import one log — a `.hoot` or a `.wpilog`.
 
     `archive_path` is this machine's own copy of the file when it was copied
     in (`app/robot/batch.py`); the session records it so the original can be
-    found (and uploaded with `upload_raw`) after the drive is gone.
+    found (and uploaded with `upload_raw`) after the drive is gone. `fp` is
+    its `batch.Fingerprint` when the caller already read it; otherwise the
+    file is fingerprinted here (one extra read). A log is "already imported"
+    when its contents match, never its name or path.
 
     `progress(message, fraction)` is called periodically. Raises ImportError_ if
     the file was already imported, cannot be read, or has no parseable rows —
@@ -290,12 +294,26 @@ def import_log(
         # Before opening the source, not after: opening a .hoot runs owlet, and
         # spending four minutes extracting a log only to be told it was already
         # imported is the kind of thing that happens in a six-minute pit cycle.
+        from app.robot import batch
+        if fp is None:
+            say(f"Checking {path.name}…", 0.0)
+            fp = batch.fingerprint(path)
+        if not fp.valid:
+            raise ImportError_(f"{path.name}: {fp.problem}.")
+        dup = conn.execute("SELECT id FROM log_session WHERE source_sha256 = ?",
+                           (fp.sha256,)).fetchone()
+        if dup is not None:
+            raise ImportError_(
+                f"Already imported as session {dup['id']} (the same file contents). "
+                f"Delete that session first if you want to re-import."
+            )
         dup = conn.execute("SELECT id FROM log_session WHERE source_file = ?",
                            (str(path),)).fetchone()
         if dup is not None:
             raise ImportError_(
-                f"Already imported as session {dup['id']}. Delete that session "
-                f"first if you want to re-import."
+                f"A different file was imported from this same path as session "
+                f"{dup['id']}. Delete that session, or import this one from another "
+                f"folder (Import a folder does that for you)."
             )
 
         src = _open_source(path, say)
@@ -303,10 +321,12 @@ def import_log(
         cur = conn.execute(
             """INSERT INTO log_session
                    (source_file, source_name, source_kind, device_serial,
-                    started_at, match_key, source_bytes, archive_path)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    started_at, match_key, source_bytes, archive_path,
+                    source_sha256, source_head_sha256, source_header)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (str(path), path.name, src.kind, meta.serial, meta.started,
-             meta.match_key, total_bytes, str(archive_path) if archive_path else None),
+             meta.match_key, total_bytes, str(archive_path) if archive_path else None,
+             fp.sha256, fp.head_sha256, fp.header),
         )
         session_id = cur.lastrowid
 

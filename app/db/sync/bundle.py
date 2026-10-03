@@ -80,7 +80,8 @@ def build(db_path: Path, session_id: int, out_dir: Path) -> Path:
         conn.execute(
             """CREATE TABLE session AS SELECT uid, source_name, source_kind, device_serial,
                    started_at, duration_s, raw_rows, stored_rows, source_bytes,
-                   match_key, notes, keep, imported_at
+                   match_key, notes, keep, imported_at,
+                   source_sha256, source_head_sha256, source_header
                FROM m.log_session WHERE id = :s""", p)
         conn.execute(
             f"""CREATE TABLE device AS SELECT device_type, can_id, label, subsystem, notes
@@ -198,15 +199,20 @@ def import_bundle(db_path: Path, gz: Path, scratch: Path) -> int:
         conn.execute("BEGIN")
         conn.execute("UPDATE sync_guard SET applying = 1 WHERE id = 1")
         s = conn.execute("SELECT * FROM b.session").fetchone()
+        # A log's fingerprint (v18) travels with it, so every pit recognises
+        # it by content; bundles from older builds have none.
+        fp = {k: (s[k] if k in s.keys() else None)
+              for k in ("source_sha256", "source_head_sha256", "source_header")}
         cur = conn.execute(
             """INSERT INTO log_session
                    (source_file, source_name, source_kind, device_serial, started_at,
                     duration_s, raw_rows, stored_rows, source_bytes, match_key, notes,
-                    keep, uid)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    keep, uid, source_sha256, source_head_sha256, source_header)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (f"sync:{uid}", s["source_name"], s["source_kind"], s["device_serial"],
              s["started_at"], s["duration_s"], s["raw_rows"], s["stored_rows"],
-             s["source_bytes"], s["match_key"], s["notes"], s["keep"] or 0, uid))
+             s["source_bytes"], s["match_key"], s["notes"], s["keep"] or 0, uid,
+             fp["source_sha256"], fp["source_head_sha256"], fp["source_header"]))
         sid = cur.lastrowid
 
         # Devices and signals are shared dictionaries: add what's missing,

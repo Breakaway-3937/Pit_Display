@@ -72,7 +72,8 @@ BY_NAME = {s.name: s for s in SPECS}
 LOG_SESSION = "log_session"
 SESSION_COLS = ("source_name", "source_kind", "device_serial", "started_at",
                 "duration_s", "raw_rows", "stored_rows", "source_bytes",
-                "match_key", "notes", "keep", "imported_at")
+                "match_key", "notes", "keep", "imported_at",
+                "source_sha256", "source_header")
 SESSION_EDITABLE = ("match_key", "notes", "keep")
 
 # Boards from the analysis pipeline: home's arrive, a pit's own are pushed

@@ -164,12 +164,16 @@ match Onshape exactly.
 pick the folder (the whole USB stick, or the roboRIO's log dump) and every
 `.hoot` and `.wpilog` in it, and in every folder inside it, is copied onto
 this machine first. When the status line says "The drive can come out", it
-can. Logs imported before (from anywhere) are listed in a pop-up: tick any
-to import again (that replaces the earlier session; admin only), or skip
-them. The rest import newest first while you keep working; **Stop** stops
-after the current file, and running the same folder again picks up where it
-left off. Copies live in the `robot_logs` folder beside the database, so
-check free space now and then.
+can. Logs are recognised by what's in them, not their names: one imported
+before (from any drive, folder or pit) is listed in a pop-up as **Same file**
+(identical) or **Same recording** (a longer or shorter copy; a longer one is
+ticked for you). Tick any to import again (that replaces the earlier
+session; admin only), or leave them unticked to skip. The rest import newest
+first while you keep working; **Stop** stops after the current file, and
+running the same folder again picks up where it left off. Each copy is
+deleted from this machine as soon as it's in the database (the drive itself
+is never touched); a log that failed, or a different copy you didn't import,
+stays in the `robot_logs` folder beside the database.
 
 **Control → Pit Systems → Telemetry → Robot telemetry → Choose log file…**
 

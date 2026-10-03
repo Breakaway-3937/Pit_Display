@@ -1016,3 +1016,13 @@ land; a pit shows both screens with Breakaway emphasised.
 > pit-front panel and overhead slide words in the app; the doc syncs like
 > `datasets`. If home keeps an allow-list of setting docs, add `wording`.
 > **Check:** an edit saved on one pit shows on another after a sync cycle.
+
+> **Pit, 2026-10-03. FYI for v0.2.0-beta.11, no action unless home reads
+> these: log fingerprints.** `log_session` gains (pit migration v18)
+> `source_sha256` (SHA-256 of every byte), `source_head_sha256` (first 64 KiB)
+> and `source_header` (`WPILOG 1.0 AdvantageKit`, `roboRIO Native CAN Bus`).
+> They ride in the bundle's `session` table, and `source_sha256` and
+> `source_header` in the `log_session` hub row's data. Pits now recognise a
+> log by its contents, never its name. If home dedupes logs, `source_sha256`
+> is the key to use. Older bundles have none (NULL).
+> **Check:** a bundle from beta.11 has `session.source_sha256` = `shasum -a 256` of the original file.

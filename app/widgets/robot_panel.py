@@ -12,8 +12,10 @@ Two jobs:
 2. **Import.** Runs on a worker thread — a 3.85 GB file takes about a minute and
    would otherwise freeze the whole app. **Import a folder** takes a whole
    drive at once (`app/robot/batch.py`): every log in every subfolder is copied
-   onto this machine first, logs imported before are staged in a pop-up
-   (skip, or re-import), and the rest import newest first, one at a time.
+   onto this machine first and fingerprinted by content, logs imported before
+   (same bytes, or the same recording at another length) are staged in a
+   pop-up (skip, or re-import), the rest import newest first, one at a time,
+   and each copy is deleted once its data is in the database.
 
 Naming is not admin-gated: it is data entry, and getting the pit's motor names
 right matters more than protecting them. Deleting a session is gated, because
@@ -94,9 +96,10 @@ class _CopyWorker(QThread):
         try:
             self.progressed.emit(f"Looking through {self._root.name} and every folder in it…", 0.0)
             plan = batch.find_logs(self._root)
-            batch.mark_duplicates(plan, self._db_path)
             batch.copy_in(plan, progress=lambda m, f: self.progressed.emit(m, f),
                           cancelled=lambda: self.stop)
+            self.progressed.emit("Comparing with the logs already imported…", 1.0)
+            batch.mark_duplicates(plan, self._db_path)
             self.finished_ok.emit(plan)
         except batch.CopyError as exc:
             self.failed.emit(str(exc))
@@ -116,6 +119,7 @@ class _BatchImportWorker(QThread):
         super().__init__(parent)
         self._jobs = jobs                     # [(batch.Found, session id to replace or None)]
         self._db_path = db_path
+        self._keep = batch.keep_for_upload()
         self.stop = False
 
     def run(self):
@@ -129,10 +133,14 @@ class _BatchImportWorker(QThread):
             try:
                 if replace is not None:
                     delete_session(replace, self._db_path)
-                import_log(f.dest, self._db_path, archive_path=f.dest,
+                import_log(f.dest, self._db_path, archive_path=f.dest, fp=f.fp,
                            progress=lambda m, frac, head=head, i=i:
                                self.progressed.emit(f"{head} · {m}", (i - 1 + frac) / n))
                 ok += 1
+                # In the database now: the copy goes, unless team sync still
+                # has to upload the original (the engine deletes it after).
+                if not self._keep:
+                    batch.discard(f.dest, self._db_path)
                 self.file_done.emit(f.name, "")
             except ImportError_ as exc:
                 failed.append((f.name, str(exc)))
@@ -145,8 +153,9 @@ class _BatchImportWorker(QThread):
 
 class _DuplicatesDialog(QDialog):
     """
-    Logs in the folder that were imported before. They're already copied onto
-    this machine either way; this only decides whether to import them again.
+    Logs in the folder whose contents match ones imported before (`batch.py`:
+    the same bytes, or the same recording at another length). They're already
+    copied onto this machine; this decides whether to import them again.
     Re-importing replaces the earlier session, so it's offered only for a
     session imported on this machine and only with the admin lock open
     (deleting a session is admin-only); otherwise the box says why not.
@@ -159,29 +168,34 @@ class _DuplicatesDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(24, 22, 24, 22)
         lay.setSpacing(12)
-        head = label(f"{len(dups)} of these logs were imported before", "stat_value")
+        head = label(f"{len(dups)} of these logs match ones imported before", "stat_value")
         head.setWordWrap(True)
         lay.addWidget(head)
-        note = label("They're copied onto this machine either way. Tick any to import "
-                     "again; that replaces the earlier session. Unticked ones are "
-                     "skipped.", "stat_label")
+        note = label("Matched by their contents, not their names. “Same file” is "
+                     "identical, byte for byte. “Same recording” starts the same but is "
+                     "a different length (a longer copy is ticked for you). Tick any "
+                     "to import again; that replaces the earlier session. Unticked "
+                     "same files are skipped and their copies deleted; an unticked "
+                     "different copy is kept on this machine.", "stat_label")
         note.setWordWrap(True)
         lay.addWidget(note)
 
-        table = QTableWidget(len(dups), 3)
-        table.setHorizontalHeaderLabels(["Re-import", "Log", "Imported before"])
+        table = QTableWidget(len(dups), 4)
+        table.setHorizontalHeaderLabels(["Re-import", "Log", "Match", "Imported before"])
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(46)
         hh = table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self._boxes: list[tuple[QCheckBox, object]] = []
         for r, f in enumerate(dups):
             prev = f.duplicate_of
             box = QCheckBox()
             local = batch.is_local(prev)
             box.setEnabled(local and unlocked)
+            box.setChecked(box.isEnabled() and f.match == "same_recording" and f.longer)
             if not local:
                 box.setToolTip("Imported on another pit and synced here; it can only "
                                "be replaced where it was imported.")
@@ -196,11 +210,20 @@ class _DuplicatesDialog(QDialog):
             name = QTableWidgetItem(str(f.rel))
             name.setFlags(name.flags() & ~Qt.ItemFlag.ItemIsEditable)
             table.setItem(r, 1, name)
+            if f.match == "exact":
+                kind = "Same file"
+            else:
+                was = (prev.get("source_bytes") or 0) / 1e6
+                kind = (f"Same recording, {'longer' if f.longer else 'shorter'} "
+                        f"({f.size / 1e6:.1f} MB, was {was:.1f})")
+            k = QTableWidgetItem(kind)
+            k.setFlags(k.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(r, 2, k)
             where = (f"session {prev['id']}, imported {_local_time(prev.get('imported_at'))}"
                      if local else f"synced from {prev.get('origin_name') or 'another pit'}")
             when = QTableWidgetItem(where)
             when.setFlags(when.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            table.setItem(r, 2, when)
+            table.setItem(r, 3, when)
             self._boxes.append((box, f))
         table.setMinimumHeight(min(420, 60 + 46 * len(dups)))
         lay.addWidget(table)
@@ -310,8 +333,10 @@ class RobotLogPanel(QWidget):
         import_help = label(
             "Import a folder takes a whole drive: every .hoot and .wpilog in it and "
             "in every folder inside it is copied onto this machine first (the drive "
-            "can come out once copying is done), logs imported before are listed "
-            "for you to skip or import again, and the rest import newest first. "
+            "can come out once copying is done). Logs are matched by their contents, "
+            "never their names: ones imported before are listed for you to skip or "
+            "import again, the rest import newest first, and each copy is deleted "
+            "once it's in the database. "
             "A .hoot is extracted with owlet, so it takes longer than its size "
             "suggests; the app stays usable throughout.", "stat_label")
         import_help.setWordWrap(True)
@@ -618,33 +643,45 @@ class RobotLogPanel(QWidget):
 
     def _on_copied(self, plan):
         stopped = self._copier is not None and self._copier.stop
-        copied = sum(f.copied for f in plan.found)
+        self._batch = None
         if not plan.found:
             self._set_busy(False)
             self._import_status.setText(
                 f"No .hoot or .wpilog files in {plan.root.name} or the folders inside it."
                 + (f" ({len(plan.empty)} empty file(s) skipped.)" if plan.empty else ""))
             return
-        safe = (f"{len(plan.found)} log(s) are on this machine ({copied} copied now). "
-                "The drive can come out.")
+        valid = len({f.fp.sha256 for f in plan.found if f.fp is not None and f.fp.valid})
+        safe = f"{valid} log(s) are on this machine. The drive can come out."
         if stopped:
             self._set_busy(False)
-            self._import_status.setText("Stopped while copying. " + safe.replace(
-                f"{len(plan.found)} log(s) are", "The logs copied so far are"))
+            self._import_status.setText(
+                "Stopped while copying; nothing was imported. The logs copied so far "
+                "are on this machine; run the folder again to finish.")
             return
         jobs = [(f, None) for f in plan.queue]
+        skipped = kept = 0
         if plan.duplicates:
             self._import_status.setText(safe + " Some were imported before.")
             dlg = _DuplicatesDialog(plan.duplicates, admin.unlocked, self)
             dlg.exec()
             again = dlg.chosen()
             jobs += sorted(again, key=lambda j: j[0].started or "", reverse=True)
-        self._batch_skipped = len(plan.duplicates) - (len(jobs) - len(plan.queue))
+            chosen = {id(f) for f, _sid in again}
+            for f in plan.duplicates:
+                if id(f) in chosen:
+                    continue
+                if f.match == "exact":
+                    batch.discard(f.dest)       # its data is in the database already
+                    skipped += 1
+                else:
+                    kept += 1                   # a different copy: kept, not imported
+        self._batch_skipped, self._batch_kept = skipped, kept
+        self._batch_invalid = [f.name for f in plan.invalid]
         self._batch_empty = len(plan.empty)
         self._batch_safe = safe
         if not jobs:
             self._set_busy(False)
-            self._import_status.setText(safe + " Nothing new to import.")
+            self._batch_done_text(0, [], safe + " Nothing new to import.")
             return
         self._batch = _BatchImportWorker(jobs, Path(db.path))
         self._batch.progressed.connect(self._on_progress)
@@ -659,11 +696,20 @@ class RobotLogPanel(QWidget):
             config.notify_logs_changed()
 
     def _on_batch_done(self, ok: int, failed: list):
+        self._batch_done_text(ok, failed, f"Imported {ok} log(s).")
+
+    def _batch_done_text(self, ok: int, failed: list, lead: str):
         stopped = self._batch is not None and self._batch.stop
         self._set_busy(False)
-        parts = [f"Imported {ok} log(s)."]
+        parts = [lead]
         if self._batch_skipped:
-            parts.append(f"{self._batch_skipped} already imported, skipped.")
+            parts.append(f"{self._batch_skipped} already imported (same contents), skipped.")
+        if self._batch_kept:
+            parts.append(f"{self._batch_kept} different copy/copies of earlier logs kept "
+                         "on this machine, not imported.")
+        if self._batch_invalid:
+            parts.append(f"{len(self._batch_invalid)} not real logs, skipped: "
+                         + ", ".join(self._batch_invalid[:3]))
         if self._batch_empty:
             parts.append(f"{self._batch_empty} empty file(s) skipped.")
         if stopped:

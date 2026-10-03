@@ -663,11 +663,15 @@ DATABASE.md; read them before writing a query.
 - CAN naming is data entry (not gated); deleting a session is gated.
 - **Import a folder** (`batch.py`, Brayden 2026-10-03: five minutes with the
   robot): every `.hoot`/`.wpilog` in every subfolder is **copied onto the
-  machine first** (`robot_logs/`, `.part` then rename, an identical copy
-  reused), then logs imported before (same name + size, any path or pit) are
-  staged in a pop-up (skip / re-import; replacing needs the admin lock and a
-  session imported here), then the rest import newest first. Skips `._` twins,
-  hidden folders, empty files. `tools/batch_check.py`.
+  machine first** (`robot_logs/<sha>/`, `.part` then rename) and
+  fingerprinted on the way. **A log's identity is its contents, never its
+  name** (v18: SHA-256 of every byte, of the first 64 KiB, the header text);
+  a `.wpilog` without a WPILOG header is refused. Matches (same file, or same
+  recording at another length) are staged in a pop-up (skip / re-import;
+  replacing needs the admin lock and a session imported here); the rest import
+  newest first. **Each copy is deleted once its data is in the database**
+  (kept while `upload_raw` must upload it; the engine deletes it after). Skips
+  `._` twins, hidden folders, empty files. `tools/batch_check.py`.
 
 ## Pit LAN screens (`app/webcast/`)
 

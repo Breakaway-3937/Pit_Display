@@ -389,6 +389,13 @@ class Engine:
                         rep.uploaded_bytes += size
                         blobs.update(raw_sha=sha, raw_bytes=size)
                         self._save_blobs(conn, blobs)
+                        # A copy brought in by Import a folder waited for this
+                        # upload; it's in the database and at home now.
+                        from app.robot import batch
+                        if batch.release_after_upload(src):
+                            conn.execute("UPDATE log_session SET archive_path = NULL "
+                                         "WHERE id = ?", (row["id"],))
+                            conn.commit()
                 finally:
                     tmp.unlink(missing_ok=True)
         data = {c: row[c] for c in tables.SESSION_COLS}
