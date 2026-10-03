@@ -229,61 +229,9 @@ class _HootSource:
         owlet.clear_scratch(self._dir)
 
 
-class Prepared:
-    """A hoot already extracted by owlet (`prepare_hoot`), handed to
-    `import_log` so the conversion can run ahead on another thread while the
-    previous log imports. The importer owns it from then on and clears it."""
-
-    def __init__(self, scratch: Path, mcap: Path):
-        self.scratch, self.mcap = scratch, mcap
-
-    def discard(self) -> None:
-        owlet.clear_scratch(self.scratch)
-
-
-def prepare_hoot(path: Path) -> Prepared:
-    """Run owlet on `path` now (a separate process, so it uses its own core),
-    for an import that comes later. Raises ImportError_ like an import would."""
-    path = Path(path)
-    try:
-        scratch = owlet.scratch_dir(path)
-    except owlet.OwletError as err:
-        raise ImportError_(str(err)) from err
-    try:
-        out = owlet.convert(path, scratch / (path.stem + ".mcap"))
-    except owlet.OwletError as err:
-        owlet.clear_scratch(scratch)
-        raise ImportError_(str(err)) from err
-    except BaseException:
-        owlet.clear_scratch(scratch)
-        raise
-    return Prepared(scratch, out)
-
-
-class _PreparedHootSource(_McapSource):
-    """A hoot whose owlet conversion already ran (`Prepared`)."""
-
-    def __init__(self, prepared: Prepared):
-        self._prepared = prepared
-        try:
-            super().__init__(prepared.mcap)
-        except Exception:
-            prepared.discard()
-            raise
-
-    def fraction(self) -> float:
-        return _CONVERT_SHARE + (1.0 - _CONVERT_SHARE) * super().fraction()
-
-    def close(self) -> None:
-        super().close()
-        self._prepared.discard()
-
-
-def _open_source(path: Path, say: Callable[[str, float], None], prepared: "Prepared | None" = None):
+def _open_source(path: Path, say: Callable[[str, float], None]):
     """The right `_Source` for this file, chosen by extension."""
     suffix = path.suffix.lower()
-    if suffix == ".hoot" and prepared is not None:
-        return _PreparedHootSource(prepared)
     if suffix == ".hoot":
         return _HootSource(path, say)
     if suffix == ".wpilog":
@@ -313,7 +261,6 @@ def import_log(
     progress: Callable[[str, float], None] | None = None,
     archive_path: str | Path | None = None,
     fp=None,
-    prepared: "Prepared | None" = None,
 ) -> ImportResult:
     """
     Import one log — a `.hoot` or a `.wpilog`.
@@ -332,8 +279,6 @@ def import_log(
     path = Path(path).resolve()
     db_path = Path(db_path)
     if not path.is_file():
-        if prepared is not None:
-            prepared.discard()
         raise ImportError_(f"No such file: {path}")
 
     def say(msg: str, frac: float):
@@ -371,8 +316,7 @@ def import_log(
                 f"folder (Import a folder does that for you)."
             )
 
-        src = _open_source(path, say, prepared)
-        prepared = None                       # the source owns (and clears) it now
+        src = _open_source(path, say)
 
         cur = conn.execute(
             """INSERT INTO log_session
@@ -621,8 +565,6 @@ def import_log(
     finally:
         if src is not None:
             src.close()
-        if prepared is not None:              # failed before the source took it
-            prepared.discard()
         conn.close()
 
 

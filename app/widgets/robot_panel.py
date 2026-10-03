@@ -36,7 +36,7 @@ from app.admin import admin
 from app.config import config
 from app.db import db
 from app.robot import (
-    ImportError_, batch, delete_session, import_log, owlet, repository as repo,
+    ImportError_, batch, delete_session, owlet, repository as repo,
 )
 from app.widgets.brand_widgets import RoundedButton, RoundedFrame, eyebrow, mono_font
 from app.widgets.helpers import divider, label
@@ -55,7 +55,11 @@ _COL_TYPE, _COL_CANID, _COL_DETECTED, _COL_NAME, _COL_SUBSYSTEM, _COL_USED = ran
 
 
 class _ImportWorker(QThread):
-    """Runs one import off the GUI thread."""
+    """
+    One log: fingerprinted and checked here, parsed **in a worker process**
+    (`app/robot/stage.py`) so the screens keep their core and nothing holds
+    the database for the length of a parse, then merged in one short step.
+    """
 
     progressed = pyqtSignal(str, float)
     finished_ok = pyqtSignal(object)
@@ -67,10 +71,35 @@ class _ImportWorker(QThread):
         self._db_path = db_path
 
     def run(self):
+        import shutil
+        import sqlite3
+        from app.robot import stage
+        name = self._path.name
         try:
-            result = import_log(
-                self._path, self._db_path,
-                progress=lambda m, f: self.progressed.emit(m, f))
+            self.progressed.emit(f"Checking {name}…", 0.0)
+            fp = batch.fingerprint(self._path)
+            if not fp.valid:
+                raise ImportError_(f"{name}: {fp.problem}.")
+            conn = sqlite3.connect(str(self._db_path), timeout=30.0)
+            try:
+                dup = conn.execute("SELECT id FROM log_session WHERE source_sha256 = ?",
+                                   (fp.sha256,)).fetchone()
+            finally:
+                conn.close()
+            if dup is not None:
+                raise ImportError_(f"Already imported as session {dup[0]} (the same file "
+                                   f"contents). Delete that session first to re-import.")
+            self.progressed.emit(f"Importing {name} in the background "
+                                 "(the app stays usable)…", -1.0)
+            work = stage.work_dir()
+            try:
+                with stage.pool(1) as pool:
+                    out = pool.submit(stage.stage_one, str(self._path), fp, str(work)).result()
+                sid = stage.merge(self._db_path, Path(out["bundle"]), self._path, None)
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+            result = stage.result_from(out["result"])
+            result.session_id = sid
             self.finished_ok.emit(result)
         except ImportError_ as exc:
             self.failed.emit(str(exc))
@@ -109,18 +138,12 @@ class _CopyWorker(QThread):
 
 class _BatchImportWorker(QThread):
     """
-    Batch step 3: import the queue one file at a time, from the local copies.
-    A file that fails is reported and the rest carry on.
-
-    **Pipelined across cores** (Brayden, 2026-10-03: use the whole machine).
-    The database takes one writer at a time, and the import loop is Python, so
-    imports themselves stay one after another; owlet is a separate process,
-    so while one log imports, the next `LOOKAHEAD` hoots are already being
-    extracted on their own threads (`ingest.prepare_hoot`). A conversion
-    that fails is retried by the import itself, which then reports why.
+    Batch step 3: import the queue, every log parsed **in its own process**
+    (`app/robot/stage.py`), as many at once as the machine has cores and
+    memory for, each merged into the database in one short step as it
+    finishes. The GUI and sync never wait on a parse, and a log that fails is
+    reported while the rest carry on.
     """
-
-    LOOKAHEAD = 2
 
     progressed = pyqtSignal(str, float)
     file_done = pyqtSignal(str, str)          # file name, "" or the error
@@ -144,66 +167,51 @@ class _BatchImportWorker(QThread):
         self.all_done.emit(self._ok, failed)
 
     def _run(self, failed: list):
-        from concurrent.futures import ThreadPoolExecutor
-        from app.robot.ingest import prepare_hoot
+        import shutil
+        from concurrent.futures import FIRST_COMPLETED, wait
+        from app.robot import stage
         n = len(self._jobs)
-        pool = ThreadPoolExecutor(max_workers=max(1, self.LOOKAHEAD),
-                                  thread_name_prefix="owlet-ahead")
-        ahead: dict[int, object] = {}
-
-        def look_ahead(start: int) -> None:
-            for j in range(start, min(n, start + 1 + self.LOOKAHEAD)):
-                f = self._jobs[j][0]
-                if j not in ahead and f.dest is not None and f.dest.suffix.lower() == ".hoot":
-                    ahead[j] = pool.submit(prepare_hoot, f.dest)
-
-        try:
-            self._import_all(n, failed, look_ahead, ahead)
-        finally:
-            # Stopped early: let running conversions finish, then clear them.
-            for fut in ahead.values():
-                if not fut.cancel():
+        width = stage.workers(n)
+        self.progressed.emit(f"Importing {n} log(s), {width} at a time…", 0.0)
+        done = 0
+        with stage.pool(width) as pool:
+            running: dict = {}
+            queue = list(self._jobs)          # newest first (Plan.queue)
+            while queue or running:
+                while queue and len(running) < width and not self.stop:
+                    f, replace = queue.pop(0)
+                    work = stage.work_dir()
+                    fut = pool.submit(stage.stage_one, str(f.dest), f.fp, str(work))
+                    running[fut] = (f, replace, work)
+                if not running:
+                    break                     # stopped: nothing left in flight
+                finished, _ = wait(running, timeout=1.0, return_when=FIRST_COMPLETED)
+                for fut in finished:
+                    f, replace, work = running.pop(fut)
+                    done += 1
                     try:
-                        fut.result().discard()
-                    except Exception:
-                        pass
-            pool.shutdown(wait=True)
-
-    def _import_all(self, n, failed, look_ahead, ahead):
-        for i, (f, replace) in enumerate(self._jobs, 1):
-            if self.stop:
-                break
-            look_ahead(i - 1)                 # this hoot, and the next ones extract meanwhile
-            head = f"Importing {i} of {n}: {f.name}"
-            self.progressed.emit(head, (i - 1) / n)
-            prepared = None
-            fut = ahead.pop(i - 1, None)
-            if fut is not None:
-                if not fut.done():
-                    self.progressed.emit(f"{head} · owlet is still extracting it…", (i - 1) / n)
-                try:
-                    prepared = fut.result()
-                except Exception:
-                    prepared = None           # the import converts again and says why
-            try:
-                if replace is not None:
-                    delete_session(replace, self._db_path)
-                import_log(f.dest, self._db_path, archive_path=f.dest, fp=f.fp,
-                           prepared=prepared,
-                           progress=lambda m, frac, head=head, i=i:
-                               self.progressed.emit(f"{head} · {m}", (i - 1 + frac) / n))
-                self._ok += 1
-                # In the database now: the copy goes, unless team sync still
-                # has to upload the original (the engine deletes it after).
-                if not self._keep:
-                    batch.discard(f.dest, self._db_path)
-                self.file_done.emit(f.name, "")
-            except ImportError_ as exc:
-                failed.append((f.name, str(exc)))
-                self.file_done.emit(f.name, str(exc))
-            except Exception as exc:                   # pragma: no cover
-                failed.append((f.name, f"Import failed: {exc}"))
-                self.file_done.emit(f.name, str(exc))
+                        out = fut.result()
+                        if replace is not None:
+                            delete_session(replace, self._db_path)
+                        stage.merge(self._db_path, Path(out["bundle"]), f.dest,
+                                    None if not self._keep else f.dest)
+                        self._ok += 1
+                        # In the database now: the copy goes, unless team sync
+                        # still has to upload the original (the engine deletes it after).
+                        if not self._keep:
+                            batch.discard(f.dest, self._db_path)
+                        self.file_done.emit(f.name, "")
+                    except ImportError_ as exc:
+                        failed.append((f.name, str(exc)))
+                        self.file_done.emit(f.name, str(exc))
+                    except Exception as exc:
+                        failed.append((f.name, f"Import failed: {type(exc).__name__}: {exc}"))
+                        self.file_done.emit(f.name, str(exc))
+                    finally:
+                        shutil.rmtree(work, ignore_errors=True)
+                    self.progressed.emit(
+                        f"{done} of {n} done ({len(running)} in progress, "
+                        f"{width} at a time) · {f.name}", done / n)
 
 
 class _DuplicatesDialog(QDialog):
@@ -683,6 +691,7 @@ class RobotLogPanel(QWidget):
         self._stop_btn.setVisible(busy and batch_run)
         self._progress.setVisible(busy)
         if busy:
+            self._progress.setRange(0, 1000)
             self._progress.setValue(0)
             self._import_status.setStyleSheet("")
 
@@ -823,7 +832,11 @@ class RobotLogPanel(QWidget):
 
     def _on_progress(self, message: str, frac: float):
         self._import_status.setText(message)
-        self._progress.setValue(int(frac * 1000))
+        if frac < 0:
+            self._progress.setRange(0, 0)      # working, no fraction to show
+        else:
+            self._progress.setRange(0, 1000)
+            self._progress.setValue(int(frac * 1000))
 
     def _on_done(self, result):
         self._set_busy(False)

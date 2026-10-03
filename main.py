@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import multiprocessing
 import os
 import sys
 from pathlib import Path
 
+# Before anything else: log imports run in worker processes (app/robot/stage.py),
+# and a frozen build starts each one by re-running this executable. This
+# turns such a launch into the worker and nothing else; without it every
+# worker would open a second Pit Display.
+multiprocessing.freeze_support()
+
 # First, before any other app import: an import-time failure in a
 # console-less build must still land somewhere. See app/crash_log.py.
 from app import crash_log
-crash_log.install()
+if multiprocessing.parent_process() is None:          # not in a worker
+    crash_log.install()
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication

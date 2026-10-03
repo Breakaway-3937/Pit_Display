@@ -220,6 +220,31 @@ def _check_owlet() -> Result:
                       critical=False)
 
 
+def _check_workers() -> Result:
+    """
+    Can this build start the worker processes log imports run in
+    (app/robot/stage.py)? A frozen build starts each by re-running its own
+    executable, which only works with `multiprocessing.freeze_support()` first
+    in main.py; without it an import would open a second app, not a worker.
+    Critical: every log import goes through a worker.
+    """
+    import os
+    import time
+    try:
+        from app.robot import stage
+        t = time.monotonic()
+        with stage.pool(1) as pool:
+            pid = pool.submit(stage.ping).result(timeout=120)
+        ok = isinstance(pid, int) and pid != os.getpid()
+        return Result("workers", ok,
+                      f"a worker process answered in {time.monotonic() - t:.1f}s; imports run "
+                      f"{stage.workers(64)} at a time on this machine "
+                      f"({os.cpu_count()} cores)" if ok else "a worker answered from this process")
+    except Exception as e:
+        return Result("workers", False, f"no worker process: {type(e).__name__}: {e}. "
+                      "Log imports cannot run on this build.")
+
+
 def _check_audio() -> Result:
     """
     Is there a libVLC, and — the part that catches a bad Windows build — did
@@ -829,6 +854,7 @@ def run() -> int:
         results.append(_check_fonts())
         results.append(_check_sponsors())
         results.append(_check_owlet())
+        results.append(_check_workers())
         results.append(_check_audio())
         results.append(_check_updates())
         results.append(_check_network())

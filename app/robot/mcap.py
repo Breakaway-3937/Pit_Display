@@ -17,6 +17,15 @@ no device (`RobotEnable`) is the `Robot` pseudo-device, booleans are numbers,
 enums and strings are labels, and `t_ms` is milliseconds from the first
 record, as `wpilog.Reader` defines it.
 
+**Speed (2026-10-03).** Decoding every message whole through reflection took
+15.7 s per MB of hoot: a 769 MB CANivore log, three hours. owlet repeats
+every signal in every frame, and ~92% of those values are repeats, so the
+fast path (`_FastTable`) is compiled once per message type: per signal it
+follows two offsets and reads the 8-byte `timestampSec`, and decodes the
+value only when that time moved. No dicts per message, identities cached.
+The rows are identical to the reflection decoder's (`rows(fast=False)`
+keeps it as the reference; `tools/import_check.py` pins the totals).
+
 **The format** (mcap.dev spec): an 8-byte magic, then records of
 `opcode u8, length u64, content`. Schemas carry each message type's binary
 FlatBuffers schema (decoded by `flatbuf.py`); messages live in chunks, LZ4
@@ -68,6 +77,69 @@ def _records(b: bytes, p: int, end: int) -> Iterator[tuple[int, bytes]]:
         p += 9 + n
 
 
+_U16 = struct.Struct("<H").unpack_from
+_I32 = struct.Struct("<i").unpack_from
+_U32 = struct.Struct("<I").unpack_from
+_F64 = struct.Struct("<d").unpack_from
+
+
+class _FastTable:
+    """
+    A device message type (a table whose fields are owlet `*Entry` tables of
+    `value`, `timestampSec`, `units`), compiled for `_fast_items`. None of a
+    schema's root fields may be anything else, or the type takes the slow path.
+    """
+
+    def __init__(self, schema: flatbuf.Schema):
+        self.fields = []           # (slot, name, value_slot, ts_slot, reader)
+        root = schema.objects[schema.root]
+        for f in root.fields:
+            if f.type.base != flatbuf.OBJ:
+                raise ValueError("not a device table")
+            sub = schema.objects[f.type.index]
+            by = {x.name: x for x in sub.fields}
+            if sub.is_struct or "value" not in by or "timestampSec" not in by:
+                raise ValueError("not an entry table")
+            ts = by["timestampSec"]
+            if ts.type.base != flatbuf.DOUBLE:
+                raise ValueError("timestampSec isn't a double")
+            read = _value_reader(schema, by["value"])
+            self.fields.append((4 + 2 * f.id, f.name, 4 + 2 * by["value"].id,
+                                4 + 2 * ts.id, ts.default_real, read,
+                                by["value"].type.base == flatbuf.STRING))
+
+
+def _value_reader(schema: flatbuf.Schema, fld: flatbuf.FField):
+    """(b, pos or 0) -> the field's value, as flatbuf.decode would give it."""
+    base = fld.type.base
+    if base == flatbuf.STRING:
+        def read(b, pos):
+            if not pos:
+                return None
+            s = pos + _U32(b, pos)[0]
+            return b[s + 4:s + 4 + _U32(b, s)[0]].decode("utf-8", "replace")
+        return read
+    if base not in flatbuf._SCALAR:
+        raise ValueError("value isn't a scalar or string")
+    unpack = struct.Struct(flatbuf._SCALAR[base]).unpack_from
+    is_real = base in (flatbuf.FLOAT, flatbuf.DOUBLE)
+    default = fld.default_real if is_real else fld.default_integer
+    if base == flatbuf.BOOL:
+        default = bool(default)
+    names = None
+    if fld.type.index >= 0 and not is_real and fld.type.index < len(schema.enums):
+        names = schema.enums[fld.type.index].values
+
+    def read(b, pos):
+        v = unpack(b, pos)[0] if pos else default
+        if names is not None:
+            label = names.get(int(v))
+            if label is not None:
+                return label
+        return v
+    return read
+
+
 class Reader:
     """Streams one owlet `.mcap` as `(t_ms, device_type, can_id, signal, num, label)`."""
 
@@ -110,10 +182,12 @@ class Reader:
             if op == OP_DATA_END:
                 return
 
-    def rows(self) -> Iterator[Row]:
+    def rows(self, fast: bool = True) -> Iterator[Row]:
         if self._f is None:
             raise RuntimeError("Reader.open() first")
         schemas: dict[int, flatbuf.Schema] = {}
+        compiled: dict[int, _FastTable | None] = {}
+        names: dict[tuple[int, str], tuple[str, tuple | None]] = {}
         channels: dict[int, tuple[str, int]] = {}
         labels: dict[tuple, set] = {}
         # owlet's mcap repeats every signal's last value in every frame; each
@@ -132,6 +206,7 @@ class Reader:
                 n = struct.unpack_from("<I", body, p)[0]
                 if encoding == "flatbuffer":
                     schemas[sid] = flatbuf.load_schema(body[p + 4:p + 4 + n])
+                    compiled.pop(sid, None)
             elif op == OP_CHANNEL:
                 cid, sid = struct.unpack_from("<HH", body, 0)
                 topic, _p = _string(body, 4)
@@ -143,8 +218,18 @@ class Reader:
                 if schema is None:
                     self.skipped += 1
                     return
-                msg = flatbuf.decode(schema, body[22:])
                 topic = ch[0]
+                if fast:
+                    if ch[1] not in compiled:
+                        try:
+                            compiled[ch[1]] = _FastTable(schema)
+                        except ValueError:
+                            compiled[ch[1]] = None          # an entry topic, or unusual
+                    table = compiled[ch[1]]
+                    if table is not None:
+                        yield from fast_rows(cid, topic, table, body[22:])
+                        return
+                msg = flatbuf.decode(schema, body[22:])
                 # A device topic's table holds one entry per signal that
                 # changed; an entry topic (BooleanEntry, StringEntry) is one
                 # signal whose name is the topic.
@@ -196,6 +281,83 @@ class Reader:
                             continue
                         seen.add(value)
                     yield (t_ms, device_type, can_id, signal, None, value)
+
+        def emit(name: str, ident, ts: float, value) -> Iterator[Row]:
+            nonlocal t0
+            us = round(float(ts) * 1_000_000)
+            if t0 is None:
+                t0 = us
+            t_ms = max(0, (us - t0) // 1000)
+            device_type, can_id, signal = ident
+            if isinstance(value, (bool, int, float)):
+                yield (t_ms, device_type, can_id, signal, float(value), None)
+                return
+            if not isinstance(value, str):
+                self.skipped += 1
+                return
+            key = (device_type, can_id, signal)
+            if key in dead:
+                self.skipped += 1
+                return
+            seen = labels.setdefault(key, set())
+            if value not in seen:
+                if len(seen) >= MAX_ENUM_LABELS:
+                    self.enum_overflow.add(f"{device_type} {signal}")
+                    dead.add(key)
+                    self.skipped += 1
+                    return
+                seen.add(value)
+            yield (t_ms, device_type, can_id, signal, None, value)
+
+        def ident_of(cid: int, topic: str, field: str):
+            got = names.get((cid, field))
+            if got is None:
+                full = f"{topic}/{field}"
+                got = names[(cid, field)] = (full, entry_identity(full))
+            return got
+
+        per_channel: dict[int, list] = {}
+
+        def fast_rows(cid: int, topic: str, table: _FastTable, b: bytes) -> Iterator[Row]:
+            # One pass: each signal's identity is looked up once per channel
+            # (by field position), its time compared, its value read only
+            # when that time moved. The frame clock is written last, as the
+            # reflection path writes it.
+            idents = per_channel.get(cid)
+            if idents is None:
+                idents = per_channel[cid] = [ident_of(cid, topic, f[1]) for f in table.fields]
+            root = _U32(b, 0)[0]
+            vt = root - _I32(b, root)[0]
+            vts = _U16(b, vt)[0]
+            frame = None
+            for i, (slot, _field, vslot, tsslot, tsdef, read, is_string) in enumerate(table.fields):
+                if slot >= vts:
+                    continue
+                off = _U16(b, vt + slot)[0]
+                if not off:
+                    continue
+                pos = root + off
+                t = pos + _U32(b, pos)[0]
+                svt = t - _I32(b, t)[0]
+                svs = _U16(b, svt)[0]
+                tso = _U16(b, svt + tsslot)[0] if tsslot < svs else 0
+                ts = _F64(b, t + tso)[0] if tso else tsdef
+                vo = _U16(b, svt + vslot)[0] if vslot < svs else 0
+                if not vo and is_string:
+                    continue                     # a string that isn't there: no entry (as decode)
+                fts = float(ts or 0)
+                if frame is None or fts > frame:
+                    frame = fts
+                full, ident = idents[i]
+                if ident is None or last_ts.get(full) == ts:
+                    continue                     # not a device signal / a repeat, not a sample
+                last_ts[full] = ts
+                yield from emit(full, ident, ts, read(b, t + vo if vo else 0))
+            if frame is None:
+                return
+            full, ident = ident_of(cid, topic, "Timestamp")
+            if ident is not None:
+                yield from emit(full, ident, frame, frame)
 
         for op, body in self._top():
             if op == OP_CHUNK:

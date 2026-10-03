@@ -206,6 +206,7 @@ nothing fails.
 | `cad` | asset server answers; is there a model | upload the `.glb` |
 | `fonts` | all three families loaded | |
 | `owlet` | the extractor for this platform | `.hoot` import dead; `.wpilog` still works (`tools/owlet/README.md`) |
+| `workers` | a log-import worker process starts and answers (`app/robot/stage.py`; needs `multiprocessing.freeze_support()` first in `main.py`) | every log import fails; without `freeze_support` each import would open a second app |
 | `audio` | libVLC **and** its plugins | "No plugins" means silent playback; the build skipped `fetch_vlc.py` |
 | `updates` | version, channel, layout, token | names which of four reasons self-update is off |
 | `appcontrol` | Windows Smart App Control state | `WARN` on Evaluation or On: turn it off before an event, or it may block the app |

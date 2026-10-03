@@ -672,11 +672,24 @@ DATABASE.md; read them before writing a query.
   newest first. **Each copy is deleted once its data is in the database**
   (kept while `upload_raw` must upload it; the engine deletes it after). Skips
   `._` twins, hidden folders, empty files. `tools/batch_check.py`.
-  **Pipelined:** imports stay one at a time (one SQLite writer, a GIL-bound
-  loop), but owlet is its own process, so the next two hoots extract
-  (`ingest.prepare_hoot`) while one imports. Boards reload at most every
-  20 s during a batch, and the worker always reports its end, whatever
-  fails.
+- **Every import runs in a worker process** (`stage.py`, Brayden
+  2026-10-03: 66 logs took hours, locked sync out, slowed the app). Each log
+  parses into a **private scratch database** in its own process (as many at
+  once as cores minus one and memory allow, `stage.workers()`), is packed as
+  a bundle, and `stage.merge()` lands it in one short transaction and makes
+  it a local session (its file, sync rows queued). Measured, 15 logs: 61 s →
+  10 s, longest GUI stall 3.4 s → 88 ms, another writer locked out 36 of 41
+  times → never. **`multiprocessing.freeze_support()` is the first line of
+  `main.py`**: a frozen build starts workers by re-running the executable;
+  `--self-check`'s `workers` line proves one starts. Text signals' 1 s
+  rollups and series min/max/mean are over interned codes, so they differ
+  from a direct import's (as a synced session's always have); every number
+  from a numeric signal is identical. The worker always reports its end,
+  whatever fails; boards reload at most every 20 s during a batch.
+- **The hoot decoder is compiled per message type** (`mcap._FastTable`): it
+  reads each signal's timestamp and decodes the value only when it moved
+  (~92% of owlet's frames are repeats). 5.1× the reflection decoder, rows
+  identical (`rows(fast=False)` is the reference).
 
 ## Pit LAN screens (`app/webcast/`)
 
