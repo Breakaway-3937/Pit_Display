@@ -313,7 +313,8 @@ class AnalysisPanel(QWidget):
             return "—" if x is None else f"{x * 100:.0f}%"
 
         for r_i, r in enumerate(rows[:6], start=1):
-            cells = (f"{r['model']} · v{r['prompt']}", str(r["runs"]), pct(r["published"]),
+            runs = str(r["runs"]) + (f" ({r['failed']} failed)" if r.get("failed") else "")
+            cells = (f"{r['model']} · v{r['prompt']}", runs, pct(r["published"]),
                      str(r["rated"]), pct(r["useful"]), pct(r["wrong"]), str(r["acted"]),
                      "—" if r["rank"] is None else f"{r['rank']:.1f}")
             for c, text in enumerate(cells):

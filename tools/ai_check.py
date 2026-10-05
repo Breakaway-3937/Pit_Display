@@ -766,6 +766,18 @@ def app_section(uid: str) -> None:
     check("the scoreboard counts what the crew said: 1 useful and 1 wrong of 2 rated, rank 4",
           row is not None and row["rated"] == 2 and row["useful"] == 0.5
           and row["wrong"] == 0.5 and row["rank"] == 4.0, str(row))
+    with db.transaction() as conn:
+        conn.execute("INSERT INTO analysis_run (session_uids, analyst, status, reject_reason, "
+                     "stats, started_at, finished_at, uid) VALUES ('[]', ?, 'failed', "
+                     "'OperationalError: link failure', ?, 0, 0, 'check-failed-run')",
+                     (model, json.dumps({"prompt_version": PROMPT_VERSION})))
+    after = next(r for r in feedback.scoreboard()
+                 if r["model"] == model and r["prompt"] == PROMPT_VERSION)
+    check("a failed run (database or engine gone) is counted but doesn't lower the share "
+          "that passed the checks", after["failed"] == row["failed"] + 1
+          and after["published"] == row["published"], str(after))
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM analysis_run WHERE uid = 'check-failed-run'")
     fb_uid = db.fetchone("SELECT uid FROM analysis_feedback WHERE run_id = ? AND finding_id = ''",
                          (run_id,))["uid"]
     run_uid = db.fetchone("SELECT uid FROM analysis_run WHERE id = ?", (run_id,))["uid"]

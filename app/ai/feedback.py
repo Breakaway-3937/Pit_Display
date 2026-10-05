@@ -212,8 +212,12 @@ def scoreboard() -> list[dict]:
 
     What counts is **useful** (and acted on), not problems found: `useful` and
     `wrong` are shares of the findings anyone rated, `rank` is the mean 1–5.
-    `published` is the share of runs that survived the checks. Rows with
-    nothing rated still show, so a new model is visible before it's judged.
+    `published` is the share of judged runs that survived the checks: a run
+    that **failed** (the database or the model engine went away mid-run) says
+    nothing about the prompt, so it's counted in `failed` and left out of the
+    share; only `published` against `rejected` judges it (home, R15,
+    2026-10-05). Rows with nothing rated still show, so a new model is visible
+    before it's judged.
     """
     rows: dict[tuple, dict] = {}
     for r in db.fetchall("SELECT id, analyst, status, stats FROM analysis_run "
@@ -224,10 +228,11 @@ def scoreboard() -> list[dict]:
             prompt = 1
         key = (r["analyst"], prompt)
         row = rows.setdefault(key, {"model": r["analyst"], "prompt": prompt, "runs": 0,
-                                    "published": 0, "rated": 0, "useful": 0, "wrong": 0,
+                                    "published": 0, "failed": 0, "rated": 0, "useful": 0, "wrong": 0,
                                     "acted": 0, "ranks": [], "ids": []})
         row["runs"] += 1
         row["published"] += r["status"] == "published"
+        row["failed"] += r["status"] == "failed"
         row["ids"].append(r["id"])
     for row in rows.values():
         marks = ",".join("?" * len(row["ids"]))
@@ -245,9 +250,11 @@ def scoreboard() -> list[dict]:
     out = []
     for row in rows.values():
         rated = row["rated"]
+        judged = row["runs"] - row["failed"]
         out.append({
             "model": row["model"], "prompt": row["prompt"], "runs": row["runs"],
-            "published": row["published"] / row["runs"],
+            "published": row["published"] / judged if judged else None,
+            "failed": row["failed"],
             "rated": rated,
             "useful": row["useful"] / rated if rated else None,
             "wrong": row["wrong"] / rated if rated else None,

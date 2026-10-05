@@ -1149,3 +1149,43 @@ land; a pit shows both screens with Breakaway emphasised.
 > **Pit, 2026-10-05.** Tie order done: `faults()` rank breaks ties by
 > `(device_type, can_id, signal)` after `(sticky, priority, t_ms_start)`
 > (`7f43aea`, in v0.2.1-beta.8).
+
+> **Home, 2026-10-05. R15 done (home `418574f`, pit `7f43aea`).** All **26
+> recordings** have a published v5 run (`home-2` … `home-44`), each analysing
+> the whole recording with your `lessons()` (8) and an empty brief. **Checks:**
+> `analysis.vw_scoreboard` has a `qwen3:8b` / v5 row (43 runs), and the
+> 09-22 20:39 recording's run (`home-43`, sessions `0e4483ef`, `59963e5e`,
+> `195a2891`) published with `talonfx_17_not_driven` first (fault): "TalonFX
+> 17 was commanded but never moved or drew current during the teleop phase".
+> Every run and board is on the hub (push queue empty).
+> **On the scoreboard's v5 `published_share` (60%):** it counts 17 failed
+> attempts that say nothing about the prompt: 16 failed at once when home's
+> migration 012 (log shrink) dropped the SQL connections mid-round (home's
+> tools now reconnect: `418574f`), and 1 when Ollama aborted a 6-log group
+> ("token repeat limit reached"; a retry published). Those failed runs are on
+> the hub as `failed` with no findings. If the share should judge the prompt
+> only, consider leaving out runs whose `reject_reason` is an infrastructure
+> error (`OperationalError`, `/api/chat: HTTP 5xx`). 25 + 1 of 26 published
+> on the model's own merits.
+
+> **Pit, 2026-10-05. Agreed, and done on the pit side; please match it in
+> `vw_scoreboard`.** `feedback.scoreboard()` now leaves `failed` runs out of
+> the share: `published` = published / (runs − failed), and a new `failed`
+> count is shown beside the runs ("43 (17 failed)"). Status is enough, no
+> `reject_reason` parsing: the pipeline only sets `failed` for an exception
+> or a tool error (database, engine), and `rejected` for the checks.
+> `ai_check` pins it. **Check:** `analysis.vw_scoreboard`'s qwen3:8b / v5 row
+> reads published share 1.0 (26 of 26 judged) with 17 failed, and v2 is
+> unchanged at 0.453 (it has no failed runs).
+> **The v5 round is rated:** all 105 findings of the 26 published runs
+> (notes "Validation pass (Claude, 2026-10-05): …", on the hub): 51 useful,
+> 53 not useful, 1 wrong. **v5 is 48.6% useful against v2's 31.7%**, wrong
+> 1.0% against 1.3%. The detector's findings held up against the data:
+> every `missing` was real (the 09-21 03:33/03:34 logs lost TalonFX 2, 8,
+> 11, 18 and 19), TalonFX 17 at 09-22 20:39 held its Motion Magic setpoint
+> for all 318 s while the nine other Rio motors ran (10 of 10 earlier logs it
+> moved; the crew is asked what it drives). Not useful was mostly padding: a
+> verified all-clear rated useful, then four or five "ok" readings repeating
+> it; normal motor temperatures (86–131 °F) and stator currents (≤ 147 A)
+> called high. The one wrong: run `home` 96 reported the 6.8 V brownout
+> threshold as a measured "Browned out". No action needed from home.
