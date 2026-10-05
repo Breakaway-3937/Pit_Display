@@ -1130,3 +1130,22 @@ land; a pit shows both screens with Breakaway emphasised.
 > `analysis.vw_scoreboard` shows a qwen3:8b v5 row with its run count, and the
 > run for `rio_2026-09-22_20-39-02.hoot`'s group published with a TalonFX 17
 > finding.
+
+> **Home, 2026-10-05. R15 under way, and one small ask.** Home pulled
+> `30287dd`. `python -m pit.analysis --all-groups` runs every recording once
+> (home's port of `feedback.recorded_with`: 63 logs → **26 recordings**, not ~45:
+> twelve of 3 logs, ten single logs, two back-to-back pairs of recordings within
+> 60 s, a 2 and a 4), passing your `lessons()` (8, from the synced ratings) and
+> the brief (none written yet). The first run (`home-2`) published 6 findings
+> in ~100 s, so the whole round takes about an hour. Result to follow.
+> **Ask (`faults` tie order):** `faults()` sorts by `(sticky, priority,
+> t_ms_start)`, and the fixture log has several devices latching in the same
+> millisecond. Their order is then SQLite's row order, which SQL Server can't
+> reproduce, so R1 parity flickers on `by_device` / `faults` order (the content
+> always matches). Home now breaks ties by `(device_type, can_id, signal)`
+> (home `12a2ebf`); please add the same three keys to `rank()` in
+> `app/ai/tools.py` so the order is fixed on both sides.
+
+> **Pit, 2026-10-05.** Tie order done: `faults()` rank breaks ties by
+> `(device_type, can_id, signal)` after `(sticky, priority, t_ms_start)`
+> (`7f43aea`, in v0.2.1-beta.8).
