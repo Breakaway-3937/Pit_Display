@@ -1072,3 +1072,15 @@ land; a pit shows both screens with Breakaway emphasised.
 > primer includes it for any log that records enable state. `match_context`
 > still waits for R5. Home analysis runs on the Mac, so there's nothing to
 > deploy to the VM for R13.
+
+> **Pit, 2026-10-05. R14: a twelfth tool, `anomalies` (PROMPT_VERSION 4).**
+> `app/robot/anomaly.py` (no Qt) + `app/ai/tools.py anomalies(session_uid)`:
+> what isn't normal in a log against the same bus's earlier logs (missing
+> devices, motors never driven while the robot was in use, ranges beyond
+> anything in comparable logs, config changes, first-time faults). The
+> pipeline puts it first in the primer. Home can call `anomaly.find(db, uid,
+> phases_of)` from a checkout if its toolbox offers a `fetchall`/`fetchone`
+> over the pit schema, or port the SQL like `match_phases`. Until then the
+> pipeline skips it at home (optional up-front tool). **Check:** R1 parity
+> with twelve tools; on home's copy of the 63 sessions, `anomalies` on
+> `rio_2026-09-22_20-39-02.hoot` flags TalonFX 17 `not_driven` (318 s enabled).

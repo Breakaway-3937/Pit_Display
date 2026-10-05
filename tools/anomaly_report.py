@@ -4,6 +4,7 @@ and what it flags. Exit 0 (a report).
 
     uv run tools/anomaly_report.py .validation/home_bundles      # bundles (.pitlog.zst)
     uv run tools/anomaly_report.py /path/to/logs                 # or raw .hoot / .wpilog
+    uv run tools/anomaly_report.py --data .validation/team_pull  # a pulled install (pull_logs.py)
 
 Loads every log into a scratch database in recording order (never this Mac's
 own data), then:
@@ -37,22 +38,27 @@ from app.console import use_utf8  # noqa: E402
 def main() -> int:
     use_utf8()
     ap = argparse.ArgumentParser()
-    ap.add_argument("folder", type=Path)
+    ap.add_argument("folder", type=Path, nargs="?")
+    ap.add_argument("--data", type=Path, help="an existing data tree to read instead of loading")
     ap.add_argument("--max-flags", type=int, default=8)
     opts = ap.parse_args()
     tmp = Path(tempfile.mkdtemp(prefix="anomaly-report-"))
-    os.environ["PIT_DISPLAY_DATA"] = str(tmp)
-    (tmp / "data").mkdir()
+    if opts.data:
+        os.environ["PIT_DISPLAY_DATA"] = str(opts.data.resolve())
+    else:
+        os.environ["PIT_DISPLAY_DATA"] = str(tmp)
+        (tmp / "data").mkdir()
     import app.db.migrations  # noqa: F401
     from app.db import init_db
     from app.db.sync import bundle
     from app.robot import anomaly, import_log
     db = init_db()
 
-    files = sorted(p for p in opts.folder.rglob("*")
+    files = [] if opts.data else sorted(p for p in opts.folder.rglob("*")
                    if p.is_file() and not p.name.startswith(".")
                    and p.name.endswith((".pitlog.zst", ".hoot", ".wpilog")))
-    print(f"Loading {len(files)} log(s) from {opts.folder}…", flush=True)
+    if files:
+        print(f"Loading {len(files)} log(s) from {opts.folder}…", flush=True)
     for i, f in enumerate(files, 1):
         try:
             if f.name.endswith(".pitlog.zst"):

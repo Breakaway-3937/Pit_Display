@@ -24,7 +24,7 @@ logs imported (`--setup-only` builds it and proves its first sync). **Checks
 never read this Mac's own `data/`**: in a checkout `paths.seed_user_data()`
 doesn't seed the database (it's the developer's, not a seed), so a scratch
 tree starts as CI's seed does; `ai_check` imports `TEST_LOGS/fixture_faults_2026-07-29.pitlog.zst`.
-The dev Mac's own app never syncs with the team (`sync.json` off).
+The dev Mac runs its own database and syncs with the hub like any pit; nothing on a pit ever logs into the home SQL Server (Brayden, 2026-10-05: isolation means that, never switching app features off).
 `tools/import_check.py` pins every test log's complete import (the hoot ten
 times: `--hoot-runs 10`).
 
@@ -786,8 +786,8 @@ never blue or red.
 
 ## Robot-log analysis (`app/ai/`)
 
-A local model reads a session through **eleven read-only tools** (the home MCP
-server's nine plus `match_context` and `match_phases`) and a board comes out: analyst (tool calls → findings, `insight.schema.json`) →
+A local model reads a session through **twelve read-only tools** (the home MCP
+server's nine plus `match_context`, `match_phases` and `anomalies`) and a board comes out: analyst (tool calls → findings, `insight.schema.json`) →
 check → designer (board, `board.schema.json`) → check → publish into
 `analysis_board`. The same `pipeline.analyse()` runs at home with a different
 toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
@@ -848,7 +848,7 @@ toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
   match, bars across devices; never red). The webcast serves it through
   `state.analysis_board_state()`.
 - **`--mcp`** (`mcp_server.py`): MCP over stdio, written by hand (no SDK in
-  the bundle), the eleven tools plus `analysis_runs` / `analysis_scoreboard`,
+  the bundle), the twelve tools plus `analysis_runs` / `analysis_scoreboard`,
   read-only, from this machine's synced copy. Proven against the official
   client (mcp 2.2.0). The windowed exe has no `sys.stdin`; `_stdio()` opens
   the host's pipe handles.
@@ -874,6 +874,18 @@ toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
   a check is dropped, never the board; finding ids are tidied by code.
   `match_phases` says if a log was ever enabled: a pit or bench recording
   isn't match behaviour, and the prompt says so.
+- **The anomaly detector finds; the model explains** (`app/robot/anomaly.py`,
+  tool `anomalies`, first in the primer, PROMPT_VERSION 4; Brayden
+  2026-10-05: catch last year's uninitialised shooter). Against the same
+  bus's earlier logs: `missing` devices, `not_driven` motors (only while
+  another motor on the bus ran; "never commanded" vs "commanded but never
+  moved" by ControlMode), `out_of_range` beyond anything in ≥ 5 comparable
+  logs (enabled vs enabled), grouped per bus, `config_changed` (inversion =
+  fault), `new_fault`. **Tuned on the team's 63 real logs**
+  (`tools/pull_logs.py` → `tools/anomaly_report.py --data`): 170 flags → 21
+  in 6 logs, every one worth a look (Sept 21's CAN drop-outs; TalonFX 17
+  parked for 318 s on Sept 22). Thresholds are named constants; retune
+  with the report, never per log.
 - **Not built:** syncing the scoreboard's prompt text (only its version),
   multi-session (match-to-match) runs, `breakdown_json` from TBA.
 
