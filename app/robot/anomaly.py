@@ -35,6 +35,11 @@ comparing pit logs with matches and an enabled-but-idle robot were the noise.
 "Earlier logs" are the same bus's (`bus_of`: the AdvantageKit logs, the Rio
 hoots, each CANivore's hoots), newest `HISTORY` of them. Thresholds are named
 constants, not tuned per log. No Qt, any `db` with fetchall/fetchone.
+
+**Home runs this module unchanged over SQL Server** (home `pit/pitdb.py`
+translates its SQL; R14, 2026-10-05). A new table, a new column, or
+SQLite-only syntax here needs a dated note in home/REQUESTS.md: R1 parity
+will catch the drift, but home asked for the warning first.
 """
 
 from __future__ import annotations
