@@ -270,8 +270,11 @@ def faults(session_uid: str) -> dict[str, Any]:
 
     def rank(r):
         n = r["signal"]
+        # Ties (latches in the same millisecond) by device and signal, never by
+        # row order: home's SQL Server must give the same order (R1 parity).
         return (0 if r["sticky"] else 1,
-                FAULT_PRIORITY.index(n) if n in FAULT_PRIORITY else 99, r["t_ms_start"])
+                FAULT_PRIORITY.index(n) if n in FAULT_PRIORITY else 99, r["t_ms_start"],
+                r["device_type"], r["can_id"], n)
 
     # A ...Field signal is a bitfield summary of the other flags, never a fault
     # (logs imported before classify() knew that still carry it).
