@@ -27,6 +27,7 @@ between a pit (`local.py`) and home.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Callable, Protocol
@@ -41,7 +42,7 @@ DEFAULT_QUESTION = "What should the pit crew look at before the next match?"
 # number is recorded in every run's stats.
 #   1 — first trials (2026-09-30)
 #   2 — faults summary/by_device, code sets colours, chart options from vitals
-PROMPT_VERSION = 4
+PROMPT_VERSION = 5
 
 # What Phoenix 6 faults mean for a pit crew (CTRE's fault definitions, with
 # the pit's practical weighting). A small model can't know these, and the
@@ -67,6 +68,10 @@ with high temperature or on a mechanism that shouldn't stall.
 CANcoder or remote sensor the controller relies on isn't agreeing or reporting: \
 check its CAN wiring, ID and configuration.
 - Anything named ...Field is a bitfield summary of the others, never a fault itself.
+Leave these out unless their condition holds (the crew rated them not useful): \
+StatorCurrLimit / SupplyCurrLimit without high temperature; a BridgeBrownout \
+latched on most controllers when the battery minimum stayed above 7.5 V; a \
+reading that's normal ("monitor", "within limits"). Say all clear instead.
 Relate a device's fault to its mechanism (device labels, subsystems) when the data \
 lets you, and say which mechanism the crew should look at."""
 SHAPE_POINTS = 52       # diagnostics.SHAPE_POINTS: what a card's trace carries
@@ -93,6 +98,7 @@ class Stats:
     output_tokens: int = 0
     analyst_s: float = 0.0
     designer_s: float = 0.0
+    dropped: list = field(default_factory=list)     # findings that never passed, left out
 
     def count(self, reply, stage: str) -> None:
         self.turns += 1
@@ -194,6 +200,97 @@ data: it is fetched for you. No chart is better than one that doesn't help.
 
 def _dumps(obj) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
+def _detector_findings(ledger, insights: dict) -> list[dict]:
+    """A finding per detector fault the model left out, in the detector's own
+    words and figures (`anomalies` is code, so they're exact by construction)."""
+    text = checks._norm(" ".join(
+        " ".join([f.get("claim", ""), (f.get("metric") or {}).get("name", ""), f.get("id", "")])
+        for f in insights.get("findings") or []))
+    out, seen = [], set()
+    for c in ledger.calls:
+        if c.tool != "anomalies":
+            continue
+        for a in c.result.get("anomalies") or []:
+            if a.get("severity") != "fault":
+                continue
+            device = str(a.get("device") or "")
+            key = (device, a.get("kind"))
+            if key in seen or (checks._norm(device) and checks._norm(device) in text):
+                continue
+            seen.add(key)
+            kind = a.get("kind")
+            # A number and a unit for every kind (the contract wants both).
+            name, value, unit = {
+                "not_driven": ("enabled time with no output", a.get("enabled_s"), "s"),
+                "missing": ("earlier logs it was on the bus", a.get("present_in"), "logs"),
+                "config_changed": (f"earlier logs with {a.get('signal')} = {a.get('usual')}",
+                                   a.get("usual_in"), "logs"),
+                "new_fault": ("earlier logs without it", a.get("history_logs"), "logs"),
+            }.get(kind, (str(a.get("signal") or kind), a.get("value"), ""))
+            if not isinstance(value, (int, float)):
+                continue                     # nothing exact to show: the run stays rejected
+            claim = f"{device}: {a.get('detail', '')}"
+            if len(claim) > 200:
+                claim = claim[:199].rsplit(" ", 1)[0].rstrip(",;:(") + "…"
+            out.append({
+                "id": f"detector_{kind}_{device}",
+                "claim": claim,
+                "metric": {"name": name[:80], "value": value, "unit": unit},
+                "severity": "fault", "subsystem": a.get("subsystem"), "series": None,
+                # Its id starts "detector_": that's how a reader tells it from the model's.
+                "evidence": [{"tool": "anomalies", "args": dict(c.args), "value": value}]})
+    _tidy_ids({"findings": out})
+    return out
+
+
+def _drop_unwanted(insights: dict, ledger) -> None:
+    """
+    Leave out what the crew rated not useful, by code (an 8B model kept
+    writing them despite the guide): current-limit findings without heat,
+    and a BridgeBrownout latched on most controllers while the battery stayed
+    healthy (power-on). Only drops: never changes a figure, and never leaves
+    a run with no findings.
+    """
+    lows = [v.get("value") for c in ledger.calls if c.tool == "session_overview"
+            for v in c.result.get("vitals") or []
+            if "sag" in str(v.get("label", "")).lower() and isinstance(v.get("value"), (int, float))]
+    healthy = bool(lows) and min(lows) >= 7.5
+    def unwanted(f: dict) -> bool:
+        words = checks._norm(" ".join([f.get("claim", ""), (f.get("metric") or {}).get("name", ""),
+                                       f.get("id", "")]))
+        if ("statorcurrlimit" in words or "supplycurrlimit" in words) and "temp" not in words:
+            return True
+        n = (f.get("metric") or {}).get("value")
+        return ("bridgebrownout" in words and healthy and isinstance(n, (int, float)) and n >= 3)
+    kept = [f for f in insights.get("findings") or [] if not unwanted(f)]
+    if kept:
+        insights["findings"] = kept
+
+
+def _must_cover(ledger) -> str:
+    """
+    The rules an 8B model forgot by the time it wrote (real logs, 2026-10-05):
+    restated where it writes, naming the detector's faults it must explain.
+    """
+    flags = [a for c in ledger.calls if c.tool == "anomalies"
+             for a in c.result.get("anomalies") or [] if a.get("severity") == "fault"]
+    text = ("\nLeave out StatorCurrLimit / SupplyCurrLimit (by design) and a "
+            "BridgeBrownout latched on most controllers (power-on) unless the fault "
+            "guide's conditions hold.")
+    if flags:
+        seen, lines = set(), []
+        for a in flags:
+            key = (a.get("device"), a.get("kind"))
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(f"- {a.get('device')}: {a.get('kind')}, {str(a.get('detail', ''))[:160]}")
+        text += ("\nFIRST, one finding for each of these (the anomaly detector flagged them; "
+                 "severity fault; evidence {\"tool\": \"anomalies\", \"args\": "
+                 "{\"session_uid\": ...}}), then anything else:\n" + "\n".join(lines[:8]))
+    return text
 
 
 def _tidy_ids(insights: dict) -> None:
@@ -362,7 +459,8 @@ def analyse(toolbox: Toolbox, sink: Sink, llm: Ollama, session_uids: list[str], 
 
         step("analyst writing findings")
         analyst_msgs.append({"role": "user",
-                             "content": FINDINGS_PROMPT % (_dumps(session_uids), question)})
+                             "content": FINDINGS_PROMPT % (_dumps(session_uids), question)
+                             + _must_cover(ledger)})
         problems: list[str] = []
         for attempt in range(retries + 1):
             reply = llm.chat(analyst, analyst_msgs, format=schema.insight_format(),
@@ -372,10 +470,12 @@ def analyse(toolbox: Toolbox, sink: Sink, llm: Ollama, session_uids: list[str], 
             insights, err = _parse(reply.content)
             if insights is not None:
                 _tidy_ids(insights)
+                _drop_unwanted(insights, ledger)
             problems = [err] if insights is None else (
                 schema.validate(insights, schema.load("insight")))
             if insights is not None and not problems:
                 problems = checks.check_findings(insights, ledger, session_uids, context)
+                problems += checks.anomaly_coverage(insights, ledger)
                 _drop_bad_series(toolbox, insights, session_uids)
             res.insights = insights
             if not problems:
@@ -387,6 +487,30 @@ def analyse(toolbox: Toolbox, sink: Sink, llm: Ollama, session_uids: list[str], 
                     + "\n\nWrite the whole JSON again. For each problem: use a figure "
                     "exactly as a tool result above gives it and cite that call, or drop "
                     "the finding. Don't repeat a rejected figure."})
+        # The detector finds, the model explains when it can. Findings that are
+        # sound but leave out a detector fault aren't thrown away with the run:
+        # the detector's own finding goes on the board (an 8B model ignored
+        # TalonFX 17 through every retry on real logs, 2026-10-05).
+        # Out of retries: drop only the findings that still fail (each problem
+        # names its finding), keep the sound ones. Dropping changes no figure.
+        # One mistyped tool name sank ten good findings on a real run.
+        if insights is not None and problems:
+            bad = {int(m.group(1)) for p in problems
+                   for m in [re.match(r"finding (\d+) \(", p)] if m}
+            other = [p for p in problems if not re.match(r"finding \d+ \(", p)
+                     and not p.startswith("the detector flagged")]
+            if bad and not other:
+                kept = [f for i, f in enumerate(insights.get("findings") or [], 1) if i not in bad]
+                if kept:
+                    insights["findings"] = kept
+                    res.stats.dropped = sorted(bad)
+                    problems = (checks.check_findings(insights, ledger, session_uids, context)
+                                + checks.anomaly_coverage(insights, ledger))
+        coverage = [p for p in problems if p.startswith("the detector flagged")]
+        if insights is not None and problems and len(coverage) == len(problems):
+            insights.setdefault("findings", [])[0:0] = _detector_findings(ledger, insights)
+            res.insights = insights
+            problems = checks.anomaly_coverage(insights, ledger)
         if problems:
             return finish("rejected", "findings: " + "; ".join(problems[:6]))
 
@@ -504,6 +628,22 @@ def assign_status(board: dict, insights: dict) -> list[str]:
     if isinstance(board.get("headline"), dict):
         board["headline"]["status"] = min(sev.values(), default="idle",
                                           key=lambda x: checks.SEVERITY_ORDER.get(x, 9))
+    # One red region is policy too: gather the fault cards where they fit
+    # (both regions hold Readings; faults up to 6, vitals up to 8). The
+    # designer placed them in two regions on a real run (2026-10-05).
+    red = lambda cards: [c for c in cards or [] if c.get("status") == "fault"]  # noqa: E731
+    if red(board.get("vitals")) and red(board.get("faults")):
+        allred = red(board["vitals"]) + red(board["faults"])
+        calm_v = [c for c in board["vitals"] if c.get("status") != "fault"]
+        calm_f = [c for c in board["faults"] if c.get("status") != "fault"]
+        if len(allred) + len(calm_f) <= 6:
+            board["vitals"], board["faults"] = calm_v, allred + calm_f
+        elif len(allred) + len(calm_v) <= 8:
+            board["vitals"], board["faults"] = allred + calm_v, calm_f
+        else:
+            # More faults than a screen holds (11 on a real CAN drop-out): the
+            # worst 8, in one region. Every finding stays in the run itself.
+            board["vitals"], board["faults"] = (allred + calm_v)[:8], calm_f
     return problems
 
 

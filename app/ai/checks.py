@@ -168,7 +168,38 @@ def _has_fault(call: Call) -> bool:
         return any(g.get("status") == "fault" for g in r.get("summary") or [])
     if call.tool == "session_overview":
         return any(v.get("status") == "fault" for v in r.get("vitals") or [])
+    if call.tool == "anomalies":         # the detector's faults (app/robot/anomaly.py)
+        return any(a.get("severity") == "fault" for a in r.get("anomalies") or [])
     return False
+
+
+def anomaly_coverage(insights: dict, ledger: Ledger) -> list[str]:
+    """
+    The detector finds, the model explains: every fault the `anomalies` tool
+    returned must be the subject of a finding (its device named in a claim or
+    metric). On real logs (2026-10-05) the model wrote about power-on
+    brownouts and left the detector's flags out entirely.
+    """
+    text = _norm(" ".join(
+        " ".join([f.get("claim", ""), (f.get("metric") or {}).get("name", ""), f.get("id", "")])
+        for f in insights.get("findings") or []))
+    problems = []
+    for c in ledger.calls:
+        if c.tool != "anomalies":
+            continue
+        for a in c.result.get("anomalies") or []:
+            if a.get("severity") != "fault":
+                continue
+            names = [a.get("device") or ""]
+            if a.get("device_type") is not None:
+                names.append(f"{a['device_type']} {a['can_id']}")
+            if not any(_norm(n) and _norm(n) in text for n in names):
+                problems.append(
+                    f"the detector flagged {a.get('device')} ({a.get('kind')}: "
+                    f"{str(a.get('detail', ''))[:120]}) and no finding covers it: add one, "
+                    f"severity fault, citing {{\"tool\": \"anomalies\", \"args\": "
+                    f"{{\"session_uid\": ...}}}}")
+    return problems
 
 
 def check_findings(insights: dict, ledger: Ledger, session_uids: list[str],

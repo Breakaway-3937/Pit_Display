@@ -179,7 +179,7 @@ def recorded_with(uid: str, window_s: int = 60) -> list[str]:
     `uid` and every other log with data recorded within `window_s` of it: the
     robot writes three logs per session (the AdvantageKit .wpilog and a .hoot
     per CAN bus), and only together do they say which mechanism a fault is
-    on. Logs a run already covered are left out. `uid` first.
+    on. `uid` first.
     """
     me = db.fetchone("SELECT started_at FROM log_session WHERE uid = ?", (uid,))
     if me is None or not me["started_at"]:
@@ -190,13 +190,10 @@ def recorded_with(uid: str, window_s: int = 60) -> list[str]:
              AND abs(strftime('%s', ls.started_at) - strftime('%s', ?)) <= ?
              AND EXISTS (SELECT 1 FROM series se WHERE se.session_id = ls.id)
            ORDER BY ls.started_at""", (uid, me["started_at"], window_s))
-    done = set()
-    for r in db.fetchall("SELECT session_uids FROM analysis_run"):
-        try:
-            done.update(json.loads(r["session_uids"] or "[]"))
-        except ValueError:
-            pass
-    return [uid] + [r["uid"] for r in rows if r["uid"] not in done]
+    # Partners join even if a run already looked at them alone: the group is
+    # what tells the analyst which mechanism a fault is on (real logs,
+    # 2026-10-05: excluding them left every run looking at one log).
+    return [uid] + [r["uid"] for r in rows]
 
 
 def newest_unanalysed() -> str | None:

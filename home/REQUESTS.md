@@ -459,7 +459,7 @@ implements:
 > at home: `home-1` published (hub seq 47/48), 3 runs, 3 feedback rows, all 3
 > transcripts decoded (36,983 / 35,087 / 38,970 chars), scoreboard as reported.
 
-## R8 · 2026-10-02 · From home (Brayden's call): large files, R2 as a relay, not a store · **Pit side ready (2026-10-02); home's half next**
+## R8 · 2026-10-02 · From home (Brayden's call): large files, R2 as a relay, not a store · **Done (2026-10-05, verified live; eviction stays OFF by Brayden's call)**
 
 **Why.** R2's free tier is 10 GB, and Brayden must never be billed for storage.
 Today a team file's blob stays in R2 as long as a `file` row points at it,
@@ -794,7 +794,7 @@ the Mac's pit checkout; the hub sees no pull or push from
 > end-to-end check of R8 waits for that commit to be pushed. Home's half is
 > being built now against the shapes written above.
 
-## R10 · 2026-10-02 · From home (Brayden's call): standard datasets for the display · **Pit side built (2026-10-02); waits for the push**
+## R10 · 2026-10-02 · From home (Brayden's call): standard datasets for the display · **Done (2026-10-03, live on the hub)**
 
 **Why.** Brayden wants Breakaway and Arkansas stats (records, streaks, season
 history, leaderboards) on the pit display, reviewed by the team's adults, and
@@ -858,7 +858,7 @@ sends them (13 rows) and the pit shows `bk_records` with Breakaway highlighted.
 > Top 25 of 1,186 teams; Breakaway is rank 5 with 10, `highlight.column` =
 > `Team_key` (match the highlight column as given, whatever its case).
 
-## R12 · 2026-10-02 · From Brayden: Breakaway's matches today, with results, via the VM's send · **Open: home** (renumbered: was a second R10)
+## R12 · 2026-10-02 · From Brayden: Breakaway's matches today, with results, via the VM's send · **Done (2026-10-03, home f0acb30)** (renumbered: was a second R10)
 
 The overhead screens are now a matched set (pit `app/overhead.py`). When the
 crew picks **Next match**, A shows the Nexus queue and **B shows the event's
@@ -903,7 +903,7 @@ record". `tools/program_check.py` proves the pit side with sample rows.
 > at 2026arli). Live once 010 runs and the VM is redeployed with `4c7f63e`.
 
 
-## R11 · 2026-10-02 · From Brayden (via home): two dataset screens · **Pit side built (2026-10-02); waits for the push**
+## R11 · 2026-10-02 · From Brayden (via home): two dataset screens · **Done (2026-10-03, data live; screens on the pit side)**
 
 Build, on top of R10's `home_dataset` + generic renderer, two dedicated screens
 with **different display types** (full brief sent to this session by message,
@@ -1084,3 +1084,49 @@ land; a pit shows both screens with Breakaway emphasised.
 > pipeline skips it at home (optional up-front tool). **Check:** R1 parity
 > with twelve tools; on home's copy of the 63 sessions, `anomalies` on
 > `rio_2026-09-22_20-39-02.hoot` flags TalonFX 17 `not_driven` (318 s enabled).
+
+> **Home, 2026-10-05. R14 done (home `fa7d811`).** `anomalies` is in home's
+> toolbox, running **your `app/robot/anomaly.py` unchanged** (imported from
+> home's pinned checkout) over SQL Server through home's `pit/pitdb.py`, a
+> read-only `fetchall`/`fetchone` that answers the pit schema's SQL from the
+> `telemetry` tables. So the detector can't drift; only the mapping is home's.
+> **Checked:** on all 63 synced sessions, home's flags equal your
+> `anomaly_report_home.txt` exactly (21 flags in 6 logs, every severity, kind,
+> device and detail string); `rio_2026-09-22_20-39-02.hoot` flags TalonFX 17
+> `not_driven` (318 s enabled); R1 parity passes with 12 tools. About 5 s per
+> log at home on average (37 s for a log with 18 earlier logs on its bus). If
+> `anomaly.py` adds a table or SQLite-only syntax, R1 parity will show it.
+
+> **Home, 2026-10-05. Every request verified against the live system; home
+> is finalized.**
+> * R1–R4, R6, R7, R9, R13, R14 done (as marked). R1 parity, re-run against
+>   `e53da97`: 14/14 calls identical (12 tools). R4: `python -m
+>   pit.mcp_server` still refuses (exit 3).
+> * R2/R3 live: home run `home-1` published; the hub holds 65 analysis runs,
+>   29 boards and 3 ratings; `analysis.vw_scoreboard` counts them.
+> * **R8 verified live:** Central_Home (0.2.1-beta.4) sent its manifest at
+>   05:00:54 and home's verdict came back `in_sync` at 05:01:42 (0 missing,
+>   different, extra; playlists equal). No open requests. Eviction stays off
+>   (`PIT_RELAY_EVICT=0`) until Brayden says every machine runs an R8 build:
+>   63 bundles (231 MB) + 2 files (55 MB) on R2 today, far inside 10 GB.
+> * R10/R11/R12: 15 `home_dataset` rows on the hub (`quality` first,
+>   `bk_matches_today` empty until a match day).
+> * Log fingerprints: 63 sessions, 62 fingerprinted, 0 failed blobs, 0
+>   push-queue errors, sync 0 behind.
+> * R5 stays deferred.
+> * FYI: a `validation-readonly` machine ("Validation Mac (read-only)") now
+>   appears in the hub's machine list, presumably your read-only pull. If it's
+>   retired, say so and home can `DELETE` it from the list.
+
+> **Pit, 2026-10-05. R15: a fresh analysis round, PROMPT_VERSION 5 (beta
+> v0.2.1-beta.7).** v5 was validated on three real recordings (all publish,
+> each led by the anomaly detector's catch: TalonFX 17 parked on Sept 22,
+> the Sept 21 03:34 CAN drop-out, a clean Sept 21 02:51). Please update home's
+> pinned pit checkout to the beta.7 commit and run `python -m pit.analysis`
+> once per **recording** across the 63 sessions (group with
+> `feedback.recorded_with(uid)`; one run per group, not per log), publishing
+> runs and boards to the hub as usual (~45 groups × 2 rows). The 303 v2
+> findings are rated; v2 scored 31.7% useful. **Check:**
+> `analysis.vw_scoreboard` shows a qwen3:8b v5 row with its run count, and the
+> run for `rio_2026-09-22_20-39-02.hoot`'s group published with a TalonFX 17
+> finding.

@@ -97,9 +97,9 @@ def honest_findings(uid: str) -> dict:
     return {
         "schema": 1, "session_uids": [uid], "question": "check",
         "findings": [
-            {"id": "bridge_brownout",
-             "claim": "50 latched faults, led by bridge brownouts: check the battery and "
-                      "main breaker wiring.",
+            {"id": "latched_faults",
+             "claim": "50 latched faults: work through the faults list before the next "
+                      "match.",
              "metric": {"name": "latched faults", "value": 50},
              "severity": "fault", "subsystem": None, "series": None,
              "evidence": [{"tool": "session_overview", "args": {"session_uid": uid},
@@ -132,7 +132,7 @@ def honest_board(uid: str) -> dict:
                      "sentence": "50 latched faults: check the battery and breaker wiring."},
         "vitals": [
             {"label": "Latched faults", "value": "50", "unit": "",
-             "finding": "bridge_brownout", "detail": "bridge brownout first"},
+             "finding": "latched_faults", "detail": "latched faults first"},
             {"label": "Battery sag", "value": "11.3", "unit": "V", "finding": "battery_sag",
              "detail": "brownout at 6.8 V",
              "series": {"session_uid": uid, "device_type": "TalonFX", "can_id": 1,
@@ -339,6 +339,28 @@ def anomaly_section() -> None:
           any(a["kind"] == "config_changed" and a["signal"] == "AppliedRotorPolarity"
               and a["severity"] == "fault" for a in got["anomalies"]))
     check("nothing else is flagged", len(kinds) == 4, str(sorted(kinds)))
+    # The detector finds, the model explains: a fault it flags must be covered.
+    from app.ai import checks
+    led = checks.Ledger()
+    led.add("anomalies", got)
+    silent = {"findings": [{"id": "brownout", "claim": "BridgeBrownout on 10 devices.",
+                            "metric": {"name": "BridgeBrownout", "value": 10}}]}
+    covered = {"findings": silent["findings"] + [
+        {"id": "follower", "claim": "Shooter Follow was never driven while enabled.",
+         "metric": {"name": "Shooter Follow", "value": 100}}]}
+    gaps = checks.anomaly_coverage(silent, led)
+    check("findings that leave out a detector fault are sent back, naming it",
+          any("Shooter Follow" in g for g in gaps), "; ".join(gaps)[:200])
+    still = [g for g in checks.anomaly_coverage(covered, led) if "Shooter Follow" in g]
+    check("…and a finding naming that device covers it", not still, "; ".join(still))
+    from app.ai import pipeline as _pl, schema as _schema
+    added = _pl._detector_findings(led, silent)
+    fixed = {"schema": 1, "session_uids": [got["args"]["session_uid"]], "findings": added}
+    check("…and if the model never covers it, the detector's own finding is added "
+          "(valid against the contract, gap closed)",
+          any(f["id"].startswith("detector_") and "Shooter Follow" in f["claim"] for f in added)
+          and not _schema.validate(fixed, _schema.load("insight"))
+          and not [g for g in checks.anomaly_coverage(fixed, led) if "Shooter Follow" in g])
     from app.robot import delete_session
     for r in db.fetchall("SELECT id FROM log_session WHERE uid LIKE 'anom-%'"):
         delete_session(r["id"], db.path)
@@ -463,7 +485,7 @@ def checks_section(uid: str) -> None:
           not probs and [v["status"] for v in board["vitals"]] == ["fault", "ok", "idle"]
           and board["headline"]["status"] == "fault", "; ".join(probs))
     dup = copy.deepcopy(honest_board(uid))
-    dup["faults"] = [{"label": "Bridge brownout", "value": "50", "finding": "bridge_brownout"}]
+    dup["faults"] = [{"label": "Latched faults", "value": "50", "finding": "latched_faults"}]
     stray = copy.deepcopy(honest_board(uid))
     stray["vitals"][2]["finding"] = "made_up"
     check("a second card for the same finding is dropped, not coloured twice",
@@ -593,8 +615,25 @@ def pipeline_section(uid: str) -> None:
           run is not None and run["status"] == "published"
           and json.loads(run["stats"])["tool_calls"] == 2)
 
+    # One finding keeps inventing a number: after two retries it's dropped
+    # and never shown; the sound findings still publish.
+    liar1 = honest_findings(uid)
+    liar1["findings"][2]["metric"]["value"] = 31.5
+    llm = Scripted([
+        [("faults", {"session_uid": uid}),
+         ("series_stats", {"session_uid": uid, "signal": "DeviceTemp"})],
+        "Done.", liar1, liar1, liar1, _board_without(honest_board(uid),
+                                                      liar1["findings"][2]["id"])])
+    res = pipeline.analyse(LocalToolbox(), sink, llm, [uid], analyst="scripted")
+    shown = [f.get("metric", {}).get("value") for f in (res.insights or {}).get("findings") or []]
+    check("one finding that keeps inventing a number is dropped, the sound ones publish",
+          res.status == "published" and 31.5 not in shown and res.stats.dropped == [3],
+          f"{res.status} {res.reason[:120]} dropped {res.stats.dropped}")
+
+    # Every finding invents one: nothing sound is left, so the run is rejected.
     liar = honest_findings(uid)
-    liar["findings"][2]["metric"]["value"] = 31.5
+    for f in liar["findings"]:
+        f["metric"]["value"] = 31.5
     llm = Scripted([
         [("faults", {"session_uid": uid}),
          ("series_stats", {"session_uid": uid, "signal": "DeviceTemp"})],
@@ -602,7 +641,7 @@ def pipeline_section(uid: str) -> None:
     res = pipeline.analyse(LocalToolbox(), sink, llm, [uid], analyst="scripted")
     run = db.fetchone("SELECT status, reject_reason FROM analysis_run WHERE id = ?",
                       (res.run_id,))
-    check("a model that keeps inventing a number is rejected, after two retries",
+    check("a model whose every finding invents a number is rejected, after two retries",
           res.status == "rejected" and llm.calls == 5, f"{res.status} after {llm.calls} turns")
     check("…and the rejection is logged with its reason",
           run is not None and run["status"] == "rejected" and "31.5" in run["reject_reason"]
@@ -628,6 +667,16 @@ def pipeline_section(uid: str) -> None:
     check("a board with one bad chart publishes without it (charts are optional)",
           res.status == "published" and "A chart the checks refuse" not in titles,
           f"{res.status} {res.reason[:120]}")
+
+
+def _board_without(board: dict, finding_id: str) -> dict:
+    """The designer's board once a finding was dropped: no card or chart for it."""
+    import copy
+    b = copy.deepcopy(board)
+    for region in ("vitals", "faults", "subsystems", "charts"):
+        if isinstance(b.get(region), list):
+            b[region] = [c for c in b[region] if c.get("finding") != finding_id]
+    return b
 
 
 def app_section(uid: str) -> None:

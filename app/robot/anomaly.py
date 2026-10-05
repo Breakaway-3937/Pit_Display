@@ -177,7 +177,7 @@ def find(db, session_uid: str, phases_of) -> dict[str, Any]:
                              "code (a follower that was never set?)")
                 out.append({"kind": "not_driven", "severity": "fault", "device": _label(d),
                             "device_type": key[0], "can_id": key[1], "subsystem": d["subsystem"],
-                            "enabled_s": _r(enabled_s), "control_modes": modes,
+                            "enabled_s": round(enabled_s), "control_modes": modes,
                             "detail": f"{what}: " + "; ".join(reasons) + f". {check}"})
 
     # ── out of normal range ─────────────────────────────────────────────
@@ -245,6 +245,7 @@ def find(db, session_uid: str, phases_of) -> dict[str, Any]:
                                 "device": _label(d), "device_type": key[0], "can_id": key[1],
                                 "subsystem": d["subsystem"], "signal": name,
                                 "value": now[name][0], "usual": usual,
+                                "usual_in": values.count(usual), "history_logs": len(values),
                                 "detail": f"{name} is {now[name][0]!s}; it was {usual!s} in "
                                           f"{values.count(usual)} of {len(values)} earlier logs"
                                           + (" (a motor's direction flipped: check inversion "

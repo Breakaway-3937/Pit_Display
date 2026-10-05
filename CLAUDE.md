@@ -886,6 +886,21 @@ toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
   in 6 logs, every one worth a look (Sept 21's CAN drop-outs; TalonFX 17
   parked for 318 s on Sept 22). Thresholds are named constants; retune
   with the report, never per log.
+- **Validated on real recordings (PROMPT_VERSION 5, 2026-10-05).** Each run
+  takes a recording's logs together (`recorded_with` never drops a partner
+  for having its own run). **Every detector fault must be a finding**
+  (`checks.anomaly_coverage`); the rules and the flagged devices are restated
+  where the model writes (`_must_cover`); if it still leaves one out, the
+  detector's own finding goes on the board (`_detector_findings`, id
+  `detector_…`, contract-valid) rather than rejecting the run. Code drops
+  what the crew rated not useful (`_drop_unwanted`: current limits without
+  heat, a BridgeBrownout on most controllers with a healthy battery) and
+  gathers fault cards into one region (`assign_status`; past a screen's 8,
+  the worst 8). Out of retries, only the findings that still fail are
+  dropped (`stats.dropped`); a run with nothing sound left is rejected. Only
+  drops and moves, never a figure. Proven on 3 real recordings: all publish,
+  each led by the detector's catch. A validation pass rated the 303 v2 findings (notes
+  "Validation pass (Claude, 2026-10-05)"); v2 scored 31.7% useful.
 - **Not built:** syncing the scoreboard's prompt text (only its version),
   multi-session (match-to-match) runs, `breakdown_json` from TBA.
 
