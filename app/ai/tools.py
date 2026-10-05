@@ -406,6 +406,27 @@ def match_phases(session_uid: str) -> dict[str, Any]:
             "signals": [x for x in (mode_sig, en_sig, auto_sig, fms_sig) if x]}
 
 
+def anomalies(session_uid: str) -> dict[str, Any]:
+    """
+    What isn't normal in this log against this robot's own earlier logs
+    (app/robot/anomaly.py): devices missing from the bus, motors on the bus
+    but never driven while enabled, values beyond their usual range,
+    configuration (firmware, inversion) changed, faults latched for the first
+    time. Exact figures, computed by code.
+    """
+    args = {"session_uid": session_uid}
+    if _session_id(session_uid) is None:
+        return _missing(args)
+    from app.robot import anomaly
+    got = anomaly.find(connection(), session_uid, match_phases)
+    if "error" in got:
+        return {"args": args, **got}
+    rows, truncated = _cap(got["anomalies"])
+    return {"args": args, "bus": got["bus"], "history_logs": got["history_logs"],
+            "enabled_s": got["enabled_s"], "anomalies": rows, "truncated": truncated,
+            "note": got["note"]}
+
+
 def subsystems(session_uid: str) -> dict[str, Any]:
     args = {"session_uid": session_uid}
     s = _session_id(session_uid)
@@ -583,6 +604,13 @@ SPECS: list[dict] = [
           "Which TBA match a log was (the crew's match key, else the match nearest its "
           "start time), our alliance, partners, opponents, scores and result. Null when "
           "the match isn't known.", {"session_uid": _UID}, ["session_uid"]),
+    _spec("anomalies",
+          "What isn't normal in this log, against this robot's own earlier logs: devices "
+          "missing from the CAN bus, motors on the bus but never driven while the robot was "
+          "enabled (or not driven while a partner in the same subsystem was), values beyond "
+          "their usual range, configuration (firmware, inversion) changed, faults latched "
+          "for the first time. Exact figures with the normal range they're compared to.",
+          {"session_uid": _UID}, ["session_uid"]),
     _spec("match_phases",
           "When the robot was disabled, in autonomous, teleop or test, from its own Driver "
           "Station state: seconds in each, the timeline, whether a field (FMS) was attached. "
@@ -598,7 +626,7 @@ TOOLS = {
     "list_signals": list_signals, "series_stats": series_stats, "series_1s": series_1s,
     "faults": faults, "subsystems": subsystems, "compare_sessions": compare_sessions,
     "match_context": match_context, "device_names": device_names,
-    "match_phases": match_phases,
+    "match_phases": match_phases, "anomalies": anomalies,
 }
 
 

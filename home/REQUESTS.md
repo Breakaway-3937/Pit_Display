@@ -1055,3 +1055,20 @@ land; a pit shows both screens with Breakaway emphasised.
 > does, the pipeline skips it at home (an up-front tool that errors is left
 > out, never fatal). **Check:** R1 parity passes with eleven tools, and a home
 > run's transcript shows a `match_phases result` in its first message.
+
+> **Home, 2026-10-05. R13 done (home `714baec`).** `pit/tools.py` has
+> `match_phases`, ported line for line from `app/ai/tools.py` over SQL Server
+> (change points from `telemetry.sample` + labels from `telemetry.session_enum`,
+> else `telemetry.constant`). Home also took two other v3 changes it found
+> through parity: `faults` drops `...Field` bitfield summaries, and
+> `device_names` drops the Robot pseudo-device (`can_id` -1). **Checks:**
+> R1 parity 14/14 identical against `ef0fe9a` (11 tools; `list_sessions` now
+> compares the sessions both sides hold, and Pigeon2 25 counts 4 faults since
+> the Field summary is gone). Your three TEST_LOGS gave identical
+> `match_phases` results to yours. On home's 63 synced sessions it reads real
+> enabled logs, e.g. `rio_2026-09-22_16-04-09.hoot` (1,154 s teleop over
+> several enables) and `akit_26-08-12_01-23-56.wpilog` (385 s teleop).
+> `HomeToolbox.call("match_phases", …)` returns it, so a home run's up-front
+> primer includes it for any log that records enable state. `match_context`
+> still waits for R5. Home analysis runs on the Mac, so there's nothing to
+> deploy to the VM for R13.

@@ -246,6 +246,104 @@ def schema_section(uid: str) -> None:
           and any("unexpected 'extra'" in e for e in errs), "; ".join(errs[:4]))
 
 
+def anomaly_section() -> None:
+    """The detector on a made-up robot whose answers are known: last year's
+    shooter (a follower never commanded), a missing device, a hot motor, a
+    flipped inversion. And silence on a log that matches its history."""
+    from app.ai import tools
+    from app.db import db
+    print("\nWhat isn't normal (the anomaly detector, against the robot's own history)")
+    ids = {}
+
+    def sig(c, dtype, name, kind="num"):
+        c.execute("INSERT OR IGNORE INTO signal (device_type, name, value_kind, signal_class) "
+                  "VALUES (?, ?, ?, 'telemetry')", (dtype, name, kind))
+        return c.execute("SELECT id FROM signal WHERE device_type=? AND name=?",
+                         (dtype, name)).fetchone()[0]
+
+    def dev(c, dtype, can, label=None, sub=None):
+        c.execute("INSERT OR IGNORE INTO device (device_type, can_id) VALUES (?, ?)", (dtype, can))
+        if label:
+            c.execute("UPDATE device SET label=?, subsystem=? WHERE device_type=? AND can_id=?",
+                      (label, sub, dtype, can))
+        return c.execute("SELECT id FROM device WHERE device_type=? AND can_id=?",
+                         (dtype, can)).fetchone()[0]
+
+    def session(n, *, drive17=True, with18=True, temp16=40.0, polarity="CounterClockwise_Positive"):
+        uid = f"anom-{n}"
+        with db.transaction() as c:
+            c.execute("INSERT INTO log_session (source_file, source_name, source_kind, device_serial, "
+                      "started_at, duration_s, uid) VALUES (?, ?, 'hoot', 'rio', ?, 120.0, ?)",
+                      (uid, f"rio_2026-09-0{n}_10-00-00.hoot", f"2026-09-0{n} 10:00:00", uid))
+            sid = c.execute("SELECT id FROM log_session WHERE uid=?", (uid,)).fetchone()[0]
+            robot = dev(c, "Robot", -1)
+            en = sig(c, "Robot", "RobotEnable")
+            c.execute("INSERT INTO series (session_id, device_id, signal_id) VALUES (?, ?, ?)", (sid, robot, en))
+            se = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+            c.executemany("INSERT INTO samples.sample VALUES (?, ?, 0, ?)",
+                          [(se, 0, 0), (se, 10000, 1), (se, 110000, 0)])
+            for can, label in ((16, "Shooter Lead"), (17, "Shooter Follow"), (18, "Intake Roller")):
+                if can == 18 and not with18:
+                    continue
+                d = dev(c, "TalonFX", can, label, "Shooter" if can != 18 else "Intake")
+                driven = can != 17 or drive17
+                for name, val in (("DutyCycle", 0.8 if driven else 0.0),
+                                  ("DeviceTemp", (temp16 if can == 16 else 38.0) + n * 0.5)):
+                    g = sig(c, "TalonFX", name)
+                    c.execute("INSERT INTO series (session_id, device_id, signal_id, v_min, v_max) "
+                              "VALUES (?, ?, ?, ?, ?)", (sid, d, g, 0.0, val))
+                    se = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    c.executemany("INSERT INTO samples.sample_1s (series_id, t_s, v_min, v_max, v_avg, n) "
+                                  "VALUES (?, ?, ?, ?, ?, 1)",
+                                  [(se, t, 0.0, val if 15 <= t <= 100 else 0.0, 0.0) for t in range(0, 120, 5)])
+                cm = sig(c, "TalonFX", "ControlMode", "enum")
+                codes = {}
+                for label2 in ("DutyCycleOut", "NeutralOut"):     # the real fixture may hold others
+                    row = c.execute("SELECT code FROM signal_enum WHERE signal_id=? AND label=?",
+                                    (cm, label2)).fetchone()
+                    if row is None:
+                        nxt = c.execute("SELECT COALESCE(MAX(code), 0) + 1 FROM signal_enum "
+                                        "WHERE signal_id=?", (cm,)).fetchone()[0]
+                        c.execute("INSERT INTO signal_enum VALUES (?, ?, ?)", (cm, nxt, label2))
+                        row = (nxt,)
+                    codes[label2] = row[0]
+                c.execute("INSERT INTO series (session_id, device_id, signal_id) VALUES (?, ?, ?)", (sid, d, cm))
+                se = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+                c.execute("INSERT INTO samples.sample VALUES (?, 12000, 0, ?)",
+                          (se, codes["DutyCycleOut" if driven else "NeutralOut"]))
+                pol = sig(c, "TalonFX", "AppliedRotorPolarity", "enum")
+                c.execute("INSERT INTO session_constant (session_id, device_id, signal_id, v, v_text) "
+                          "VALUES (?, ?, ?, 0, ?)", (sid, d, pol, polarity if can == 16 else "CounterClockwise_Positive"))
+        return uid
+
+    for n in range(1, 5):
+        session(n)
+    calm = tools.call("anomalies", {"session_uid": session(5)})
+    check("a log just like its history: nothing flagged",
+          calm.get("anomalies") == [] and calm["history_logs"] == 4, str(calm.get("anomalies"))[:300])
+    got = tools.call("anomalies", {"session_uid": session(6, drive17=False, with18=False,
+                                                         temp16=70.0, polarity="Clockwise_Positive")})
+    kinds = {(a["kind"], a["device"], a.get("signal")) for a in got.get("anomalies") or []}
+    check("last year's shooter: the follower on the bus but never driven is a fault",
+          ("not_driven", "Shooter Follow", None) in kinds, str(kinds))
+    nd = next((a for a in got["anomalies"] if a["kind"] == "not_driven"), {})
+    check("…flagged against its history and its partner",
+          "earlier enabled logs" in nd.get("detail", "") and "Shooter Lead" in nd.get("detail", ""),
+          nd.get("detail", ""))
+    check("a device missing from the bus is a fault", ("missing", "Intake Roller", None) in kinds)
+    check("a motor far hotter than it usually runs is flagged, with its normal range",
+          ("out_of_range", "Shooter Lead", "DeviceTemp") in kinds
+          and any(a.get("normal", {}).get("logs") == 5 for a in got["anomalies"]
+                  if a["kind"] == "out_of_range"))
+    check("a flipped inversion is a fault",
+          any(a["kind"] == "config_changed" and a["signal"] == "AppliedRotorPolarity"
+              and a["severity"] == "fault" for a in got["anomalies"]))
+    check("nothing else is flagged", len(kinds) == 4, str(sorted(kinds)))
+    from app.robot import delete_session
+    for r in db.fetchall("SELECT id FROM log_session WHERE uid LIKE 'anom-%'"):
+        delete_session(r["id"], db.path)
+
+
 def phases_section() -> None:
     """match_phases on a made-up match: disabled, 15 s auto, teleop, disabled."""
     from app.ai import tools
@@ -274,8 +372,8 @@ def phases_section() -> None:
           got == [("disabled", 0.0, 5.0), ("auto", 5.0, 20.0), ("teleop", 20.0, 150.0),
                   ("disabled", 150.0, 180.0)] and out["auto_s"] == 15.0
           and out["teleop_s"] == 130.0 and out["never_enabled"] is False, str(got))
-    with db.transaction() as c:
-        c.execute("DELETE FROM log_session WHERE uid = 'phase-test'")
+    from app.robot import delete_session
+    delete_session(sid, db.path)        # samples too (they live in the attached file)
 
 
 def checks_section(uid: str) -> None:
@@ -703,8 +801,8 @@ def mcp_section(uid: str) -> None:
               init["result"]["protocolVersion"] == "2025-06-18"
               and "tools" in init["result"]["capabilities"])
         names = [t["name"] for t in rpc(2, "tools/list")["result"]["tools"]]
-        check("it lists the eleven tools and the two analysis ones",
-              len(names) == 13 and "analysis_scoreboard" in names
+        check("it lists the twelve tools and the two analysis ones",
+              len(names) == 14 and "anomalies" in names and "analysis_scoreboard" in names
               and "match_context" in names and "match_phases" in names, ", ".join(names))
         got = rpc(3, "tools/call", {"name": "faults", "arguments": {"session_uid": uid}})
         sc = got["result"]["structuredContent"]
@@ -838,6 +936,7 @@ def main() -> int:
     schema_section(uid)
     checks_section(uid)
     phases_section()
+    anomaly_section()
     pipeline_section(uid)
     app_section(uid)
     mcp_section(uid)

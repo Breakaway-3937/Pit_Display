@@ -41,7 +41,7 @@ DEFAULT_QUESTION = "What should the pit crew look at before the next match?"
 # number is recorded in every run's stats.
 #   1 — first trials (2026-09-30)
 #   2 — faults summary/by_device, code sets colours, chart options from vitals
-PROMPT_VERSION = 3
+PROMPT_VERSION = 4
 
 # What Phoenix 6 faults mean for a pit crew (CTRE's fault definitions, with
 # the pit's practical weighting). A small model can't know these, and the
@@ -137,6 +137,11 @@ Use the tools to look closer before you conclude: a fault's device over time \
 Keep your notes between calls short.
 - One run may cover several logs recorded together on the same robot (the \
 AdvantageKit log and the CAN logs): read them as one match.
+- anomalies is a detector that compared this log with this robot's own earlier logs. \
+Each one it lists is a real difference from normal: lead with the faults among them \
+(a device missing from the bus, a motor never driven while enabled: often a code or \
+wiring problem), say what it likely means and what to check, and use its figures \
+and normal ranges exactly. Don't explain away what it flags.
 - match_phases says when the robot was disabled, in autonomous or in teleop. If \
 never_enabled is true, this was a pit or bench recording: say so first, and don't \
 present currents, temperatures or power-on faults as match problems. When it was \
@@ -274,6 +279,13 @@ def analyse(toolbox: Toolbox, sink: Sink, llm: Ollama, session_uids: list[str], 
                     return {"error": f"{type(e).__name__}: {e}"}
                 return out if isinstance(out, dict) else {"error": "not a result"}
 
+            # The detector first: what isn't normal against this robot's own
+            # history (app/robot/anomaly.py). The analyst's main job is to
+            # explain these to the crew.
+            an = optional("anomalies")
+            if "error" not in an and (an.get("anomalies") or an.get("note")):
+                ledger.add("anomalies", an)
+                primer.append(f"anomalies result:\n{_dumps(an)}")
             ph = optional("match_phases")
             if "error" not in ph and ph.get("never_enabled") is not None:
                 ledger.add("match_phases", ph)
