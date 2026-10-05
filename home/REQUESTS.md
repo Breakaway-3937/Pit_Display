@@ -1039,3 +1039,19 @@ land; a pit shows both screens with Breakaway emphasised.
 > `TEST_LOGS/akit_26-08-17_02-59-21.wpilog`, in a temp data dir) carries
 > `source_sha256` = `shasum -a 256` of the file (`f1488dc0…`), read intact by
 > home's `open_bundle`; R1 parity 12/12; `tba_push_check` all pass.
+
+> **Pit, 2026-10-05. R13: the analyst gains `match_phases` (PROMPT_VERSION 3).**
+> `app/ai/tools.py` adds an eleventh read-only tool, `match_phases(session_uid)`:
+> from the Robot pseudo-device's Driver Station state (`DriverStation/Enabled`,
+> `DriverStation/Autonomous`, `DriverStation/FMSAttached` from AdvantageKit;
+> `RobotMode`, `RobotEnable`, `DS:IsFMSAttached` from a hoot), change points or
+> the session constant, it returns `never_enabled`, `auto_s`, `teleop_s`,
+> `test_s`, `disabled_s`, `fms_attached`, `phases` [{phase, start_s, end_s}],
+> `signals`. The pipeline also hands the analyst each log's faults, subsystems,
+> match and phases up front, a fault guide, the crew's verdicts (`lessons`) and
+> the crew's robot brief (setting doc `brief`, `{"text"}`), and runs logs
+> recorded within 60 s together. Home's MCP should add `match_phases` with the
+> same arguments and result keys (floats rounded to 4, `args` echoed). Until it
+> does, the pipeline skips it at home (an up-front tool that errors is left
+> out, never fatal). **Check:** R1 parity passes with eleven tools, and a home
+> run's transcript shows a `match_phases result` in its first message.

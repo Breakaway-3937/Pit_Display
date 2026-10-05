@@ -286,8 +286,12 @@ def chart_options(insights: dict, ledger: Ledger | None = None,
         fid = f.get("id", "")
         s = f.get("series")
         if isinstance(s, dict):
-            add("line", {k: s.get(k) for k in ("session_uid", "device_type", "can_id",
-                                                 "signal")}, fid)
+            # A line is one device's history: never offer one the board check
+            # would reject (a series naming no device). This alone rejected
+            # most real runs' boards (tools/ai_eval.py, 2026-10-03).
+            if s.get("device_type") is not None and s.get("can_id") is not None:
+                add("line", {k: s.get(k) for k in ("session_uid", "device_type", "can_id",
+                                                     "signal")}, fid)
             add("bars", {"session_uid": s.get("session_uid"), "signal": s.get("signal")}, fid)
         for ev in f.get("evidence") or []:
             a = ev.get("args") or {}

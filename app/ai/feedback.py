@@ -82,6 +82,35 @@ def run_trace(run_id: int) -> tuple[list, dict[str, str]]:
     return steps, names
 
 
+def lessons(limit: int = 8) -> list[str]:
+    """
+    The crew's verdicts on earlier findings, as short lines the analyst reads
+    before it starts (pipeline `lessons`): the closest thing this model gets
+    to training on what this crew values. Newest first, wrong and not-useful
+    ones before useful ones, one line per distinct claim.
+    """
+    rows = db.fetchall(
+        """SELECT f.finding_id, f.rating, f.acted, r.insights
+           FROM analysis_feedback f JOIN analysis_run r ON r.id = f.run_id
+           WHERE f.finding_id <> '' AND (f.rating IS NOT NULL OR f.acted = 1)
+           ORDER BY f.rated_at DESC""")
+    order = {"wrong": 0, "not_useful": 1, "useful": 2}
+    picked: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for r in rows:
+        try:
+            found = {x.get("id"): x for x in json.loads(r["insights"] or "{}").get("findings") or []}
+        except ValueError:
+            continue
+        claim = (found.get(r["finding_id"]) or {}).get("claim")
+        if not claim or claim in seen:
+            continue
+        seen.add(claim)
+        verdict = "acted on (useful)" if r["acted"] else (r["rating"] or "").replace("_", " ")
+        picked.append((0 if r["acted"] else order.get(r["rating"], 3), f"{verdict}: {claim}"))
+    return [line for _rank, line in sorted(picked, key=lambda x: x[0])[:limit]]
+
+
 def verdicts(run_id: int) -> dict[str, dict]:
     """finding_id → {rating, acted, score}; the run's own row is under ''."""
     return {r["finding_id"]: {"rating": r["rating"], "acted": bool(r["acted"]),
@@ -143,6 +172,31 @@ def unanalysed(since_hours: float | None = 24) -> list[str]:
         except ValueError:
             pass
     return [r["uid"] for r in rows if r["uid"] not in done]
+
+
+def recorded_with(uid: str, window_s: int = 60) -> list[str]:
+    """
+    `uid` and every other log with data recorded within `window_s` of it: the
+    robot writes three logs per session (the AdvantageKit .wpilog and a .hoot
+    per CAN bus), and only together do they say which mechanism a fault is
+    on. Logs a run already covered are left out. `uid` first.
+    """
+    me = db.fetchone("SELECT started_at FROM log_session WHERE uid = ?", (uid,))
+    if me is None or not me["started_at"]:
+        return [uid]
+    rows = db.fetchall(
+        """SELECT ls.uid FROM log_session ls
+           WHERE ls.uid IS NOT NULL AND ls.uid <> ? AND ls.started_at IS NOT NULL
+             AND abs(strftime('%s', ls.started_at) - strftime('%s', ?)) <= ?
+             AND EXISTS (SELECT 1 FROM series se WHERE se.session_id = ls.id)
+           ORDER BY ls.started_at""", (uid, me["started_at"], window_s))
+    done = set()
+    for r in db.fetchall("SELECT session_uids FROM analysis_run"):
+        try:
+            done.update(json.loads(r["session_uids"] or "[]"))
+        except ValueError:
+            pass
+    return [uid] + [r["uid"] for r in rows if r["uid"] not in done]
 
 
 def newest_unanalysed() -> str | None:

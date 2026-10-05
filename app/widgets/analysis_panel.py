@@ -25,7 +25,7 @@ is its severity, so red appears only for a latched fault.
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QGridLayout, QHBoxLayout, QPlainTextEdit, QVBoxLayout, QWidget
 
 from app import attribution, brand
 from app.attribution import link
@@ -41,6 +41,87 @@ _RUN_DOT = {"published": brand.STATUS_ONLINE, "rejected": brand.STATUS_PENDING,
             "running": brand.STATUS_PENDING, "failed": brand.STATUS_IDLE}
 _RATING_TEXT = (("useful", "Useful"), ("not_useful", "Not useful"), ("wrong", "Wrong"))
 _TOUCH = 46
+
+
+class _BriefEditor(QWidget):
+    """
+    The crew's robot brief for the analyst (`app/ai/brief.py`): the season,
+    the mechanisms, what normal looks like. Admin-only to edit (it steers
+    every run on every pit); everyone sees how much is written.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from app.admin import admin
+        from app.ai import brief
+        self._brief = brief
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+        lay.addWidget(eyebrow("Robot brief · what the analyst should know"))
+        intro = _prose("A short note the analyst reads before every log: this season's "
+                       "game, each mechanism and the motors that drive it, what normal "
+                       "looks like, and what the crew wants flagged. Short and specific "
+                       "beats long: the model can't read a game manual or the robot code.")
+        lay.addWidget(intro)
+        self._state = label("", "stat_label")
+        self._state.setWordWrap(True)
+        lay.addWidget(self._state)
+        self._body = QWidget()
+        b = QVBoxLayout(self._body)
+        b.setContentsMargins(0, 0, 0, 0)
+        b.setSpacing(8)
+        self._edit = QPlainTextEdit()
+        self._edit.setFixedHeight(260)
+        self._edit.textChanged.connect(self._count)
+        b.addWidget(self._edit)
+        row = QHBoxLayout()
+        self._counter = label("", "stat_label")
+        row.addWidget(self._counter, stretch=1)
+        tpl = RoundedButton("Start from the template", variant="secondary")
+        tpl.setMinimumHeight(_TOUCH)
+        tpl.clicked.connect(self._template)
+        row.addWidget(tpl)
+        save = RoundedButton("Save the brief", variant="secondary")
+        save.setMinimumHeight(_TOUCH)
+        save.clicked.connect(self._save)
+        row.addWidget(save)
+        b.addLayout(row)
+        lay.addWidget(self._body)
+        self._edit.setPlainText(brief.load()["text"])
+        try:
+            admin.lock_state_changed.connect(self._apply_lock)
+            unlocked = admin.unlocked
+        except RuntimeError:                  # no lock service (a check): stay locked
+            unlocked = False
+        self._apply_lock(unlocked)
+
+    def _apply_lock(self, unlocked: bool) -> None:
+        self._body.setVisible(unlocked)
+        written = self._brief.for_model()
+        self._state.setText(
+            (f"{len(written)} characters written; the analyst reads them before every log."
+             if written else "Nothing written yet, so the analyst works without it.")
+            + ("" if unlocked else " Unlock with the Breakaway mark to edit."))
+
+    def _count(self) -> None:
+        n = len(self._edit.toPlainText())
+        over = n - self._brief.MAX_CHARS
+        self._counter.setText(f"{n} / {self._brief.MAX_CHARS} characters"
+                              + (f" · {over} over: shorten it" if over > 0 else ""))
+
+    def _template(self) -> None:
+        if not self._edit.toPlainText().strip():
+            self._edit.setPlainText(self._brief.TEMPLATE)
+        else:
+            self._edit.setPlainText(self._edit.toPlainText().rstrip() + "\n\n" + self._brief.TEMPLATE)
+
+    def _save(self) -> None:
+        if len(self._edit.toPlainText()) > self._brief.MAX_CHARS:
+            self._counter.setText(self._counter.text() + " · not saved")
+            return
+        self._brief.save(text=self._edit.toPlainText())
+        self._apply_lock(True)
 
 
 def _chip(text: str) -> SelectableChip:
@@ -119,6 +200,10 @@ class AnalysisPanel(QWidget):
         root.addWidget(LinkLabel(
             "Which match a log was, and who played in it: "
             f"{link(attribution.TBA_TEXT, attribution.TBA_URL)}."))
+        root.addSpacing(16)
+        root.addWidget(divider())
+        root.addSpacing(16)
+        root.addWidget(_BriefEditor())
         root.addSpacing(16)
         root.addWidget(divider())
         root.addSpacing(16)

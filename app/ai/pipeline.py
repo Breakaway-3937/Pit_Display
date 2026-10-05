@@ -41,7 +41,34 @@ DEFAULT_QUESTION = "What should the pit crew look at before the next match?"
 # number is recorded in every run's stats.
 #   1 — first trials (2026-09-30)
 #   2 — faults summary/by_device, code sets colours, chart options from vitals
-PROMPT_VERSION = 2
+PROMPT_VERSION = 3
+
+# What Phoenix 6 faults mean for a pit crew (CTRE's fault definitions, with
+# the pit's practical weighting). A small model can't know these, and the
+# crew's first ratings were exactly these mistakes (2026-10-03): a
+# BridgeBrownout latched on every controller was "not useful" (the robot was
+# power-cycled), StickyFaultField was "wrong" (it's a bitfield, not a fault).
+FAULT_GUIDE = """\
+What the faults mean (sticky = latched since the controller last booted or was cleared):
+- BridgeBrownout: the motor controller's supply dipped. On every controller at once \
+with a healthy battery minimum, it's almost always the robot being powered on/off or \
+a breaker reset, not a match problem: low priority. On one or two devices, or with \
+a low battery minimum, check that device's power wiring and breaker.
+- BootDuringEnable: the controller rebooted while the robot was enabled: a loose \
+power or CAN connector, or a breaker tripping. High priority.
+- DeviceTemp / ProcTemp: the motor or controller got too hot and protected itself. \
+High priority: check the mechanism for binding, the duty it ran, and cooling.
+- Hardware: the controller reports a hardware fault: inspect or replace it.
+- StatorCurrLimit / SupplyCurrLimit: a configured current limit engaged. Usually by \
+design (a drive pushing, an intake stalling on a game piece). Only worth a finding \
+with high temperature or on a mechanism that shouldn't stall.
+- UnderVoltage / OverSupplyV: supply voltage out of range: battery or wiring.
+- FusedSensorOutOfSync / RemoteSensorDataInvalid / MissingRemoteSensor: the \
+CANcoder or remote sensor the controller relies on isn't agreeing or reporting: \
+check its CAN wiring, ID and configuration.
+- Anything named ...Field is a bitfield summary of the others, never a fault itself.
+Relate a device's fault to its mechanism (device labels, subsystems) when the data \
+lets you, and say which mechanism the crew should look at."""
 SHAPE_POINTS = 52       # diagnostics.SHAPE_POINTS: what a card's trace carries
 
 
@@ -103,9 +130,19 @@ give. "fault" means a latched fault the tools reported. Don't invent thresholds.
 - Never count, add up or average rows yourself: that is computing a figure. The \
 tools give counts and totals (faults → summary, session_overview → \
 sticky_fault_count, series_stats → min/max/mean).
-- Call the tools you need (usually 2 to 6 calls), then stop calling tools and say \
-you're done. Keep your notes between calls short.
-/no_think"""
+- You're given the overview, faults, subsystems and match for each log up front. \
+Use the tools to look closer before you conclude: a fault's device over time \
+(series_1s), a signal across devices (series_stats), what a log recorded \
+(list_signals). Usually 2 to 6 calls; then stop calling tools and say you're done. \
+Keep your notes between calls short.
+- One run may cover several logs recorded together on the same robot (the \
+AdvantageKit log and the CAN logs): read them as one match.
+- match_phases says when the robot was disabled, in autonomous or in teleop. If \
+never_enabled is true, this was a pit or bench recording: say so first, and don't \
+present currents, temperatures or power-on faults as match problems. When it was \
+enabled, say which phase a problem happened in.
+
+""" + FAULT_GUIDE
 
 FINDINGS_PROMPT = """\
 Now write your findings as JSON: 1 to 6 findings, worst first.
@@ -154,6 +191,22 @@ def _dumps(obj) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
+def _tidy_ids(insights: dict) -> None:
+    """A finding's id is a label, not a figure: make it fit the schema
+    (lowercase, underscores, ≤ 40, unique) rather than reject a run over it."""
+    import re
+    seen: set[str] = set()
+    for n, f in enumerate(insights.get("findings") or [], 1):
+        if not isinstance(f, dict):
+            continue
+        fid = re.sub(r"[^a-z0-9_]+", "_", str(f.get("id") or "").lower()).strip("_")[:40]
+        fid = fid or f"finding_{n}"
+        while fid in seen:
+            fid = (fid[:36] + f"_{n}")[:40]
+        seen.add(fid)
+        f["id"] = fid
+
+
 def _parse(content: str) -> tuple[dict | None, str]:
     try:
         value = json.loads(content)
@@ -165,8 +218,20 @@ def _parse(content: str) -> tuple[dict | None, str]:
 def analyse(toolbox: Toolbox, sink: Sink, llm: Ollama, session_uids: list[str], *,
             analyst: str, designer: str | None = None, question: str = DEFAULT_QUESTION,
             max_tool_calls: int = 12, retries: int = 2,
-            on_step: Callable[[str], None] | None = None) -> RunResult:
-    """Run the whole pipeline once. Never raises for a model or tool problem."""
+            on_step: Callable[[str], None] | None = None,
+            grounding: str = "full", lessons: list[str] | None = None,
+            think_tools: bool = False, brief: str = "") -> RunResult:
+    """
+    Run the whole pipeline once. Never raises for a model or tool problem.
+
+    `grounding` "full" hands the analyst each log's overview, fault summary,
+    subsystems and match up front (run by code, in the ledger like any tool
+    call); "overview" is the v2 behaviour, for comparison (`tools/ai_eval.py`).
+    `lessons` are the crew's verdicts on earlier findings (`feedback.lessons`).
+    `think_tools` lets Qwen3 think while it chooses tools (slower).
+    `brief` is the crew's robot brief (`brief.for_model()`): the season, the
+    mechanisms and what normal looks like, read before any data.
+    """
     designer = designer or analyst
     step = on_step or (lambda _msg: None)
     run_id = sink.start_run(session_uids, question, analyst)
@@ -197,18 +262,71 @@ def analyse(toolbox: Toolbox, sink: Sink, llm: Ollama, session_uids: list[str], 
             meta = ov.get("session") or {}
             context_text += [str(meta.get("name") or ""), str(meta.get("match_key") or "")]
             primer.append(f"session_overview result:\n{_dumps(ov)}")
+            if grounding != "full":
+                continue
+            # What a small model rarely thinks to ask for, fetched by code.
+            # Each is optional: a toolbox without one (home's MCP before it
+            # adds match_phases) just doesn't contribute it.
+            def optional(name: str) -> dict:
+                try:
+                    out = toolbox.call(name, {"session_uid": uid})
+                except Exception as e:          # an unknown tool must not fail the run
+                    return {"error": f"{type(e).__name__}: {e}"}
+                return out if isinstance(out, dict) else {"error": "not a result"}
+
+            ph = optional("match_phases")
+            if "error" not in ph and ph.get("never_enabled") is not None:
+                ledger.add("match_phases", ph)
+                primer.append(f"match_phases result:\n{_dumps(ph)}")
+            fl = optional("faults")
+            if "error" not in fl:
+                ledger.add("faults", fl)
+                if fl.get("summary"):
+                    compact = {k: fl[k] for k in ("args", "summary", "by_device") if k in fl}
+                    primer.append(f"faults result:\n{_dumps(compact)}")
+            sub = optional("subsystems")
+            if "error" not in sub and sub.get("subsystems"):
+                ledger.add("subsystems", sub)
+                primer.append(f"subsystems result:\n{_dumps(sub)}")
+            mc = optional("match_context")
+            if "error" not in mc and mc.get("match"):
+                ledger.add("match_context", mc)
+                primer.append(f"match_context result:\n{_dumps(mc)}")
         context = checks.context_numbers(*context_text)
 
         # ── 1. analyst ────────────────────────────────────────────────────
         step(f"analyst ({analyst}) reading the log")
+        taught = ""
+        # The one fact that changes how everything else reads, stated first and
+        # plainly: a rule buried in the system prompt wasn't enough for an 8B
+        # model (it called 80 °F "near the limit" in a disabled log).
+        idle = [u for u in session_uids
+                if any(c.tool == "match_phases" and c.args.get("session_uid") == u
+                       and c.result.get("never_enabled") for c in ledger.calls)]
+        if idle and len(idle) == len(session_uids):
+            taught += ("IMPORTANT: the robot was never enabled in this log (match_phases: "
+                       "never_enabled). It's a pit or bench recording, not a match. Lead "
+                       "with that, report only what matters on a robot sitting in the pit "
+                       "(latched faults, a device that's missing or misbehaving), and don't "
+                       "call normal readings a problem.\n\n")
+        if brief:
+            taught += ("About this robot and season, from the team (trust it over "
+                       "general assumptions):\n" + brief.strip() + "\n\n")
+        if lessons:
+            taught += ("What this crew said about earlier findings (learn from it; "
+                      "don't repeat what they called wrong or not useful):\n- "
+                      + "\n- ".join(lessons) + "\n\n")
         analyst_msgs += [
-            {"role": "system", "content": ANALYST_SYSTEM},
+            {"role": "system", "content": ANALYST_SYSTEM
+                + ("" if think_tools else "\n/no_think")},
             {"role": "user", "content": f"Sessions: {', '.join(session_uids)}\n"
-                                        f"Question: {question}\n\n" + "\n\n".join(primer)},
+                                        f"Question: {question}\n\n" + taught
+                                        + "\n\n".join(primer)},
         ]
         specs = toolbox.specs()
         while True:
-            reply = llm.chat(analyst, analyst_msgs, tools=specs)
+            reply = llm.chat(analyst, analyst_msgs, tools=specs,
+                             **({"think": True} if think_tools else {}))
             res.stats.count(reply, "analyst")
             analyst_msgs.append({"role": "assistant", "content": reply.content,
                                  **({"tool_calls": reply.message.get("tool_calls")}
@@ -240,11 +358,13 @@ def analyse(toolbox: Toolbox, sink: Sink, llm: Ollama, session_uids: list[str], 
             res.stats.count(reply, "analyst")
             analyst_msgs.append({"role": "assistant", "content": reply.content})
             insights, err = _parse(reply.content)
+            if insights is not None:
+                _tidy_ids(insights)
             problems = [err] if insights is None else (
                 schema.validate(insights, schema.load("insight")))
             if insights is not None and not problems:
                 problems = checks.check_findings(insights, ledger, session_uids, context)
-                problems += _series_problems(toolbox, insights, session_uids)
+                _drop_bad_series(toolbox, insights, session_uids)
             res.insights = insights
             if not problems:
                 break
@@ -289,6 +409,15 @@ def analyse(toolbox: Toolbox, sink: Sink, llm: Ollama, session_uids: list[str], 
                     problems += schema.validate(board, schema.load("board"))
                     problems += checks.check_board(board, res.insights, context)
                     problems += checks.check_charts(board, options, session_uids)
+                    # Charts are optional ("no chart is better than one that
+                    # doesn't help"): a chart that fails a check is dropped,
+                    # never the board. Every other problem still sends it back.
+                    bad = {i for i in range(len(board.get("charts") or []))
+                           if any(p.startswith((f"charts[{i}]:", f"charts[{i}].")) for p in problems)}
+                    if bad:
+                        board["charts"] = [c for i, c in enumerate(board["charts"]) if i not in bad]
+                        problems = [p for p in problems if not p.startswith("charts[")]
+                        problems += checks.check_charts(board, options, session_uids)
             if not problems:
                 break
             board = None
@@ -312,17 +441,26 @@ def analyse(toolbox: Toolbox, sink: Sink, llm: Ollama, session_uids: list[str], 
         return finish("failed", f"{type(e).__name__}: {e}")
 
 
-def _series_problems(toolbox: Toolbox, insights: dict, session_uids: list[str]) -> list[str]:
-    out = []
-    for ref in checks.series_refs(insights):
-        if ref["session_uid"] not in session_uids:
-            out.append(f"series {ref['signal']!r} names another session")
+def _drop_bad_series(toolbox: Toolbox, insights: dict, session_uids: list[str]) -> None:
+    """
+    A finding's `series` only points a card at a history to draw; it isn't a
+    figure. One that names no real per-second series (another session, a
+    device that isn't there) is cleared by code, not argued over: that alone
+    rejected a good run (tools/ai_eval.py, 2026-10-05). The metric itself is
+    still checked against the tools like every figure.
+    """
+    for f in insights.get("findings") or []:
+        ref = f.get("series") if isinstance(f, dict) else None
+        if not isinstance(ref, dict):
             continue
-        got = toolbox.call("series_1s", {**ref, "max_points": 2})
-        if "error" in got or not got.get("points"):
-            out.append(f"series {ref['device_type']} {ref['can_id']} {ref['signal']!r} has no "
-                       f"per-second data; use null or a series list_signals shows")
-    return out
+        keep = ref.get("session_uid") in session_uids and all(
+            ref.get(k) is not None for k in ("device_type", "can_id", "signal"))
+        if keep:
+            got = toolbox.call("series_1s", {**{k: ref[k] for k in (
+                "session_uid", "device_type", "can_id", "signal")}, "max_points": 2})
+            keep = "error" not in got and bool(got.get("points"))
+        if not keep:
+            f["series"] = None
 
 
 def assign_status(board: dict, insights: dict) -> list[str]:

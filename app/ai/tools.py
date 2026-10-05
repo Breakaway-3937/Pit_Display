@@ -273,7 +273,9 @@ def faults(session_uid: str) -> dict[str, Any]:
         return (0 if r["sticky"] else 1,
                 FAULT_PRIORITY.index(n) if n in FAULT_PRIORITY else 99, r["t_ms_start"])
 
-    rows = sorted(rows, key=rank)
+    # A ...Field signal is a bitfield summary of the other flags, never a fault
+    # (logs imported before classify() knew that still carry it).
+    rows = sorted((r for r in rows if not r["signal"].endswith("Field")), key=rank)
     # Grouped as the pit board groups them (diagnostics.faults()): a model
     # that has to count rows itself is computing a figure, and gets rejected.
     groups: dict[str, dict] = {}
@@ -299,6 +301,109 @@ def faults(session_uid: str) -> dict[str, Any]:
     return {"args": args, "summary": list(groups.values()),
             "by_device": sorted(per_device.values(), key=lambda d: -d["n_faults"]),
             "faults": rows, "truncated": truncated}
+
+
+# Where each log type records the robot's state (the Robot pseudo-device).
+_ENABLED = ("DriverStation/Enabled", "RobotEnable")
+_AUTO = ("DriverStation/Autonomous",)
+_MODE = ("RobotMode",)                     # hoot: an enum label, "Disabled" / "Autonomous" / …
+_FMS = ("DriverStation/FMSAttached", "DS:IsFMSAttached")
+
+
+def match_phases(session_uid: str) -> dict[str, Any]:
+    """
+    When the robot was disabled, in autonomous, teleop or test, from the
+    robot's own Driver Station state. `never_enabled` true means a pit or
+    bench recording: currents and faults in it aren't match behaviour.
+    """
+    args = {"session_uid": session_uid}
+    s = _session_id(session_uid)
+    if s is None:
+        return _missing(args)
+    duration = connection().fetchone("SELECT duration_s FROM log_session WHERE id = ?",
+                                     (s,))["duration_s"] or 0.0
+
+    def track(names: tuple[str, ...]) -> tuple[str | None, list[tuple[float, Any]]]:
+        """(signal used, [(t_s, value)]) — the value as a number, or the enum label."""
+        for name in names:
+            series = connection().fetchone(
+                """SELECT se.id, g.value_kind FROM series se JOIN signal g ON g.id = se.signal_id
+                   JOIN device d ON d.id = se.device_id
+                   WHERE se.session_id = ? AND g.name = ? AND d.device_type = 'Robot'""",
+                (s, name))
+            if series is not None:
+                pts = connection().fetchall(
+                    """SELECT s.t_ms, COALESCE(e.label, s.v) AS v FROM samples.sample s
+                       LEFT JOIN signal_enum e ON e.signal_id = (SELECT signal_id FROM series
+                                                                  WHERE id = s.series_id)
+                                              AND e.code = s.v
+                       WHERE s.series_id = ? ORDER BY s.t_ms, s.ord""", (series["id"],))
+                if pts:
+                    return name, [(r["t_ms"] / 1000.0, r["v"]) for r in pts]
+                # No change points: the value never moved and lives in session_constant.
+            const = connection().fetchone(
+                """SELECT sc.v, sc.v_text FROM session_constant sc
+                   JOIN signal g ON g.id = sc.signal_id JOIN device d ON d.id = sc.device_id
+                   WHERE sc.session_id = ? AND g.name = ? AND d.device_type = 'Robot'""",
+                (s, name))
+            if const is not None:
+                return name, [(0.0, const["v_text"] if const["v_text"] is not None else const["v"])]
+        return None, []
+
+    def truthy(v) -> bool:
+        if isinstance(v, str):
+            return v.strip().lower() not in ("", "0", "false", "disabled")
+        return bool(v)
+
+    mode_sig, mode = track(_MODE)
+    en_sig, enabled = track(_ENABLED)
+    auto_sig, auto = track(_AUTO)
+    fms_sig, fms = track(_FMS)
+    if not mode and not enabled:
+        return {"args": args, "phases": None, "never_enabled": None,
+                "note": "this log doesn't record the robot's enable state"}
+
+    # A change point list per phase: from RobotMode's labels, else enabled × autonomous.
+    times = sorted({t for t, _ in mode + enabled + auto} | {0.0})
+
+    def at(points, t, default=None):
+        v = default
+        for pt, pv in points:
+            if pt > t:
+                break
+            v = pv
+        return v
+
+    def phase(t: float) -> str:
+        if mode:
+            label = str(at(mode, t, "Disabled")).lower()
+            for name in ("autonomous", "teleop", "test"):
+                if name in label:
+                    return {"autonomous": "auto"}.get(name, name)
+            if "disabled" in label or not truthy(at(enabled, t, 0)):
+                return "disabled"
+        if not truthy(at(enabled, t, 0)):
+            return "disabled"
+        return "auto" if truthy(at(auto, t, 0)) else "teleop"
+
+    phases: list[dict] = []
+    for i, t in enumerate(times):
+        end = times[i + 1] if i + 1 < len(times) else max(duration, t)
+        ph = phase(t)
+        if phases and phases[-1]["phase"] == ph:
+            phases[-1]["end_s"] = round(end, 1)
+        else:
+            phases.append({"phase": ph, "start_s": round(t, 1), "end_s": round(end, 1)})
+    totals = {k: 0.0 for k in ("disabled", "auto", "teleop", "test")}
+    for ph in phases:
+        totals[ph["phase"]] = totals.get(ph["phase"], 0.0) + ph["end_s"] - ph["start_s"]
+    phases, truncated = _cap(phases)
+    return {"args": args, "never_enabled": totals["auto"] + totals["teleop"] + totals["test"] == 0,
+            "auto_s": round(totals["auto"], 1), "teleop_s": round(totals["teleop"], 1),
+            "test_s": round(totals["test"], 1), "disabled_s": round(totals["disabled"], 1),
+            "fms_attached": any(truthy(v) for _t, v in fms) if fms else None,
+            "phases": phases, "truncated": truncated,
+            "signals": [x for x in (mode_sig, en_sig, auto_sig, fms_sig) if x]}
 
 
 def subsystems(session_uid: str) -> dict[str, Any]:
@@ -478,6 +583,11 @@ SPECS: list[dict] = [
           "Which TBA match a log was (the crew's match key, else the match nearest its "
           "start time), our alliance, partners, opponents, scores and result. Null when "
           "the match isn't known.", {"session_uid": _UID}, ["session_uid"]),
+    _spec("match_phases",
+          "When the robot was disabled, in autonomous, teleop or test, from its own Driver "
+          "Station state: seconds in each, the timeline, whether a field (FMS) was attached. "
+          "never_enabled true means a pit or bench recording, not a match.",
+          {"session_uid": _UID}, ["session_uid"]),
     _spec("device_names",
           "The team's CAN map: device_type, can_id, English label, subsystem (as named on "
           "the pits).", {}, []),
@@ -488,6 +598,7 @@ TOOLS = {
     "list_signals": list_signals, "series_stats": series_stats, "series_1s": series_1s,
     "faults": faults, "subsystems": subsystems, "compare_sessions": compare_sessions,
     "match_context": match_context, "device_names": device_names,
+    "match_phases": match_phases,
 }
 
 

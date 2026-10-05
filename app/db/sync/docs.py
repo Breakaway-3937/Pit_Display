@@ -42,6 +42,8 @@ SETTING_DOCS: dict[str, tuple[str, tuple[str, ...]]] = {
     "datasets": ("app.dataset_settings", ("enabled",)),
     # Admin-edited screen wording (app/wording.py): one edit, every pit.
     "wording": ("app.wording", ("texts",)),
+    # The crew's robot brief for the analyst (app/ai/brief.py): one per team.
+    "brief": ("app.ai.brief", ("text",)),
 }
 
 FILE_ROOTS: dict[str, tuple[str, ...]] = {

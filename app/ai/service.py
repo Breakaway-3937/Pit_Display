@@ -281,17 +281,23 @@ class _AnalysisService(QObject):
             if uid not in self._queue and uid != self._running:
                 self._queue.append(uid)
             return True
+        # The logs recorded with this one go in the same run (feedback.recorded_with).
+        uids = feedback.recorded_with(uid)
+        self._queue = [q for q in self._queue if q not in uids]
         self._running = uid
         self._idle.stop()
         self.busy, self.step = True, "Starting…"
         self.state_changed.emit()
         prefs = dict(self.prefs, model=self.model_name())
         llm = self._make_llm()
-        threading.Thread(target=self._run, args=(uid, prefs, llm),
+        lessons = feedback.lessons()        # the crew's verdicts, read on this thread
+        from app.ai import brief
+        threading.Thread(target=self._run, args=(uids, prefs, llm, lessons, brief.for_model()),
                          name="ai-run", daemon=True).start()
         return True
 
-    def _run(self, uid: str, prefs: dict, llm) -> None:
+    def _run(self, uids: list[str], prefs: dict, llm, lessons: list[str],
+             robot_brief: str = "") -> None:
         # Imported here: the worker is the only thing that needs them.
         from app.ai import pipeline, tools
         from app.ai.local import LocalToolbox, SqliteSink, ThreadDB
@@ -302,8 +308,9 @@ class _AnalysisService(QObject):
             handle = ThreadDB()
             with tools.using(handle):
                 res = pipeline.analyse(
-                    LocalToolbox(), SqliteSink(), llm, [uid], analyst=prefs["model"],
-                    designer=prefs["designer"] or None, on_step=self._worker_step.emit)
+                    LocalToolbox(), SqliteSink(), llm, uids, analyst=prefs["model"],
+                    designer=prefs["designer"] or None, on_step=self._worker_step.emit,
+                    lessons=lessons, brief=robot_brief)
             self._worker_done.emit(res.run_id, res.status, res.reason)
         except Exception as e:      # before a run row existed (no database, etc.)
             self._worker_done.emit(-1, "failed", f"{type(e).__name__}: {e}")

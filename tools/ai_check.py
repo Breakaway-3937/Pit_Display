@@ -246,6 +246,38 @@ def schema_section(uid: str) -> None:
           and any("unexpected 'extra'" in e for e in errs), "; ".join(errs[:4]))
 
 
+def phases_section() -> None:
+    """match_phases on a made-up match: disabled, 15 s auto, teleop, disabled."""
+    from app.ai import tools
+    from app.db import db
+    print("\nMatch phases (when the robot was enabled, and in what)")
+    with db.transaction() as c:
+        c.execute("INSERT INTO log_session (source_file, source_name, source_kind, duration_s, uid) "
+                  "VALUES ('phase-test', 'phase-test.wpilog', 'wpilog', 180.0, 'phase-test')")
+        sid = c.execute("SELECT id FROM log_session WHERE uid = 'phase-test'").fetchone()[0]
+        c.execute("INSERT OR IGNORE INTO device (device_type, can_id) VALUES ('Robot', -1)")
+        did = c.execute("SELECT id FROM device WHERE device_type='Robot' AND can_id=-1").fetchone()[0]
+        for name, points in (("DriverStation/Enabled", [(0, 0), (5000, 1), (150000, 0)]),
+                             ("DriverStation/Autonomous", [(0, 0), (5000, 1), (20000, 0)])):
+            c.execute("INSERT OR IGNORE INTO signal (device_type, name, value_kind, signal_class) "
+                      "VALUES ('Robot', ?, 'num', 'telemetry')", (name,))
+            gid = c.execute("SELECT id FROM signal WHERE device_type='Robot' AND name=?",
+                            (name,)).fetchone()[0]
+            c.execute("INSERT INTO series (session_id, device_id, signal_id) VALUES (?, ?, ?)",
+                      (sid, did, gid))
+            se = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+            c.executemany("INSERT INTO samples.sample (series_id, t_ms, ord, v) VALUES (?, ?, 0, ?)",
+                          [(se, t, v) for t, v in points])
+    out = tools.call("match_phases", {"session_uid": "phase-test"})
+    got = [(p["phase"], p["start_s"], p["end_s"]) for p in out.get("phases") or []]
+    check("disabled → 15 s auto → teleop → disabled, from the robot's own DS state",
+          got == [("disabled", 0.0, 5.0), ("auto", 5.0, 20.0), ("teleop", 20.0, 150.0),
+                  ("disabled", 150.0, 180.0)] and out["auto_s"] == 15.0
+          and out["teleop_s"] == 130.0 and out["never_enabled"] is False, str(got))
+    with db.transaction() as c:
+        c.execute("DELETE FROM log_session WHERE uid = 'phase-test'")
+
+
 def checks_section(uid: str) -> None:
     import copy
 
@@ -275,12 +307,16 @@ def checks_section(uid: str) -> None:
             "claim says 31.5")
     rejects("'fault' without a latched fault behind it is rejected",
             lambda f: f["findings"][1].update(severity="fault"), "severity 'fault'")
-    rejects("a count that belongs to a different fault is rejected (trial 3's Pigeon)",
+    fresult = ledger.matching("faults", {"session_uid": uid})[0].result
+    pig = next(d for d in fresult["by_device"] if d["device_type"] == "Pigeon2")
+    # A real count of something in the result, but not the Pigeon's own.
+    other = next(g["n_devices"] for g in fresult["summary"] if g["n_devices"] != pig["n_faults"])
+    rejects(f"a count that belongs to a different fault is rejected (trial 3's Pigeon: {other})",
             lambda f: f["findings"].append({
-                "id": "pigeon", "claim": "Check Pigeon2 25 warnings.",
-                "metric": {"name": "Pigeon2 25", "value": 4, "unit": "warnings"},
+                "id": "pigeon", "claim": f"Check {pig['device']} warnings.",
+                "metric": {"name": pig["device"], "value": other, "unit": "warnings"},
                 "severity": "warn", "subsystem": None, "series": None,
-                "evidence": [{"tool": "faults", "args": {"session_uid": uid}, "value": 4}]}),
+                "evidence": [{"tool": "faults", "args": {"session_uid": uid}, "value": other}]}),
             "isn't the count")
     fl = next(d for d in ledger.matching("faults", {"session_uid": uid})[0].result["by_device"]
               if d["device"].startswith("Front-Left"))
@@ -305,12 +341,14 @@ def checks_section(uid: str) -> None:
     probs = checks.check_findings(f2, ledger, [uid], ctx)
     check(f"…while its real count passes ({pigeon['device']}: {pigeon['n_faults']})",
           not probs, "; ".join(probs))
-    rejects("'fault' for a fault the pit board ranks warn is rejected (trial 4)",
+    warned = next(g for g in fresult["summary"] if g["status"] == "warn")
+    rejects(f"'fault' for a fault the pit board ranks warn is rejected (trial 4: {warned['fault']})",
             lambda f: f["findings"].append({
-                "id": "field", "claim": "StickyFaultField latched on 9 devices.",
-                "metric": {"name": "StickyFaultField", "value": 9},
+                "id": "warned", "claim": f"{warned['fault']} latched on {warned['n_devices']} devices.",
+                "metric": {"name": warned["fault"], "value": warned["n_devices"]},
                 "severity": "fault", "subsystem": None, "series": None,
-                "evidence": [{"tool": "faults", "args": {"session_uid": uid}, "value": 9}]}),
+                "evidence": [{"tool": "faults", "args": {"session_uid": uid},
+                              "value": warned["n_devices"]}]}),
             "ranks warn")
     rejects("evidence citing a call never made is rejected",
             lambda f: f["findings"][2]["evidence"][0]["args"].update(signal="StatorCurrent"),
@@ -474,6 +512,24 @@ def pipeline_section(uid: str) -> None:
     check("…and nothing was published",
           db.fetchone("SELECT COUNT(*) n FROM analysis_board WHERE uid LIKE ?",
                       (f"%-{res.run_id}",))["n"] == 0)
+
+    # A chart that fails a check is dropped, not the board (2026-10-05: most
+    # real runs' boards were rejected over a chart alone).
+    import copy as _copy
+    bad_board = _copy.deepcopy(honest_board(uid))
+    bad_board.setdefault("charts", []).append({
+        "kind": "line", "finding": honest_findings(uid)["findings"][0]["id"],
+        "title": "A chart the checks refuse", "why": "test",
+        "source": {"session_uid": uid, "device_type": None, "can_id": None,
+                   "signal": "DeviceTemp"}})
+    llm = Scripted([[("faults", {"session_uid": uid}),
+                     ("series_stats", {"session_uid": uid, "signal": "DeviceTemp"})],
+                    "Done.", honest_findings(uid), bad_board])
+    res = pipeline.analyse(LocalToolbox(), sink, llm, [uid], analyst="scripted")
+    titles = [c.get("title") for c in (res.board or {}).get("charts") or []]
+    check("a board with one bad chart publishes without it (charts are optional)",
+          res.status == "published" and "A chart the checks refuse" not in titles,
+          f"{res.status} {res.reason[:120]}")
 
 
 def app_section(uid: str) -> None:
@@ -647,9 +703,9 @@ def mcp_section(uid: str) -> None:
               init["result"]["protocolVersion"] == "2025-06-18"
               and "tools" in init["result"]["capabilities"])
         names = [t["name"] for t in rpc(2, "tools/list")["result"]["tools"]]
-        check("it lists the ten tools and the two analysis ones",
-              len(names) == 12 and "analysis_scoreboard" in names
-              and "match_context" in names, ", ".join(names))
+        check("it lists the eleven tools and the two analysis ones",
+              len(names) == 13 and "analysis_scoreboard" in names
+              and "match_context" in names and "match_phases" in names, ", ".join(names))
         got = rpc(3, "tools/call", {"name": "faults", "arguments": {"session_uid": uid}})
         sc = got["result"]["structuredContent"]
         check("a tool call returns the same result the analyst gets, structured and as text",
@@ -781,6 +837,7 @@ def main() -> int:
     tools_section(uid)
     schema_section(uid)
     checks_section(uid)
+    phases_section()
     pipeline_section(uid)
     app_section(uid)
     mcp_section(uid)

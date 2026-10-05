@@ -786,8 +786,8 @@ never blue or red.
 
 ## Robot-log analysis (`app/ai/`)
 
-A local model reads a session through **ten read-only tools** (the home MCP
-server's nine plus `match_context`) and a board comes out: analyst (tool calls → findings, `insight.schema.json`) →
+A local model reads a session through **eleven read-only tools** (the home MCP
+server's nine plus `match_context` and `match_phases`) and a board comes out: analyst (tool calls → findings, `insight.schema.json`) →
 check → designer (board, `board.schema.json`) → check → publish into
 `analysis_board`. The same `pipeline.analyse()` runs at home with a different
 toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
@@ -848,7 +848,7 @@ toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
   match, bars across devices; never red). The webcast serves it through
   `state.analysis_board_state()`.
 - **`--mcp`** (`mcp_server.py`): MCP over stdio, written by hand (no SDK in
-  the bundle), the ten tools plus `analysis_runs` / `analysis_scoreboard`,
+  the bundle), the eleven tools plus `analysis_runs` / `analysis_scoreboard`,
   read-only, from this machine's synced copy. Proven against the official
   client (mcp 2.2.0). The windowed exe has no `sys.stdin`; `_stdio()` opens
   the host's pipe handles.
@@ -860,6 +860,20 @@ toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
   names; `fault` severity follows the named fault's own status; a card's value
   is only a figure; an evidence value may come from any of the finding's
   cited results; a retry says where a figure really is (two retries).
+- **What the model is given (v3, measured with `tools/ai_eval.py` on
+  qwen3:8b, 2026-10-03/05).** Each log's overview, fault summary, subsystems,
+  match and **match phases** go in up front, run by code (an 8B model made one
+  tool call per run when it had to ask). `FAULT_GUIDE` says what each Phoenix
+  fault means for a pit crew; the crew's verdicts come back as `lessons`
+  (`feedback.lessons()`); the crew's **robot brief** (`brief.py`, admin,
+  synced setting `brief`, ≤ 3000 chars) comes first. Logs recorded within
+  60 s run together (`feedback.recorded_with`): the AdvantageKit log knows the
+  mechanisms, the hoots know the faults. **Thinking stays off**: it measured
+  worse (fewer tool calls, more rejections). Don't give it the game manual
+  or robot code: an 8B model in 16k gets worse with bulk. A chart that fails
+  a check is dropped, never the board; finding ids are tidied by code.
+  `match_phases` says if a log was ever enabled: a pit or bench recording
+  isn't match behaviour, and the prompt says so.
 - **Not built:** syncing the scoreboard's prompt text (only its version),
   multi-session (match-to-match) runs, `breakdown_json` from TBA.
 
