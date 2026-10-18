@@ -43,6 +43,7 @@ from app.widgets.led_panel import LEDPanel
 from app.widgets.music_panel import MusicPanel
 from app.widgets.analysis_panel import AnalysisPanel
 from app.widgets.battery_panel import BatteryPanel
+from app.widgets.diagnostics_panel import DiagnosticsPanel
 from app.widgets.network_panel import NetworkPanel
 from app.widgets.robot_panel import RobotLogPanel
 from app.widgets.update_panel import UpdatePanel
@@ -57,7 +58,8 @@ from app.webcast import settings as webcast_settings
 # the pit owns, so they get their own sidebar group and their own panels.
 # Robot Logs is not its own entry any more: it is a section of Telemetry,
 # which is the home of every kind of telemetry the pit has — robot and link.
-SYSTEMS = ["leds", "music", "batteries", "network", "analysis", "nexus", "wording", "updates"]
+SYSTEMS = ["leds", "music", "batteries", "network", "analysis", "nexus", "wording",
+           "diagnostics", "updates"]
 
 # A window kept alive only for the pit network is laid out and painted but
 # never mapped to a display. Measured: a presentation screen renders its whole
@@ -67,7 +69,7 @@ _NO_SCREEN = Qt.WidgetAttribute.WA_DontShowOnScreen
 SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music", "batteries": "Batteries",
                  "network": "Telemetry", "robot": "Robot Logs", "analysis": "Analysis",
                  "nexus": "Event Feed", "wording": "Screen Wording",
-                 "updates": "Software Updates"}
+                 "diagnostics": "Diagnostics", "updates": "Software Updates"}
 
 # One muted line under each panel's title — where the thing physically is and
 # what it is doing, which is what an operator standing at the panel needs
@@ -1337,6 +1339,9 @@ class SystemSettingsPanel(QWidget):
                  "back from the field.",
         "wording": "What the pit-front panel and the overhead slides say. "
                    "Edits show at once and reach every pit. Admin only.",
+        "diagnostics": "This machine's health, checked while it runs, and what "
+                       "it has told home: crashes, freezes, failed checks and "
+                       "your reports. Report a problem here.",
         "updates": "What this machine is running, and how it gets the next "
                    "build off GitHub. Never during an event.",
     }
@@ -1358,6 +1363,7 @@ class SystemSettingsPanel(QWidget):
                      "network": NetworkPanel, "robot": RobotLogPanel,
                      "analysis": AnalysisPanel,
                      "nexus": NexusPanel, "wording": WordingPanel,
+                     "diagnostics": DiagnosticsPanel,
                      "updates": UpdatePanel}[system_id]()
         outer.addWidget(self.body)
         outer.addStretch()

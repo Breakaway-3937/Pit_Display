@@ -18,6 +18,11 @@ Windows pit machine, and there was nothing to read. This module fixes that:
   the GUI thread checks in every second; when it misses 20 s, a background
   thread writes every thread's stack here (once per freeze) and a line when
   it recovers, so a hang names the exact line it's stuck on.
+- **Worker threads too** (`threading.excepthook`, 2026-10-18), which
+  `sys.excepthook` never sees.
+
+`app/diagnostics/harvest.py` reads what this writes and sends each incident
+home as an event; this module stays the only writer, and knows nothing of it.
 
 **Installed first thing in `main.py`, before any other `app` import**, so an
 import-time failure is caught too. It uses only the standard library and
@@ -85,6 +90,26 @@ def install() -> None:
         previous(exc_type, exc, tb)
 
     sys.excepthook = hook
+
+    # A worker thread's exception never reaches sys.excepthook: Python hands
+    # it to threading.excepthook, which prints to a stderr the windowed build
+    # doesn't have. The sync, analysis and import threads all run there, so
+    # their failures were silent (2026-10-18). Same record, naming the thread.
+    previous_thread = threading.excepthook
+
+    def thread_hook(args):
+        try:
+            name = args.thread.name if args.thread is not None else "?"
+            _file.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}  UNHANDLED "
+                        f"{args.exc_type.__name__} in thread {name}\n")
+            _file.write("".join(traceback.format_exception(
+                args.exc_type, args.exc_value, args.exc_traceback)))
+            _file.flush()
+        except Exception:
+            pass
+        previous_thread(args)
+
+    threading.excepthook = thread_hook
 
 
 def note(text: str) -> None:

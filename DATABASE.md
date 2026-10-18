@@ -542,6 +542,7 @@ Every pit machine's team data meets at the hub (`sync.bh-stack.com`,
 | TheBlueAlliance | `tba_event`, `tba_match`, `tba_team`, `tba_rival`, `tba_fact` (home pushes; `home/REQUESTS.md` R5) | pulled only; the engine special-cases them |
 | Relay bookkeeping (R8) | `blob_request` (a pit's ask for evicted bytes), `machine_manifest` (what a pit holds, nightly) | pushed by the engine, never applied from others |
 | Home's verdicts (R8) | `sync_verdict`: home's comparison of a manifest with the master | pulled only; Telemetry → Team sync shows this machine's |
+| Diagnostics (R16) | `pit_event` (a crash, freeze, failed check, report…), `pit_status` (a machine's latest snapshot) | pushed by the engine **from files** (`<data>/diagnostics/`, `app/diagnostics/spool.py`), never a table here; never applied from others; Rule 13 |
 | Analysis | `analysis_run`, `analysis_feedback` (the crew's ratings), `analysis_board` (home's and every pit's; a pit's are `<session>:<machine>-<run>`) | triggers → `sync_outbox`; `SPECS` for the first two, the engine special-cases boards |
 | **Never** | `tracks` (paths on this disk; songs travel as files, not rows), `checklist_item.done` (this pit's ticks), `config`'s per-screen settings, `webcast.json`, the updater's `channel`, `secrets/`, `sync.json` | |
 
@@ -554,7 +555,7 @@ Every pit machine's team data meets at the hub (`sync.bh-stack.com`,
 | `sync_outbox` | `(tbl, uid)` with an unsent change, its `op`, and `rev` (bumped on every re-edit, so a push that raced an edit keeps it) |
 | `sync_row` | the hub's `seq` for each row as this machine last saw it: the `base` a push is judged on |
 | `sync_pending` | pulled changes that can't land yet: a parent not here, a track not in this library, a bundle or file to download |
-| `sync_meta` | `cursor` (hub seq read up to) and `epoch` (a new one = the hub was rebuilt: re-read from 0); `known_tables` and `catch_up` (Rule 12); `manifest_at` (the last manifest the hub took) |
+| `sync_meta` | `cursor` (hub seq read up to) and `epoch` (a new one = the hub was rebuilt: re-read from 0); `known_tables` and `catch_up` (Rule 12); `manifest_at` (the last manifest the hub took); `status_at` (the last `pit_status` the hub took) |
 | `sync_blob_request` | this pit's requests for evicted team-file bytes: `sha` (the blob), `file_uid`, `file_sha`, `bytes`, `codec`, `requested_at`, `done_at` (set once the bytes landed and verified) |
 | `sync_verdict` | home's verdicts, `uid` = machine id, `data` whole |
 | `sync_session_blob` | a session's `bundle_sha` / `raw_sha` at the hub |
@@ -616,6 +617,28 @@ warning), never `save()`.
     the new ones only (`tables.APPLIED` vs `sync_meta.known_tables`;
     resumable). Add every new pulled table to `APPLIED`; never edit
     `CATCH_UP_BASELINE`.
+13. **Diagnostics are pushed only, from the spool** (R16), and only while the
+    machine reports (`app/diagnostics/settings.py`: dev and beta by
+    default). `pit_event`, uid `<machine_id>:<event id>` (id
+    `YYYYMMDD-HHMMSS-<8 hex>`): `{schema: 1, id, kind, severity
+    (fatal|error|warn|info), summary, at (the pit's clock, ISO with offset),
+    signature (groups one fault across launches and machines), session,
+    build: {version, channel, commit}, detail, data: {…}, attachments:
+    {file name: text}, dropped_attachments?, machine_id, machine_name}`.
+    `detail` and each attachment are plain text or, past 4 KB,
+    `{"zstd": base64}` (as an analysis transcript). Kinds: `launch`, `exit`,
+    `unclean_exit`, `crash`, `fatal`, `freeze`, `freeze_end`,
+    `check_failed`, `check_recovered`, `check_suite`, `report`,
+    `update_check_failed`, `selfcheck_failed`, `diagnostics_error`.
+    `pit_status`, uid = machine id, overwritten every `status_minutes` (10):
+    `{schema, at, final, build: {…, built, frozen, update_channel},
+    platform, session: {id, started, pid, uptime_s, boot_s, boot_steps},
+    process: {rss_mb, peak_mb, threads, cpu_s}, app: {mode, team, screens},
+    services: {sync, leds, nexus, webcast, analysis, update}, counts,
+    checks: {at, worst, counts, results}, full_checks?, reporting,
+    machine_id, machine_name}`. Each queued once; a sent event moves to
+    `sent/`; an event the spool dropped leaves the outbox without a
+    tombstone. Not in `APPLIED`, so no catch-up scans for them.
 
 ---
 

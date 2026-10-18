@@ -776,6 +776,38 @@ def _check_ai() -> Result:
     return Result("ai", True, "\n".join(lines))
 
 
+def _check_diagnostics() -> Result:
+    """
+    Can this build report home (app/diagnostics/)? Never touches the network
+    or the spool's real contents. The spool must be writable, a report must
+    pack and unpack (zstd, as sync), and the crash-log reader must still
+    understand what crash_log writes: a build that lost any of these would
+    swallow exactly the crash it exists to report.
+    """
+    from app.diagnostics import harvest, settings as diag_settings, spool
+    try:
+        probe = spool.root() / ".writetest"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        text = "x" * 9000
+        assert spool.unpack(spool.pack(text)) == text
+        sample = ("2026-01-01 00:00:00  UNHANDLED ValueError\n"
+                  "Traceback (most recent call last):\n"
+                  '  File "/x/app/rotation.py", line 7, in tick\n'
+                  "ValueError: boom\n")
+        blocks = harvest._blocks(sample)
+        assert blocks[0][1].startswith("UNHANDLED")
+        assert "app/rotation.py:7" in harvest.signature(blocks[0][2], "ValueError")
+    except Exception as e:
+        return Result("diagnostics", False,
+                      f"reporting is broken in this build: {type(e).__name__}: {e}")
+    waiting = len(spool.pending())
+    return Result("diagnostics", True,
+                  f"reporting   {'on' if diag_settings.enabled() else 'off'} "
+                  f"({diag_settings.why()})\n"
+                  f"spool       {spool.root()}, {waiting} event{'s' if waiting != 1 else ''} waiting")
+
+
 def run() -> int:
     """Run every check. Returns a process exit status."""
     # Attach first (a windowed build has no stdout until it does), then make
@@ -793,6 +825,7 @@ def run() -> int:
     os.environ.setdefault("PIT_NEXUS_QUIET", "1")
     os.environ.setdefault("PIT_SYNC_QUIET", "1")
     os.environ.setdefault("PIT_AI_QUIET", "1")
+    os.environ.setdefault("PIT_DIAG_QUIET", "1")
 
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QApplication
@@ -850,6 +883,8 @@ def run() -> int:
         init_sync()
         from app.ai.service import init_analysis
         init_analysis()
+        from app.diagnostics.service import init_diagnostics
+        init_diagnostics()
         app.setStyleSheet(dark_qss())
         results.append(_check_fonts())
         results.append(_check_sponsors())
@@ -864,6 +899,7 @@ def run() -> int:
         results.append(_check_ai())
         results.append(_check_webcast())
         results.append(_check_qt_warnings())
+        results.append(_check_diagnostics())
         results.append(_check_crash_log())
         results.append(_check_windows(app))
 

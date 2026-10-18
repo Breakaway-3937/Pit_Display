@@ -387,6 +387,17 @@ errors, the live switch position, reboots). Rejected frames or a controller gone
 always mean the USB cable or port: swap it. It also shows the box's switch
 position once the switch has been moved since connecting.
 
+**When something glitches, report it: Control → Pit Systems → Diagnostics →
+Report a problem.** Say what you saw, which screen, and roughly when. It goes
+home with this machine's logs and a fresh check of everything, so nobody has
+to remember the details later. Run all checks on the same panel shows what's
+wrong with this machine right now, one line per check.
+
+Development and beta machines also report crashes, freezes, failed checks
+and a status every 10 minutes by themselves, through team sync. Nothing on
+an audience screen changes. An admin can switch reporting on or off per
+machine on that panel.
+
 For the whole app, run `--self-check` (see [`DEPLOYMENT.md`](DEPLOYMENT.md)).
 It writes `selfcheck.log` in the data directory, which is the file to send.
 

@@ -109,9 +109,18 @@ def short_match_key(match_key: str) -> str:
     return match_key.partition("_")[2] or match_key
 
 
+# Diagnostics (app/diagnostics/, home/REQUESTS.md R16): what a machine tells
+# home about itself. `pit_status` (uid = machine id) is its latest snapshot,
+# overwritten every few minutes (home keeps every version); `pit_event`
+# (uid `<machine_id>:<event id>`) one crash, freeze, failed check or report
+# each. Pushed only, from files (the spool), never a table here; other
+# machines' rows arrive in the feed and are ignored.
+PIT_STATUS, PIT_EVENT = "pit_status", "pit_event"
+PUSHED_ONLY = (PIT_STATUS, PIT_EVENT)
+
 # Push order for everything the outbox can hold.
 ORDER = [s.name for s in SPECS] + [LOG_SESSION, "setting", "file", ANALYSIS_BOARD,
-                                   BLOB_REQUEST, MACHINE_MANIFEST]
+                                   BLOB_REQUEST, MACHINE_MANIFEST, PIT_STATUS, PIT_EVENT]
 
 
 def order_key(tbl: str) -> int:
@@ -121,7 +130,9 @@ def order_key(tbl: str) -> int:
 # Every table this build applies when pulled. A table that's new here was
 # skipped by the build before (its cursor moved past it), so the engine
 # catches up on it once from the start of the feed. Add to it with any table.
-APPLIED = tuple(ORDER) + PULLED_ONLY
+# Pushed-only diagnostics are left out: nothing would land, so a catch-up
+# scan of the whole feed for them would be wasted.
+APPLIED = tuple(t for t in ORDER if t not in PUSHED_ONLY) + PULLED_ONLY
 # What builds knew before the catch-up existed: a machine with no record
 # (`known_tables`) knew these, and catches up on the rest. Never edit.
 CATCH_UP_BASELINE = tuple(s.name for s in SPECS) + (

@@ -195,7 +195,7 @@ class Engine:
             # done marks, the manifest. Same cycle, not a minute later.
             for step in (self._scan, self._push, self._catch_up, self._pull, self._retry,
                          self._fetch, self._status, self._origins, self._manifest,
-                         self._push):
+                         self._diagnostics, self._push):
                 try:
                     step(conn, rep)
                 except SyncError as e:
@@ -310,6 +310,14 @@ class Engine:
             return dict(row) if row else None
         if tbl == tables.MACHINE_MANIFEST:
             return self._manifest_data(conn)
+        if tbl == tables.PIT_EVENT:
+            from app.diagnostics import spool
+            ev = spool.load(uid.partition(":")[2])
+            return None if ev is None else {**spool.wire(ev), **self._who()}
+        if tbl == tables.PIT_STATUS:
+            from app.diagnostics import spool
+            st = spool.read_status()
+            return None if st is None else {**st, **self._who()}
         if tbl == docs.FILE and (gone := self._team_deleted(conn, uid)) is not None:
             return {"sha": gone[0], "name": docs.split(uid)[1], "deleted": True,
                     "deleted_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -413,15 +421,19 @@ class Engine:
                  raw_sha = excluded.raw_sha, raw_bytes = excluded.raw_bytes""",
             {"bundle_sha": None, "bundle_bytes": None, "raw_sha": None, "raw_bytes": None, **b})
 
-    def _push(self, conn, rep: Report) -> None:
+    def _push(self, conn, rep: Report, only: tuple[str, ...] | None = None) -> None:
         # Never pulled yet: everything here is this machine's install defaults
         # or its pre-sync data, and the team's copy winning isn't news.
         first_contact = not self._meta(conn, "epoch")
-        entries = [dict(r) for r in conn.execute("SELECT tbl, uid, op, rev FROM sync_outbox")]
+        entries = [dict(r) for r in conn.execute("SELECT tbl, uid, op, rev FROM sync_outbox")
+                   if only is None or r["tbl"] in only]
         entries.sort(key=lambda e: tables.order_key(e["tbl"]))
+        reporting = self._reporting()
         for i in range(0, len(entries), PUSH_BATCH):
             batch, sent = [], {}
             for e in entries[i:i + PUSH_BATCH]:
+                if e["tbl"] in tables.PUSHED_ONLY and not reporting:
+                    continue        # turned off since it was queued: nothing leaves
                 if e["tbl"] == docs.FILE and e["op"] != "delete" and not self._files_open() \
                         and self._team_deleted(conn, e["uid"]) is None:
                     continue        # bytes wait for the night window; the row with them
@@ -460,6 +472,11 @@ class Engine:
                                       "deleted" if data.get("deleted") else data["sha"])
                     elif tbl == tables.MACHINE_MANIFEST and data:
                         self._set_meta(conn, "manifest_at", data["at"])
+                    elif tbl == tables.PIT_STATUS and data:
+                        self._set_meta(conn, "status_at", data.get("at", ""))
+                    elif tbl == tables.PIT_EVENT and data:
+                        from app.diagnostics import spool
+                        spool.mark_sent(uid.partition(":")[2])
                     conn.execute("COMMIT")
                     rep.pushed += 1
                 elif r["status"] == "conflict":
@@ -587,8 +604,8 @@ class Engine:
         drop = "DELETE FROM sync_outbox WHERE tbl = ? AND uid = ?"
         clear = "DELETE FROM sync_pending WHERE tbl = ? AND uid = ?"
 
-        if tbl in (tables.BLOB_REQUEST, tables.MACHINE_MANIFEST):
-            return          # every pit's requests and manifests are home's to read
+        if tbl in (tables.BLOB_REQUEST, tables.MACHINE_MANIFEST) + tables.PUSHED_ONLY:
+            return          # every pit's requests, manifests and reports are home's to read
 
         if spec is not None:
             with self._guarded(conn):
@@ -907,6 +924,62 @@ class Engine:
                 and sent < transfer.last_close(now.replace(tzinfo=None)).astimezone())
         if due:
             self._enqueue(conn, tables.MACHINE_MANIFEST, self.me, "upsert")
+
+    # ── diagnostics (app/diagnostics/, R16) ───────────────────────────────
+
+    @staticmethod
+    def _reporting() -> bool:
+        from app.diagnostics import settings as diag_settings
+        return diag_settings.enabled() and os.environ.get("PIT_DIAG_QUIET") != "1"
+
+    def _who(self) -> dict:
+        return {"machine_id": self.me,
+                "machine_name": self.prefs.get("machine_name") or self.me}
+
+    def farewell(self, timeout: float = 4.0) -> int:
+        """At quit, after diagnostics wrote its `exit` event and final status:
+        push only the diagnostics rows, once, briefly. Without it a clean
+        close reaches home with the next launch, and until then the machine
+        reads as gone silent. Never a full cycle; any failure just leaves the
+        rows for the next launch."""
+        rep = Report()
+        self._say = lambda _msg: None      # no cycle thread to report to at quit
+        saved, self.client.timeout = self.client.timeout, timeout
+        conn = None
+        try:
+            conn = self._connect()
+            conn.execute("PRAGMA busy_timeout = 2000")
+            self._diagnostics(conn, rep)
+            self._push(conn, rep, only=tables.PUSHED_ONLY)
+        except Exception:
+            pass
+        finally:
+            self.client.timeout = saved
+            if conn is not None:
+                conn.close()
+        return rep.pushed
+
+    def _diagnostics(self, conn, rep: Report) -> None:
+        """Queue what the spool holds: each waiting event once, and the status
+        snapshot when it changed since the hub last took it. Only when this
+        machine reports (`app/diagnostics/settings.py`); the files wait
+        otherwise. Same cycle: the second push sends them."""
+        from app.diagnostics import spool
+        queued = {r[0] for r in conn.execute(
+            "SELECT uid FROM sync_outbox WHERE tbl = ?", (tables.PIT_EVENT,))}
+        waiting = {f"{self.me}:{eid}" for eid in spool.pending()}
+        # An event the spool dropped (its cap) must not sit in the outbox
+        # failing every cycle; nor push a tombstone for a row never sent.
+        for uid in queued - waiting:
+            conn.execute("DELETE FROM sync_outbox WHERE tbl = ? AND uid = ?",
+                         (tables.PIT_EVENT, uid))
+        if not self._reporting():
+            return
+        for uid in sorted(waiting - queued):
+            self._enqueue(conn, tables.PIT_EVENT, uid, "upsert")
+        st = spool.read_status()
+        if st and st.get("at") and st["at"] != self._meta(conn, "status_at"):
+            self._enqueue(conn, tables.PIT_STATUS, self.me, "upsert")
 
     def _manifest_data(self, conn) -> dict:
         from app import version

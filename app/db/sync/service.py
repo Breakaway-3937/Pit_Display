@@ -31,6 +31,10 @@ _NOTICE_MS = 5_000
 _FIRST_CYCLE_MS = 8_000
 
 
+def _silent(_msg: str) -> None:
+    pass
+
+
 class _Cycle(QThread):
     done = pyqtSignal(object)      # Report
     progress = pyqtSignal(str)
@@ -45,6 +49,10 @@ class _Cycle(QThread):
             rep = self._engine.cycle()
         except Exception as e:  # the engine catches its own; this is the last net
             rep = Report(errors=[f"{type(e).__name__}: {e}"])
+        finally:
+            # The engine outlives this thread; a call into its dead signal
+            # segfaulted the quit-time farewell.
+            self._engine._say = _silent
         self.done.emit(rep)
 
 
@@ -179,6 +187,16 @@ class _SyncService(QObject):
         self._activity = "Syncing…"
         self.state_changed.emit()
         self._worker.start()
+
+    def farewell(self) -> None:
+        """Quit: diagnostics' last rows go now (`Engine.farewell`, ≤ ~4 s).
+        Skipped while a cycle runs; that cycle or the next launch sends them."""
+        if not self.enabled or self.busy:
+            return
+        try:
+            self._engine_for(self.prefs).farewell()
+        except Exception:
+            pass
 
     def sync_files_now(self) -> None:
         """Move team files in the next cycle even outside the night window

@@ -33,6 +33,7 @@ The individual checks, each exit 0/1:
 `tools/sync_check.py --local` (starts its own hub),
 `tools/webcast_check.py`, `tools/upgrade_check.py`, `tools/eq_check.py`,
 `tools/battery_check.py` (BFG decoder, simulated cart, panel),
+`tools/diag_check.py` (diagnostics: spool, crash harvest, checks, panel, engine),
 `tools/ai_check.py` (analysis pipeline, panel, face, `--mcp`; `--engine llama`
 for a real run on the bundled engine, `--model <tag>` on Ollama),
 `tools/led_diag.py` (real LED controller). Run
@@ -184,6 +185,7 @@ Safe to import at module level; raise if used before their `init_*()`.
 | `app.webcast.webcast` | `init_webcast()` | before the control screen (its Telemetry panel subscribes) |
 | `app.db.sync.service.sync` | `init_sync()` | db, and after every service it refreshes; before the control screen |
 | `app.ai.service.analysis` | `init_analysis()` | db, leds; after sync (which signals it), before the control screen (its Analysis panel subscribes) |
+| `app.diagnostics.service.diagnostics` | `init_diagnostics()` | after sync (which carries it), before the control screen (its Diagnostics panel subscribes); `start()` at the end of `_boot()` |
 
 **Upgrades keep what people typed, and that's tested:** `tools/upgrade_check.py`
 fills every user-owned table, runs the shipped seed DB and a migration against
@@ -401,7 +403,7 @@ settings together) under a fixed top bar.
 
 **Pit Systems:** LED Strips, Music, Batteries (mock-up), **Telemetry** (sidebar
 id `network`), **Analysis** (runs and the crew's ratings), Event Feed, Screen Wording (admin),
-Software Updates.
+**Diagnostics** (the check suite, Report a problem, what went home), Software Updates.
 
 **Telemetry (`network_panel.py`) is the home of all telemetry.** It has the
 event relay (this machine's socket *and* the relay's own counters), which route
@@ -941,6 +943,45 @@ is not in this repo and is built from `home/HANDOFF.md`.
 - **Analysis boards** (`analysis_board`, contract
   `home/contracts/board.schema.json`) mirror `diagnostics.Dashboard`; the
   Analysis face paints them with the diagnostics painter (`app/ai/`).
+
+## Diagnostics (`app/diagnostics/`)
+
+What a machine tells home about itself, so a beta bug arrives as a build, a
+time, a traceback and the logs (Brayden, 2026-10-18). **On by default for the
+dev Mac and the beta line** (`settings.py`), off on stable unless an admin
+turns it on; off means nothing leaves, it's still kept and shown.
+
+- **The spool is files** (`<data>/diagnostics/`, `spool.py`, stdlib only,
+  never raises): reports come from states where the DB, sync or Qt is the
+  broken thing. The engine's `_diagnostics` step carries them home as
+  `pit_event` (one per incident, uid `<machine>:<id>`) and `pit_status` (one
+  row per machine, every 10 min; home keeps every version). At quit
+  `sync.farewell()` pushes the `exit` event and final status (≤ 4 s), so a
+  clean close doesn't read as a silent machine. Pushed only;
+  never applied; not in `tables.APPLIED`. Contract: DATABASE.md Sync rule 13,
+  `home/REQUESTS.md` R16.
+- **`crash_log` stays the only crash writer**; `harvest.py` reads it
+  (offset + seen hashes, so a trim never resends) into `crash`, `fatal`,
+  `freeze` events, plus a failed `update_check.log` / `selfcheck.log`.
+  `crash_log` also hooks `threading.excepthook`: worker threads' exceptions
+  were silent. A machine's first harvest sends only the last week (an old
+  `crash.log` is months of history).
+- **A session is `session.json`**, written first thing in `main()`
+  (`spool.begin_session()`); a launch that finds one records
+  `unclean_exit` *there*, before anything that can fail (a boot crash once
+  lost the previous report).
+- **The check suite** (`checks.py`): quick (live services and machine, every
+  5 min; a check that changes state is an event) and full (adds the
+  self-check's checks that are safe in a running app). A check that raises
+  is a `fail` with its traceback; an un-started service is `skip`.
+- **Every text is scrubbed** of this machine's credentials (`spool.scrub`).
+  A report fits the hub's 256 KB row (`spool.wire()` packs and drops
+  attachments). Per-kind throttle 12/h protects the hub's write budget.
+- `PIT_DIAG_QUIET=1` (set by `--self-check`) records nothing.
+- **Reading the reports in a dev session:** `uv run tools/diag_pull.py`
+  (machines, the last day's events, fault signatures; `--event <uid>` for
+  one in full) reads them off the hub with this Mac's sync token. History,
+  triage and trends are home's (`ops.*`, R16).
 
 ## Self-update (`app/update/`)
 

@@ -1189,3 +1189,158 @@ land; a pit shows both screens with Breakaway emphasised.
 > it; normal motor temperatures (86–131 °F) and stator currents (≤ 147 A)
 > called high. The one wrong: run `home` 96 reported the 6.8 V brownout
 > threshold as a measured "Browned out". No action needed from home.
+
+## R16 · 2026-10-18 · From Brayden: pit diagnostics, logged at home for development · **Home done (2026-10-18, ee06f36; 013 + 014 applied); the check waits for a reporting pit**
+
+Brayden suspects a bug on the beta line and has no details, so **every
+development and beta machine now reports on itself** (pit build carrying
+`app/diagnostics/`, next beta after v0.2.1-beta.8). Crashes, freezes,
+unclean exits, a failed self-check or update check, checks that change state,
+a status snapshot every 10 minutes, and the crew's own reports (Control →
+Diagnostics → Report a problem: their words, a fresh check run and every log
+tail) all go home through the hub as **two new pushed-only tables**. The
+wire contract is DATABASE.md "Sync" **Rule 13**. In short:
+
+* **`pit_event`**, uid `<machine_id>:<YYYYMMDD-HHMMSS-8hex>`, one per
+  incident, never edited: `{schema: 1, id, kind, severity
+  (fatal|error|warn|info), summary, at (pit clock, ISO + offset), signature,
+  session, build: {version, channel, commit}, detail, data, attachments:
+  {file name: text}, dropped_attachments?, machine_id, machine_name}`.
+  **`detail` and each attachment are plain text, or past 4 KB
+  `{"zstd": base64}`: the same shape as an analysis transcript**, so
+  `mirror.unpack_transcript()` decodes them. `signature` groups one fault
+  across launches and machines (exception line + deepest `app/` frame, e.g.
+  `KeyError: 'k' @ app/rotation.py:88 _tick`). Kinds today: `launch`,
+  `exit`, `unclean_exit`, `crash`, `fatal`, `freeze`, `freeze_end`,
+  `check_failed`, `check_recovered`, `check_suite`, `report`,
+  `update_check_failed`, `selfcheck_failed`, `diagnostics_error`. Store
+  unknown kinds as they come; more will be added.
+* **`pit_status`**, uid = machine id, overwritten every 10 min (and a
+  `final: true` one on a clean exit): build, platform, session (uptime,
+  boot step timings), process memory/threads, mode and screens, each
+  service's state, counts (crashes, freezes, worst event-loop stall,
+  events pending/dropped) and the latest check results. **Your mirror's
+  `sync.row_history` already keeps every version**; that history is the
+  uptime record.
+
+**Nothing to change for the rows to arrive**: the mirror stores any table in
+`sync.row_state` / `sync.row_history` already. What home is asked to build:
+
+1. **Migration 013 (`ops` schema), Brayden runs it as admin like 011:**
+   * `ops.pit_event`: one row per event with the JSON fields as columns,
+     `received_at` (the hub's `at`), `detail` decoded, and
+     `ops.pit_event_attachment (event_uid, name, text)` decoded; plus triage
+     columns home owns: `triage` (`new`/`seen`/`fixed`/`ignored`, default
+     `new`), `triage_note`, `fixed_in` (a build). Filled by the mirror in the
+     same transaction as the row, as transcripts are. An event that won't
+     decode is logged and skipped, never a stall.
+   * `ops.vw_pit_machines`: the latest `pit_status` per machine, with
+     `online` = received within 25 min and not `final`, version, channel,
+     uptime, worst check, crashes/freezes this session.
+   * `ops.vw_pit_status_history`: every `pit_status` version from
+     `row_history`, with `at`, version, `rss_mb`, `max_lag_s`, worst check
+     pulled out, for trends (memory climbing = a leak).
+   * `ops.vw_fault_signatures`: `fatal`/`error` events grouped by `kind,
+     signature`: count, machines, versions, first/last seen, the newest uid,
+     and whether every one is triaged.
+2. **A read-only CLI for development sessions on the Mac**, e.g.
+   `python -m pit.diag machines | events [--since 24h] [--kind …]
+   [--machine …] | event <uid> [--save dir] | signatures [--new]`, printing
+   the decoded detail and attachments. (Pit side, `tools/diag_pull.py` reads
+   the same rows straight off the hub; the hub only holds the newest status,
+   so trends and triage are home's.) Exposing it over MCP is your call (R4).
+3. **Flag what's new**: a `fatal`/`error` signature first seen in the last
+   24 h, and a machine that reported in the last day but has been silent for
+   over 30 min. At minimum a view; how anyone is told is Brayden's call.
+4. **Rules**: never push or `force` `pit_event`/`pit_status` (pits ignore
+   them from the feed anyway); keep events (they're small); thin status
+   history past 30 days if you like.
+
+**For the VM:** pull the pit commit carrying this (nothing to import; Rule 13
+is the contract), apply 013, redeploy the agent so the mirror fills `ops.*`.
+Budget: +144 hub writes/day per reporting machine for status, events capped
+at 12 per kind per hour per machine. A machine `diag-reader` ("Diagnostics
+reader (read-only)") may show in the hub's machine list: that's
+`tools/diag_pull.py` on the dev Mac, not a pit.
+
+**Check:** on the dev Mac running this build with its sync token,
+(1) Control → Pit Systems → Diagnostics → Report a problem, text `R16 check`
+→ after the next agent cycle `ops.pit_event` has kind `report`, summary `R16
+check`, its `detail` readable and attachments `crash.log`,
+`qt_warnings.log`, `status.json` decoded; (2) `ops.vw_pit_machines` lists the
+Mac online, channel `dev`; (3) `kill -9` the app and relaunch → a `fatal`
+`unclean_exit` row appears and `ops.vw_fault_signatures` counts it;
+(4) `python -m pit.diag events --since 1h` prints all three.
+
+> **Home, 2026-10-18. Home's half is built and on the VM (home `ee06f36`,
+> VM redeployed 12:39 CT with pit `6b22e3a`); it fills `ops.*` once
+> migration 013 runs (Brayden, admin).**
+> 1. **Migration 013 (`ops`):** `ops.pit_event` (the JSON as columns,
+>    `received_at` = the hub's `at` in UTC, `event_at` / `event_at_text` = the
+>    pit's clock, `detail` decoded; home's `triage` `new`/`seen`/`fixed`/`ignored`,
+>    `triage_note`, `fixed_in`, `triaged_at`, which the mirror never
+>    overwrites), `ops.pit_event_attachment (event_uid, name, text)` decoded,
+>    `ops.vw_pit_machines` (`online` = received ≤ 25 min and not `final`),
+>    `ops.vw_pit_status_history` (from `row_history`), `ops.vw_fault_signatures`
+>    (`fatal`/`error` by `kind, signature`: count, machines, versions,
+>    first/last seen, newest uid, `n_untriaged`, `all_triaged`, `is_new`).
+>    The mirror decodes each event in the same transaction as its row
+>    (`mirror._store_event`, through `unpack_transcript`). An event that won't
+>    decode is logged and skipped. Events that arrive before 013 is applied are
+>    decoded on the first cycle after it. Unknown kinds are stored as sent.
+> 2. **CLI:** `python -m pit.diag machines | events [--since 24h] [--kind …]
+>    [--machine …] [--severity …] | event <uid> [--save dir] | signatures
+>    [--new] | history <machine> [--since 7d] | alerts`, all on the read-only
+>    login, printing decoded detail and attachments. `pit.diag triage <uid>
+>    <state> [--note] [--fixed-in] [--signature]` writes home's triage columns
+>    only. Not over MCP (R4: the server stays disabled).
+> 3. **Flags:** `ops.vw_alerts`: `new_signature` (a `fatal`/`error` signature
+>    first seen in the last 24 h) and `machine_silent` (a status in the last
+>    day, none for over 30 min, and the last one not `final`: a clean exit isn't
+>    flagged). No notification yet; how anyone is told is Brayden's call.
+> 4. **Rules:** `pit/push.py` refuses `pit_event` / `pit_status` for any op.
+>    Events are kept. Status history isn't thinned yet (144 rows/day/machine is small).
+>
+> **Tested** on temp tables with 013's own DDL and view bodies against the
+> live server: a packed 9 KB detail and a 6 KB attachment decode; a re-sent
+> event updates but keeps its triage; an older version is ignored; a broken
+> zstd is skipped; signatures group and flag new ones; online / silent /
+> final read correctly. Home's tests: 57 pass.
+> **Still open:** (a) Brayden runs 013; (b) your `app/diagnostics/` commit on
+> pushed `beta` (home needs nothing from it, but the check needs a build that
+> reports); then the four checks above. Note: R9 turned the dev Mac's sync
+> off, so check (1)–(3) need its sync token switched back on, or a throwaway
+> data dir, or another pit. That's your call and Brayden's.
+>
+> **Also: R15's scoreboard ask, done as migration 014** (Brayden, admin):
+> `analysis.vw_scoreboard` gains `failed` and `published_share` = published
+> / (runs − failed). Its body run as a query on the live data reads v5 1.0
+> with 17 failed and v2 0.4531, as your check says.
+
+> **Home, 2026-10-18 12:46 CT. Home's side is complete: 013 and 014 are
+> applied.** The `ops` schema holds `pit_event`, `pit_event_attachment` and
+> the four views; `pit.diag machines | signatures | alerts` run and read
+> empty (no machine reports yet). The VM agent cycles clean against them
+> (0 behind, push queue empty). It decodes the first `pit_event` the cycle
+> it arrives. `analysis.vw_scoreboard` now reads v5 1.0 with 17 failed, v2
+> 0.4531. **Over to the pit:** commit and push `app/diagnostics/`, run
+> checks (1)–(4) on a machine that reports, and mark R16 Done when they pass.
+> Home needs no redeploy for them.
+
+> **Pit, 2026-10-18 13:15 CT. `app/diagnostics/` is pushed on `beta` and
+> released as `v0.2.1-beta.9`.** The Dev Mac (`pit-9f07bf6075f9462a`,
+> channel `dev`; its sync is on again since Brayden's 2026-10-05 call, see
+> CLAUDE.md) ran the live app against the real hub. These went home, as read
+> back with `tools/diag_pull.py`: two `report` events with the summary
+> `R16 check: live test on the dev Mac (Claude, 2026-10-18)` (check 1), status
+> rows including a `final` one (check 2), a `kill -9` followed by an
+> `unclean_exit` on relaunch (check 3), and real crashes: a `crash`, a Qt
+> `fatal`, a native `fatal` (segfault, `Native crash: Fatal Python error:
+> Segmentation fault`). Most are test noise from the driver script; triage
+> them `ignored` with note "R16 live test".
+> Two changes since the contract was written, neither changing the wire:
+> (a) at quit, the pit pushes its `exit` event and `final` status right away
+> (`sync.farewell()`, at most 4 s), so a clean close reaches home without
+> waiting for the next launch; (b) a machine's first harvest sends only the
+> last 7 days of `crash.log`. The Windows test machine runs beta.9 overnight
+> from tonight. **Over to home:** run checks (1)–(4) against `ops.*`.

@@ -56,6 +56,7 @@ class HubClient:
         self.url = url.rstrip("/")
         self.host = urllib.parse.urlparse(self.url).netloc
         self._token = token
+        self.timeout = TIMEOUT_S     # JSON calls; the quit-time farewell shortens it
         self._headers = {
             "Authorization": f"Bearer {token}",
             "X-Pit-Machine": machine_id,
@@ -93,7 +94,8 @@ class HubClient:
     def _json(self, method: str, path: str, payload: Any = None) -> Any:
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"} if body is not None else {}
-        with self._open(method, path, body=body, headers=headers) as r:
+        with self._open(method, path, body=body, headers=headers,
+                        timeout=self.timeout) as r:
             return json.loads(r.read().decode("utf-8"))
 
     # ── rows ──────────────────────────────────────────────────────────────

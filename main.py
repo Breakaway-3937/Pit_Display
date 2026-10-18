@@ -183,6 +183,12 @@ def main():
         sys.stderr.flush()
         os._exit(status)
 
+    # This launch is a session from here on: if it never reaches a clean exit
+    # (killed, a native crash, a boot step that throws), the next launch says
+    # so and sends home what crash.log caught. Standard library only.
+    from app.diagnostics import spool
+    spool.begin_session()
+
     _launcher_status("Starting Qt…")
     app = QApplication(sys.argv)
     app.setApplicationName("Pit Display")
@@ -232,6 +238,7 @@ def _boot(app: QApplication, splash):
         from app.nexus import alerts
         from app.db.sync import service as sync_service
         from app.ai import service as ai_service
+        from app.diagnostics import service as diag_service
         from app.windows.control_screen import ControlScreen
         from app.windows.presentation_a import PresentationScreenA
         from app.windows.presentation_b import PresentationScreenB
@@ -298,6 +305,10 @@ def _boot(app: QApplication, splash):
         # strips when a board is published. Before the control screen (its
         # Analysis panel subscribes). See app/ai/.
         services["analysis"] = mods["ai_service"].init_analysis()
+        # Crash reports, the check suite and status for home (app/diagnostics/).
+        # After sync, which carries them; before the control screen (its
+        # Diagnostics panel subscribes). It starts once everything is wired.
+        services["diagnostics"] = mods["diag_service"].init_diagnostics()
         # Before the control screen, because its Telemetry panel subscribes to
         # this service while it is being built.
         services["webcast"] = mods["webcast"].init_webcast()
@@ -346,6 +357,10 @@ def _boot(app: QApplication, splash):
         app.aboutToQuit.connect(services["nexus"].shutdown)
         app.aboutToQuit.connect(services["analysis"].shutdown)
         app.aboutToQuit.connect(webcast_service.stop)
+        # Last: the clean-exit mark, once everything else has let go.
+        diagnostics = services["diagnostics"]
+        diagnostics.set_window_provider(control.managed_window)
+        app.aboutToQuit.connect(diagnostics.shutdown)
         # Closing the control panel is quitting the app: it is the only window
         # an operator can reach, and the audience screens have no chrome.
         app.setQuitOnLastWindowClosed(True)
@@ -362,11 +377,17 @@ def _boot(app: QApplication, splash):
         ("Connecting the screens…",            wire_up),
     ]
     splash.set_total(len(steps))
+    import time
+    timings: list[tuple[str, float]] = []
     for text, run in steps:
         splash.step(text)
+        t = time.monotonic()
         run()
+        timings.append((text, time.monotonic() - t))
         splash.advance()
     splash.step("Ready")
+    services["diagnostics"].boot_finished(timings)
+    services["diagnostics"].start()
     return services["control"]
 
 

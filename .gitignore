@@ -73,6 +73,11 @@ wording.json
 datasets.json
 transfer.json
 update_check.log
+robot_brief.json
+# Diagnostics' spool and preference (app/diagnostics/); root only, the
+# package of the same name is source
+/diagnostics/
+diagnostics.json
 # Import a folder's copies of robot logs (app/robot/batch.py)
 robot_logs/
 # Synced team files (app/db/sync/docs.py FILE_ROOTS): songs, judges artwork,

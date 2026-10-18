@@ -216,6 +216,7 @@ nothing fails.
 | `ai` | the analysis contracts load, the run log, the bundled engine (`llama/llama-server`), the model downloaded and verified, whether Ollama answers | `FAIL` is a packaging fault: contracts missing (`tree("home/contracts")`) or, on a Windows build, no `llama/` (`fetch_llama.py`); `WARN` means no engine is ready yet: download the model from Control → Analysis |
 | `webcast` | which screens are published, their exact URLs, and that the pages are in the bundle | try the printed URL from the Pi's browser |
 | `qt` | Qt's own warnings this run | full text in `qt_warnings.log` |
+| `diagnostics` | the reporting spool is writable, a report packs (zstd) and the crash-log reader still parses what `crash_log` writes; whether this machine reports home | `FAIL` means crashes on this build would never reach home |
 | `crashlog` | the last crash recorded in `crash.log` | `WARN` quotes it; that file is the one to send |
 | `windows` | all four built and rendered | |
 

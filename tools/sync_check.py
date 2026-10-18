@@ -662,6 +662,7 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     rb = b.sync()
     check("…once", b.one("SELECT v FROM sync_meta WHERE k = 'catch_up'") == "null"
           and rb.ok, str(rb.errors))
+    diagnostics_section(a, b, home)
     status = home.status()
     check("the hub lists both machines",
           {"check-a", "check-b"} <= {m["id"] for m in status.get("machines", [])})
@@ -681,6 +682,33 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     if pit_token == PIT_TOKEN:
         old = HubClient(url, OLD_PIT_TOKEN, "check-old", "old", "check")
         check("while rotating, the old pit token still works", "head" in old.status())
+
+
+def diagnostics_section(a, b, home) -> None:
+    """R16: a pit's reports reach the hub, home reads them, nobody applies them."""
+    print("\nDiagnostics (R16)")
+    from app.diagnostics import spool
+    with a.env():
+        eid = spool.record("crash", "check crash", detail="Traceback …\nValueError: x",
+                           attachments={"crash.log": "y" * 20000})
+        spool.write_status({"at": "2026-10-18T12:00:00-05:00", "schema": 1,
+                            "build": {"version": "check"}})
+    ra = a.sync()
+    rows = home.changes(0, 1000)["changes"]
+    ev = [c for c in rows if c["tbl"] == "pit_event" and c["uid"] == f"check-a:{eid}"]
+    st = [c for c in rows if c["tbl"] == "pit_status" and c["uid"] == "check-a"]
+    check("a pit's event reaches the hub, attachments packed",
+          ra.ok and ev and ev[-1]["data"]["kind"] == "crash"
+          and spool.unpack(ev[-1]["data"]["attachments"]["crash.log"]) == "y" * 20000,
+          str(ra.errors))
+    check("…with its status, one row per machine", st and st[-1]["data"]["machine_id"] == "check-a")
+    with a.env():
+        check("…and leaves A's outbox", spool.pending() == [])
+    rb = b.sync()
+    check("another pit ignores them (nothing applied, nothing pending)",
+          rb.ok and b.one("SELECT COUNT(*) FROM sync_pending WHERE tbl LIKE 'pit_%'") == 0)
+    ra = a.sync()
+    check("nothing is sent twice", ra.ok and ra.pushed == 0, f"pushed {ra.pushed}")
 
 
 if __name__ == "__main__":
