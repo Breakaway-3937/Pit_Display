@@ -42,7 +42,7 @@ DEFAULT_QUESTION = "What should the pit crew look at before the next match?"
 # number is recorded in every run's stats.
 #   1 — first trials (2026-09-30)
 #   2 — faults summary/by_device, code sets colours, chart options from vitals
-PROMPT_VERSION = 5
+PROMPT_VERSION = 6
 
 # What Phoenix 6 faults mean for a pit crew (CTRE's fault definitions, with
 # the pit's practical weighting). A small model can't know these, and the
@@ -148,6 +148,14 @@ Each one it lists is a real difference from normal: lead with the faults among t
 (a device missing from the bus, a motor never driven while enabled: often a code or \
 wiring problem), say what it likely means and what to check, and use its figures \
 and normal ranges exactly. Don't explain away what it flags.
+- Wear: anomalies of kind wear (and the wear tool) are motors getting worse across \
+this robot's logs: needing more current for the same speed (friction, binding), or \
+heating or faulting more than the other motors, more each log. It's maintenance \
+before it's a failure, and often the most useful thing on the board: give each wear \
+warning its own finding, severity warn (never fault), naming the motor or motors, \
+with the recent figure as the metric and the earlier one as compare_to, exactly as \
+the detector gives them, and what to check. Call wear for a motor's per-log values \
+when the crew should see the trend.
 - match_phases says when the robot was disabled, in autonomous or in teleop. If \
 never_enabled is true, this was a pit or bench recording: say so first, and don't \
 present currents, temperatures or power-on faults as match problems. When it was \
@@ -192,7 +200,8 @@ the headline's subject in a word or two.
 its kind and source exactly). If chart_options is empty, write no charts. Choose the kind that answers \
 the finding: "line" for how one device's value moved across the match (a sag, a \
 temperature climb, a current spike); "bars" to compare devices on one signal \
-(which motor ran hottest); "sessions" for match-to-match change. Set finding to \
+(which motor ran hottest); "sessions" for match-to-match change, and for a wear \
+finding the motor's trend across its logs (the strongest picture of wear). Set finding to \
 the finding's id and say in why, briefly, why this graph. You never write the \
 data: it is fetched for you. No chart is better than one that doesn't help.
 /no_think"""
@@ -213,11 +222,16 @@ def _detector_findings(ledger, insights: dict) -> list[dict]:
         if c.tool != "anomalies":
             continue
         for a in c.result.get("anomalies") or []:
-            if a.get("severity") != "fault":
+            if a.get("severity") != "fault" and a.get("kind") != "wear":
                 continue
             device = str(a.get("device") or "")
-            key = (device, a.get("kind"))
-            if key in seen or (checks._norm(device) and checks._norm(device) in text):
+            key = (device, a.get("kind"), a.get("measure"))
+            if key in seen:
+                continue
+            if (a.get("kind") == "wear"
+                    and any(checks.about_wear(f, a) for f in insights.get("findings") or [])):
+                continue
+            if a.get("kind") != "wear" and checks.covered(a, text):
                 continue
             seen.add(key)
             kind = a.get("kind")
@@ -231,6 +245,22 @@ def _detector_findings(ledger, insights: dict) -> list[dict]:
             }.get(kind, (str(a.get("signal") or kind), a.get("value"), ""))
             if not isinstance(value, (int, float)):
                 continue                     # nothing exact to show: the run stays rejected
+            if kind == "wear":
+                # Wear is a heads-up, never red: the recent figure against the earlier.
+                before = (a.get("normal") or {}).get("median")
+                claim = f"{device}: {a.get('detail', '')}"
+                if len(claim) > 200:
+                    claim = claim[:199].rsplit(" ", 1)[0].rstrip(",;:(") + "…"
+                metric = {"name": f"{a.get('measure')} (last logs)"[:80], "value": value,
+                          "unit": a.get("unit") or ""}
+                if isinstance(before, (int, float)):
+                    metric |= {"compare_to": before, "compare_label": "the logs before"}
+                out.append({
+                    "id": f"detector_wear_{a.get('measure')}_{device}", "claim": claim,
+                    "metric": metric, "severity": "warn", "subsystem": a.get("subsystem"),
+                    "series": None,
+                    "evidence": [{"tool": "anomalies", "args": dict(c.args), "value": value}]})
+                continue
             claim = f"{device}: {a.get('detail', '')}"
             if len(claim) > 200:
                 claim = claim[:199].rsplit(" ", 1)[0].rstrip(",;:(") + "…"
@@ -243,6 +273,59 @@ def _detector_findings(ledger, insights: dict) -> list[dict]:
                 "evidence": [{"tool": "anomalies", "args": dict(c.args), "value": value}]})
     _tidy_ids({"findings": out})
     return out
+
+
+def _wear_cards(board: dict, insights: dict, ledger, toolbox: Toolbox | None = None) -> None:
+    """Every wear finding on the board (Brayden, 2026-10-18: wear through the
+    whole analysis). The designer chooses cards and charts; a wear finding it
+    left out gets its card from the finding's own figures (exact by
+    construction; colour from `assign_status` like any card), and, while
+    there's room for one, its motor's trend chart, fetched by code (the
+    designer drew none on the first real run)."""
+    items = checks.wear_items(ledger)
+    worn = [f for f in insights.get("findings") or []
+            if any(checks.about_wear(f, a) for a in items)]
+    shown = {c.get("finding") for r in ("vitals", "faults") for c in board.get(r) or []}
+    for f in worn:
+        if f.get("id") in shown:
+            continue
+        m = f.get("metric") or {}
+        a = next(a for a in items if checks.about_wear(f, a))
+        label = {"load_per_speed": "load", "heat_vs_peers": "heat",
+                 "faults_vs_peers": "faults"}.get(a.get("measure"), "wear")
+        card = {"label": f"{a.get('device')} {label}"[:28], "value": f"{m.get('value'):g}"[:12],
+                "unit": str(m.get("unit") or "")[:8], "status": "warn", "finding": f.get("id"),
+                "series": None}
+        if isinstance(m.get("compare_to"), (int, float)):
+            card["detail"] = f"{m['compare_to']:g} {m.get('unit') or ''} before".strip()[:80]
+        vitals, faults = board.setdefault("vitals", []), board.setdefault("faults", [])
+        if len(vitals) < 8:
+            vitals.append(card)
+        elif len(faults) < 6:
+            faults.append(card)
+        else:
+            calm = [i for i, c in enumerate(vitals) if c.get("status") in ("ok", "idle")]
+            if calm:
+                vitals[calm[-1]] = card
+        shown.add(f.get("id"))
+    if toolbox is None:
+        return
+    charts = board.setdefault("charts", [])
+    drawn = {c.get("finding") for c in charts}
+    options = [o for o in checks.chart_options(insights, ledger)
+               if str(o["source"].get("signal", "")).startswith("wear:")]
+    for o in options:
+        if len(charts) >= 4 or o["finding"] in drawn:
+            continue
+        a = next((a for a in items if a.get("signal") == o["source"]["signal"]
+                  and a.get("can_id") == o["source"].get("can_id")), {})
+        chart = {"kind": "sessions", "finding": o["finding"], "source": dict(o["source"]),
+                 "title": f"{a.get('device', 'Motor')} {a.get('measure', 'wear')} by log"[:48],
+                 "unit": str(a.get("unit") or "")[:8], "why": "wear trend, added by code"}
+        chart["data"] = _chart_data(toolbox, chart)
+        if chart["data"].get("sessions"):
+            charts.append(chart)
+            drawn.add(o["finding"])
 
 
 def _drop_unwanted(insights: dict, ledger) -> None:
@@ -276,6 +359,8 @@ def _must_cover(ledger) -> str:
     """
     flags = [a for c in ledger.calls if c.tool == "anomalies"
              for a in c.result.get("anomalies") or [] if a.get("severity") == "fault"]
+    worn = [a for c in ledger.calls if c.tool == "anomalies"
+            for a in c.result.get("anomalies") or [] if a.get("kind") == "wear"]
     text = ("\nLeave out StatorCurrLimit / SupplyCurrLimit (by design) and a "
             "BridgeBrownout latched on most controllers (power-on) unless the fault "
             "guide's conditions hold.")
@@ -290,6 +375,14 @@ def _must_cover(ledger) -> str:
         text += ("\nFIRST, one finding for each of these (the anomaly detector flagged them; "
                  "severity fault; evidence {\"tool\": \"anomalies\", \"args\": "
                  "{\"session_uid\": ...}}), then anything else:\n" + "\n".join(lines[:8]))
+    if worn:
+        lines = [f"- {a.get('device')}: {a.get('measure')}, {a.get('value')} {a.get('unit')} "
+                 f"against {(a.get('normal') or {}).get('median')} before; "
+                 f"{str(a.get('detail', ''))[:120]}" for a in worn[:6]]
+        text += ("\nAlso one finding for each wear warning (a motor getting worse across "
+                 "logs; severity warn; metric value the recent figure, compare_to the earlier "
+                 "one; evidence {\"tool\": \"anomalies\", \"args\": {\"session_uid\": "
+                 "...}}):\n" + "\n".join(lines))
     return text
 
 
@@ -541,6 +634,7 @@ def analyse(toolbox: Toolbox, sink: Sink, llm: Ollama, session_uids: list[str], 
                 if not problems:
                     board = _complete(toolbox, draft, res.insights, session_uids,
                                       analyst, designer)
+                    _wear_cards(board, res.insights, ledger, toolbox)
                     problems = assign_status(board, res.insights)
                     problems += schema.validate(board, schema.load("board"))
                     problems += checks.check_board(board, res.insights, context)
@@ -725,6 +819,18 @@ def _chart_data(toolbox: Toolbox, chart: dict) -> dict:
                 for d in got.get("devices") or [] if d.get(col) is not None]
         bars.sort(key=lambda b: b["value"], reverse=col != "min")    # worst first
         return {"tool": "series_stats", "args": args, "bars": bars[:24]}
+    if kind == "sessions" and str(src.get("signal", "")).startswith("wear:"):
+        # A wear trend (app/robot/wear.py): one motor's measure, log by log.
+        uids = src.get("session_uids") or []
+        args = {"session_uid": uids[-1] if uids else None,
+                "device_type": src.get("device_type"), "can_id": src.get("can_id")}
+        got = toolbox.call("wear", args)
+        measure = src["signal"].split(":", 1)[1]
+        trend = next((t["trend"] for t in got.get("trends") or []
+                      if t.get("measure") == measure), [])
+        return {"tool": "wear", "args": args, "sessions": [
+            {"session_uid": p["session_uid"], "min": p["value"], "max": p["value"]}
+            for p in trend if p["session_uid"] in uids]}
     if kind == "sessions":
         args = {"session_uids": src.get("session_uids") or [], "signal": src.get("signal"),
                 "device_type": src.get("device_type"), "can_id": src.get("can_id")}

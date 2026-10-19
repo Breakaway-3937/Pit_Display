@@ -1,0 +1,12 @@
+{
+  "name": "pit-cad-optimize",
+  "private": true,
+  "description": "Rewrites an Onshape glTF export for the CAD viewer. Run through tools/cad_optimize.py.",
+  "type": "module",
+  "dependencies": {
+    "@gltf-transform/core": "4.1.1",
+    "@gltf-transform/extensions": "4.1.1",
+    "@gltf-transform/functions": "4.1.1",
+    "meshoptimizer": "0.22.0"
+  }
+}

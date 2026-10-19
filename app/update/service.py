@@ -29,7 +29,7 @@ from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 
 from app import paths, version
 from app.lazy_proxy import LazyProxy
-from app.update import install, settings
+from app.update import guard, install, settings
 from app.update.release import Release, UpdateError, configured, download, latest
 
 # How long after startup the first automatic check runs. Long enough that it is
@@ -116,6 +116,11 @@ class _UpdateService(QObject):
         # which is now.
         if install.is_managed():
             install.prune()
+        rb = guard.last_rollback()
+        if rb:
+            self._message = (f"Rolled back from {rb.get('from')} automatically: it failed "
+                             f"to start {len(rb.get('strikes', []))} times in a row. "
+                             "The crash went home with diagnostics.")
 
     # ── What this machine can do ─────────────────────────────────────────
 
@@ -232,6 +237,15 @@ class _UpdateService(QObject):
 
     def _on_found(self, release) -> None:
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        if release is not None and release.version in guard.bad_versions():
+            # Rolled back here by itself (app/update/guard.py): not offered
+            # again; the next release clears it.
+            settings.save(last_check=stamp, last_result=f"skipped {release.version}")
+            self._release = None
+            self._set_state("up_to_date",
+                            f"{release.version} failed to start on this machine and was "
+                            f"rolled back; waiting for a newer {self.channel()} release.")
+            return
         if release is None or not version.is_newer(release.version):
             settings.save(last_check=stamp, last_result="up to date")
             self._release = None

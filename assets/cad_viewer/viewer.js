@@ -128,6 +128,9 @@
         if (!r.ok) { showStatus('no-model'); return; }
         showStatus('loading');
         var loader = new THREE.GLTFLoader();
+        // tools/cad_optimize.py --compress writes meshopt (360 MB of Onshape
+        // glTF → 25 MB); a plain glTF/GLB loads the same as before.
+        if (window.MeshoptDecoder) loader.setMeshoptDecoder(window.MeshoptDecoder);
         loader.load(
           '/cad/robot.glb',
           onModelLoaded,

@@ -216,6 +216,16 @@ model (5.0 GB)** on the panel, on a good connection, before the event. It
 resumes if interrupted and stays through every update. The top line says what
 it's doing or what's missing.
 
+**Wear warnings.** The analysis also watches each motor across the robot's
+logs, and warns (amber, never red) when one is getting worse: needing more
+current for the same speed (friction, a bearing, binding), or heating or
+faulting more than the other motors, more each log. The card shows the recent
+figure against the earlier one, and a chart shows the motor's trend log by
+log. It's a maintenance item before it's a failure. It needs about six logs
+of the robot running before it can judge; until then it says so. When several
+motors warn at once, it says so once and points at a shared cause (wiring,
+power, a code change) rather than every motor.
+
 **Put a board on an overhead screen:** pick the screen in the sidebar →
 Content → **Analysis board**. It shows the newest board, with its charts, and
 updates by itself when the next one is ready.
@@ -230,6 +240,20 @@ because of it, and rank the run **1–5**. Tap again to undo. Ratings sync to
 every machine, so they can be done later from anywhere. **"All clear" is a
 useful finding when it's right**: rate what saved the crew time, not what
 found the most problems.
+
+### Ask the Pit
+
+**Control → Pit Systems → Ask the Pit.** Type a question about the robot's
+logs and press **Ask** (or Enter), or tap one of the examples: *"Any faults in
+the newest log?"*, *"Which motor ran hottest in qm14?"*. The same model reads
+the log and answers in a few sentences, naming the log and the devices. It
+takes 5–15 seconds; if an analysis is running, your question goes next.
+
+Every figure in an answer is checked against what the model actually read. A
+figure it couldn't back up is listed under the answer, **"Not found in the
+logs"**, with an amber dot: check it before acting on it. Each answer says
+what it looked at. Follow-ups work ("and in the match before?"). It uses the
+model from the Analysis panel, so download that first.
 
 ---
 

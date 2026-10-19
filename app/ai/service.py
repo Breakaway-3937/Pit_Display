@@ -66,6 +66,8 @@ class _AnalysisService(QObject):
     # Cross-thread hand-offs (emitted from worker threads, queued to this one)
     _worker_step = pyqtSignal(str)
     _worker_done = pyqtSignal(int, str, str)
+    answered = pyqtSignal(object)        # ask.Answer: Ask the pit has a reply
+    _ask_done = pyqtSignal(object)
     _probe_done = pyqtSignal(object, object)
     _dl_progress = pyqtSignal(object, object)
     _dl_done = pyqtSignal(str)
@@ -88,9 +90,14 @@ class _AnalysisService(QObject):
         self._queue: list[str] = []          # session uids waiting, in order
         self._held = False                   # a batch import is running
         self._running: str | None = None
+        self._questions: list[str] = []      # Ask the pit, ahead of queued logs
+        self.asking = ""                     # the question being answered
+        self.answers: list = []              # this launch's, newest last
+
 
         self._worker_step.connect(self._on_step)
         self._worker_done.connect(self._on_done)
+        self._ask_done.connect(self._on_ask_done)
         self._probe_done.connect(self._on_probe)
         self._dl_progress.connect(self._on_dl_progress)
         self._dl_done.connect(self._on_dl_done)
@@ -167,6 +174,8 @@ class _AnalysisService(QObject):
     def describe(self) -> str:
         """One line for the panel: what's stopping a run, or what's running."""
         more = f" · {len(self._queue)} more queued" if self._queue else ""
+        if self._questions:
+            more += f" · {len(self._questions)} question(s) waiting"
         if self.busy:
             return (self.step or "Starting…") + more
         if self._held and self._queue:
@@ -268,9 +277,75 @@ class _AnalysisService(QObject):
         return len(self._queue)
 
     def _next(self) -> None:
-        if self.busy or self._held or not self._queue or not self.ready:
+        if self.busy or self._held or not self.ready:
             return
-        self.analyse(self._queue.pop(0))
+        if self._questions:
+            self._start_ask(self._questions.pop(0))
+        elif self._queue:
+            self.analyse(self._queue.pop(0))
+
+    # ── Ask the pit ───────────────────────────────────────────────────────
+
+    def ask(self, question: str) -> str:
+        """Answer `question` (app/ai/ask.py) when the engine is free: now, or
+        after the run in progress and before queued logs. Returns why it
+        can't be asked, or ""; the reply comes as `answered`."""
+        question = question.strip()
+        if not question:
+            return "Type a question first."
+        if not self.ready:
+            return self.describe()
+        if self.busy or self._held:
+            self._questions.append(question)
+            self.state_changed.emit()
+            return ""
+        self._start_ask(question)
+        return ""
+
+    @property
+    def questions_waiting(self) -> int:
+        return len(self._questions)
+
+    def _start_ask(self, question: str) -> None:
+        self._idle.stop()
+        self.busy, self.asking, self.step = True, question, "Reading the question…"
+        self.state_changed.emit()
+        model = self.model_name()
+        llm = self._make_llm()
+        history = [(a.question, a.text) for a in self.answers[-3:] if a.status != "failed"]
+        on = next((a.focus for a in reversed(self.answers) if a.focus), None)
+        threading.Thread(target=self._ask_run, args=(question, model, llm, history, on),
+                         name="ai-ask", daemon=True).start()
+
+    def _ask_run(self, question: str, model: str, llm, history, on: str | None) -> None:
+        from app.ai import ask, tools
+        from app.ai.local import LocalToolbox, ThreadDB
+        handle = None
+        try:
+            if isinstance(llm, LlamaServer) and not self.runtime.running:
+                self._worker_step.emit("starting the built-in engine")
+            handle = ThreadDB()
+            with tools.using(handle):
+                answer = ask.ask(LocalToolbox(), llm, model, question, history=history,
+                                 on_step=self._worker_step.emit, previous_focus=on)
+        except Exception as e:
+            answer = ask.Answer(question=question, status="failed", model=model,
+                                error=f"{type(e).__name__}: {e}")
+        finally:
+            if handle is not None:
+                handle.close()
+        _log_answer(answer)
+        self._ask_done.emit(answer)
+
+    def _on_ask_done(self, answer) -> None:
+        self.busy, self.asking, self.step = False, "", ""
+        self.answers = (self.answers + [answer])[-30:]
+        self.state_changed.emit()
+        self.answered.emit(answer)
+        if self._questions or (self._queue and not self._held):
+            self._next()
+        elif self.runtime.running:
+            self._idle.start(_seconds(self.prefs["keep_alive"]) * 1000)
 
     def analyse(self, session_uid: str | None = None) -> bool:
         """Start a run on `session_uid` (default: the newest log). False if none."""
@@ -331,7 +406,7 @@ class _AnalysisService(QObject):
                                    flash_s=2.0, steady_s=1.0, label="analysis"))
         self.state_changed.emit()
         self.run_finished.emit(run_id, status)
-        if self._queue and not self._held:
+        if (self._questions or self._queue) and not self._held:
             self._next()
         elif self.runtime.running:
             self._idle.start(_seconds(self.prefs["keep_alive"]) * 1000)
@@ -344,6 +419,18 @@ class _AnalysisService(QObject):
         """Quitting: stop the engine (its memory goes back) and any download."""
         self._cancel.set()
         self.runtime.stop()
+
+
+def _log_answer(answer) -> None:
+    """Every answer, for judging the prompt later (`ask_log.jsonl` beside the
+    database; never synced). Best effort."""
+    import json
+    from app import paths
+    try:
+        with open(paths.data("ask_log.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(answer.as_dict(), default=str) + "\n")
+    except OSError:
+        pass
 
 
 analysis: _AnalysisService = LazyProxy("analysis", "init_analysis")  # type: ignore[assignment]

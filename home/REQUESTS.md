@@ -1344,3 +1344,107 @@ Mac online, channel `dev`; (3) `kill -9` the app and relaunch → a `fatal`
 > waiting for the next launch; (b) a machine's first harvest sends only the
 > last 7 days of `crash.log`. The Windows test machine runs beta.9 overnight
 > from tonight. **Over to home:** run checks (1)–(4) against `ops.*`.
+
+## R17 · 2026-10-18 · From Brayden: wear warnings, through the whole analysis · **Home built (2026-10-18, 5bc9d09); waits for the pit to push wear.py**
+
+**Why.** Brayden wants the analysis to catch a motor wearing out before it
+fails, and that ability carried through every part of the analysis. The pit
+side is built (`app/robot/wear.py`, PROMPT_VERSION 6); home's analysis runs
+the same pipeline, so it needs the same tool.
+
+**What changed on the pit (pushed on `beta`):**
+1. **`app/robot/wear.py`**: per motor, per log, three measures, each judged
+   as a trend over the same bus's logs up to the one asked about (the newest
+   3 against the ones before):
+   - `load_per_speed`: stator current per rotor rotation-per-second over
+     steady running;
+   - `heat_vs_peers`: DeviceTemp's rise minus the other motors' median rise in
+     the same log;
+   - `faults_vs_peers`: live faults, current limits and power-on noise left
+     out, minus the other motors' median.
+   It compares against the other motors because on the team's 63 logs raw heat
+   and fault counts moved with the session, on every motor at once. Three or
+   more motors flagging together become one warning for the bus. Wear is
+   always `severity: warn`, never fault.
+2. **`anomalies` carries them**: `anomaly.find` now imports `wear` and
+   appends its warnings as `kind: "wear"` items (fields `measure`, `value`,
+   `unit`, `change_pct`, `normal{median, low, high, logs}`, `trend[{session_uid,
+   started_at, value}]`, `devices` for a bus-wide one), plus a top-level
+   `wear_note`. **Home runs `anomaly.py` unchanged, so it gets wear for free,
+   as long as `pit/pitdb.py` answers wear's SQL** (below).
+3. **A thirteenth tool, `wear(session_uid, device_type?, can_id?)`**
+   (`app/ai/tools.py`): `{args, bus, logs, warnings, trends, truncated,
+   note}`, with `trends` holding every measure's per-log values (newest last,
+   at most 10). The pipeline's charts and checks call it, and so does Ask the
+   Pit (pit only).
+4. **The pipeline**: the analyst prompt, `_must_cover`, `anomaly_coverage`
+   (a wear warning needs a finding about its wear, not just one naming the
+   motor), `_detector_findings` (wear findings with `compare_to` and
+   `compare_label`), `_wear_cards` (a wear finding left off the board gets its
+   card and its trend chart). **The board contract is unchanged**: a wear
+   chart is kind `sessions`, `source.signal` `"wear:<measure>"`, with one
+   device and the trend's session uids. `data.sessions` uses min = max = the
+   value.
+
+**Wanted from home:**
+1. **`pitdb.py` answers wear's SQL.** New shapes, all read-only:
+   - `SELECT COUNT(*) AS n FROM samples.sample_1s WHERE series_id = ? AND
+     (v_max >= 1 OR v_min <= -1)`;
+   - a self-join on `samples.sample_1s` (`v.v_avg, v.v_min, v.v_max,
+     i.v_avg`, `ON i.series_id = ? AND i.t_s = v.t_s WHERE v.series_id = ?`);
+   - `SELECT v_min, v_max FROM series WHERE id = ?`;
+   - `fault_event` with `sticky = 0`;
+   - `SELECT 1 AS x FROM series WHERE session_id = ? AND device_id = ?`;
+   - `log_session` with `uid` selected alongside the bus columns.
+2. **The `wear` tool in home's toolbox and MCP server**: same name, arguments
+   and result keys, with `args` echoed.
+3. **Nothing to change in home's pipeline**: it's the pit's `pipeline.py`.
+   Bump nothing; `PROMPT_VERSION` 6 comes with it.
+
+**Check:**
+- R1 parity with thirteen tools.
+- On home's copy of the 63 sessions, `anomalies` finds **no** `wear` items, the
+  same as the pit (`.validation/team_pull`, 2026-10-18).
+- `wear` on `06C94CC6…_2026-09-21_03-37-36` gives TalonFX 10's
+  `faults_vs_peers` trend `[20.0, 6.0, 2.0, 20.0, 18.0, 42.0]` with no warning
+  (a noisy baseline).
+- `ai_check`'s synthetic wear logs pass through home's pitdb if you replay
+  them: TalonFX 41 `load_per_speed` 0.45 against 0.3 (+50%).
+
+> **Home, 2026-10-18. Home's half is built (home `5bc9d09`), but R17 isn't
+> on pushed `beta` yet.** `origin/beta` ends at `31ae4fb` (diagnostics);
+> `app/robot/wear.py` is untracked and the `anomaly.py` / `tools.py` changes are
+> uncommitted in your tree. Under R9 home imports only pushed code, so home
+> checked against a **frozen copy** of your `app/` in its scratchpad, not
+> your working tree or database. Everything below re-runs on home's own clone
+> once you push.
+> 1. **`pitdb.py` needs no change.** Every new shape (the `sample_1s`
+>    self-join, `COUNT(*)` on `sample_1s`, `series` `v_min`/`v_max`,
+>    `fault_event` `sticky = 0`, `SELECT 1 … series`, `log_session` with
+>    `uid`, the bus history query) already translates and runs. Home holds
+>    1,706 live (non-sticky) fault events for `faults_vs_peers`.
+> 2. **`wear` is in home's toolbox** (`pit/tools.py`; same args and keys,
+>    `args` echoed), so `HomeToolbox` and the (disabled) MCP wrapper get it.
+>    `anomalies` passes `wear_note`. Until home's clone has `wear.py`, `wear`
+>    answers an error result (the pipeline skips an optional tool that errors)
+>    and `HomeToolbox` doesn't offer it, since your pinned SPECS don't list it yet.
+> 3. Nothing changed in home's pipeline; `PROMPT_VERSION` 6 arrives with the pull.
+>
+> **Checked (frozen copy):**
+> * `anomalies` on all 63 sessions: **no `wear` items**, the same 21 other
+>   flags as R14, no errors; `wear` on all 63: no warnings (14 sessions note
+>   fewer than 6 logs on their bus).
+> * `wear` on `06C94CC6…_2026-09-21_03-37-36` (`07b51a57…`), TalonFX 10:
+>   `faults_vs_peers` `[20.0, 6.0, 2.0, 20.0, 18.0, 42.0]`, no warning ✓.
+> * **`tools/wear_check.py`** (new) replays `ai_check`'s synthetic wear logs
+>   through home's pitdb on SQL Server **temp tables**: TalonFX 41
+>   `load_per_speed` 0.45 against 0.3 (+50%, 8-log trend), TalonFX 42 heat
+>   alone, 41/42/43 faults as one bus warning, all `warn`, log 9's load warning
+>   gone, log 3 a note: **6/6**.
+> * `tools/r1_parity_check.py` now calls `wear` (three calls, 17 in all).
+>   Parity runs only against a pushed checkout, so it waits for the push.
+>
+> **Still open:** push R17 to `beta`; then home pulls `../Pit_Display_home`,
+> re-runs parity (17 calls), `wear_check.py` and the 63-session pass on
+> the clone, and marks R17 Done. Home's analysis runs on the Mac, so the VM
+> needs no redeploy for R17.

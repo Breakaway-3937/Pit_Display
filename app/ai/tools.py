@@ -427,6 +427,28 @@ def anomalies(session_uid: str) -> dict[str, Any]:
     rows, truncated = _cap(got["anomalies"])
     return {"args": args, "bus": got["bus"], "history_logs": got["history_logs"],
             "enabled_s": got["enabled_s"], "anomalies": rows, "truncated": truncated,
+            "note": got["note"], "wear_note": got.get("wear_note")}
+
+
+def wear(session_uid: str, device_type: str | None = None,
+         can_id: int | None = None) -> dict[str, Any]:
+    """
+    Each motor's trend across this robot's logs up to this one
+    (app/robot/wear.py): current needed per unit of speed, heat rise and live
+    faults against the other motors in the same log. `warnings` are the
+    motors getting worse; `trends` every measure's per-log values (newest
+    last, at most 10), for "is anything wearing out?" and to draw the trend.
+    """
+    args = {"session_uid": session_uid, "device_type": device_type, "can_id": can_id}
+    if _session_id(session_uid) is None:
+        return _missing(args)
+    from app.robot import wear as worn
+    got = worn.find(connection(), session_uid, device_type, can_id)
+    if "error" in got:
+        return {"args": args, **got}
+    trends, truncated = _cap(got["trends"])
+    return {"args": args, "bus": got["bus"], "logs": got["logs"],
+            "warnings": got["warnings"], "trends": trends, "truncated": truncated,
             "note": got["note"]}
 
 
@@ -612,8 +634,16 @@ SPECS: list[dict] = [
           "missing from the CAN bus, motors on the bus but never driven while the robot was "
           "enabled (or not driven while a partner in the same subsystem was), values beyond "
           "their usual range, configuration (firmware, inversion) changed, faults latched "
-          "for the first time. Exact figures with the normal range they're compared to.",
+          "for the first time, and motors wearing out across logs (kind wear). Exact figures "
+          "with the normal range they're compared to.",
           {"session_uid": _UID}, ["session_uid"]),
+    _spec("wear",
+          "Is a motor wearing out? Each motor's trend across this robot's logs up to this "
+          "one: stator current needed per rotor rotation-per-second at steady running "
+          "(friction, binding), heat rise and live faults compared with the other motors in "
+          "the same log. `warnings` lists motors getting worse (recent logs against the ones "
+          "before); `trends` gives each measure's per-log values, newest last.",
+          {"session_uid": _UID, "device_type": _DTYPE, "can_id": _CAN}, ["session_uid"]),
     _spec("match_phases",
           "When the robot was disabled, in autonomous, teleop or test, from its own Driver "
           "Station state: seconds in each, the timeline, whether a field (FMS) was attached. "
@@ -629,7 +659,7 @@ TOOLS = {
     "list_signals": list_signals, "series_stats": series_stats, "series_1s": series_1s,
     "faults": faults, "subsystems": subsystems, "compare_sessions": compare_sessions,
     "match_context": match_context, "device_names": device_names,
-    "match_phases": match_phases, "anomalies": anomalies,
+    "match_phases": match_phases, "anomalies": anomalies, "wear": wear,
 }
 
 

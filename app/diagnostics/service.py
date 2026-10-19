@@ -156,6 +156,7 @@ class _DiagnosticsService(QObject):
 
     def shutdown(self) -> None:
         if self._quiet:
+            spool.end_session()     # main() began one; a quiet close is still clean
             return
         for t in (self._lag_timer, self._harvest_timer, self._check_timer, self._status_timer):
             t.stop()
@@ -164,6 +165,8 @@ class _DiagnosticsService(QObject):
                      signature="exit", data={"uptime_s": round(up)})
         self.write_status(final=True)
         spool.end_session()
+        from app.update import guard
+        guard.clean_exit()
         if self.reporting:
             try:
                 from app.db.sync.service import sync
@@ -197,6 +200,8 @@ class _DiagnosticsService(QObject):
 
     def _on_harvest(self) -> None:
         spool.beat()
+        from app.update import guard
+        guard.note_uptime(time.time() - checks.context["started"])
         new = harvest.all_files()
         for eid in new:
             self._count(eid)
@@ -331,11 +336,29 @@ class _DiagnosticsService(QObject):
             from app.config import config
             out["mode"] = config.mode
             out["team"] = config.active_team.number
+            # Config stores content only once someone picks it; unset is the
+            # screen's default, which a reader took for a blank screen
+            # (beta.9 sent `"content": null` for screens that were showing).
+            live = {}
+            published: set[str] = set()
+            try:
+                from app.webcast import webcast
+                published = set(webcast.published())
+                for row in webcast.telemetry().get("live", []):
+                    live[row["screen"]] = live.get(row["screen"], 0) + 1
+            except Exception:
+                pass
             screens = {}
-            for sid in ("presentation_a", "presentation_b", "project"):
+            for sid, default in (("presentation_a", "rotation"), ("presentation_b", "rotation"),
+                                 ("project", "cad")):
                 win = self._window_provider(sid) if self._window_provider else None
-                screens[sid] = {"on": win is not None,
-                                "content": config.get(sid, "content")}
+                row = {"on": win is not None,
+                       "content": config.get(sid, "content", default) or default}
+                if win is not None:
+                    row["where"] = "network" if sid in published else "monitor"
+                    if sid in published:
+                        row["displays"] = live.get(sid, 0)
+                screens[sid] = row
             out["screens"] = screens
         except Exception as e:
             out["error"] = f"{type(e).__name__}: {e}"

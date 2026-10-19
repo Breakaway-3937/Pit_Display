@@ -22,9 +22,24 @@
  * machine wins and the pit is handed the current state to apply. That's
  * row-level first-writer-wins on the hub's clock, never on a pit's clock.
  *
- * **Nothing lives in class fields that matters**, and there are no timers:
- * every request reads and writes storage. The SQL API is synchronous, so a
- * push with no `await` inside cannot interleave with another.
+ * **Storage is the truth, and there are no timers.** Class fields only
+ * cache what storage holds (`meta`, `machine`, `tbl_stat`), written through, loaded
+ * again on every start. The SQL API is synchronous, so a push with no
+ * `await` inside cannot interleave with another.
+ *
+ * **The free plan bills rows: 5M read and 100k written a day** (writes
+ * shared with the relay), and a row scanned counts as read. `status()` once
+ * counted row_state and blob from scratch (~3,200 rows at 866 rows / 202
+ * files), and every pit and home called it every minute: 90% of the day's
+ * reads by midday (2026-10-18). So:
+ *   • counts are kept as they change (`tbl_stat`, blob counters in `meta`),
+ *     built once from the tables, one write per (tbl, op) per push;
+ *   • an up-to-date pull, home's "anything unacked?" and status run no
+ *     table query; meta and machines come from memory;
+ *   • a machine's row is written only when something about it changed, or
+ *     its last_seen is SEEN_FLUSH_MS old in storage.
+ * An idle minute across every machine reads and writes no rows. `usage` in
+ * /v1/status is the instance's own tally; `sync_check` holds it to that.
  */
 import { DurableObject } from "cloudflare:workers";
 
@@ -137,8 +152,34 @@ function blobKey(sha: string): string {
 
 // ── The Durable Object ────────────────────────────────────────────────────────
 
+/** A machine's row as kept in memory; `stored` is the last_seen written to storage. */
+type Machine = {
+  id: string; name: string; role: string; version: string;
+  first_seen: number; last_seen: number; last_pull_seq: number;
+  pushed: number; conflicts: number; stored: number;
+};
+
+/**
+ * last_seen is written at most this often when nothing else about a machine
+ * changed: an idle pull then reads and writes no rows at all. Status reads
+ * the exact time from memory, so only a DO restart can show it this stale.
+ */
+const SEEN_FLUSH_MS = 5 * 60 * 1000;
+
 export class SyncHub extends DurableObject<Env> {
   private sql: SqlStorage;
+  /**
+   * Write-through copies of `meta`, `machine` and `tbl_stat`, loaded once per instance.
+   * Storage stays the truth (every change is written before it's answered,
+   * except last_seen, see SEEN_FLUSH_MS); these only spare the reads. One
+   * instance serves every request, so nothing else can make them stale.
+   */
+  private metaCache = new Map<string, string>();
+  private machines = new Map<string, Machine>();
+  private stats = new Map<string, { tbl: string; op: string; n: number; last: number }>();
+  /** Rows this instance read and wrote, since `usageSince` (status shows it). */
+  private usage = { rowsRead: 0, rowsWritten: 0, calls: 0 };
+  private usageSince = Date.now();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -163,16 +204,75 @@ export class SyncHub extends DurableObject<Env> {
         sha TEXT PRIMARY KEY, bytes INTEGER NOT NULL, kind TEXT, name TEXT,
         origin TEXT, created INTEGER NOT NULL, home_acked INTEGER DEFAULT 0
       );
+      CREATE INDEX IF NOT EXISTS idx_blob_acked ON blob(home_acked, created);
+      CREATE TABLE IF NOT EXISTS tbl_stat (
+        tbl TEXT NOT NULL, op TEXT NOT NULL, n INTEGER NOT NULL, last INTEGER NOT NULL,
+        PRIMARY KEY (tbl, op)
+      );
     `);
+    for (const r of this.run("SELECT k, v FROM meta")) this.metaCache.set(String(r.k), String(r.v));
+    for (const r of this.run("SELECT * FROM machine")) {
+      const m = {
+        id: String(r.id), name: String(r.name ?? r.id), role: String(r.role ?? ""),
+        version: String(r.version ?? ""), first_seen: Number(r.first_seen ?? 0),
+        last_seen: Number(r.last_seen ?? 0), last_pull_seq: Number(r.last_pull_seq ?? 0),
+        pushed: Number(r.pushed ?? 0), conflicts: Number(r.conflicts ?? 0), stored: 0,
+      };
+      m.stored = m.last_seen;
+      this.machines.set(m.id, m);
+    }
+    this.buildStats();
+    for (const r of this.run("SELECT tbl, op, n, last FROM tbl_stat")) {
+      this.stats.set(`${r.tbl}\u0000${r.op}`,
+        { tbl: String(r.tbl), op: String(r.op), n: Number(r.n), last: Number(r.last) });
+    }
+  }
+
+  /** Every query goes through here, so `usage` is the bill. */
+  private run(query: string, ...args: SqlStorageValue[]): Record<string, SqlStorageValue>[] {
+    const cur = this.sql.exec(query, ...args);
+    const rows = cur.toArray();
+    this.usage.rowsRead += cur.rowsRead;
+    this.usage.rowsWritten += cur.rowsWritten;
+    return rows;
+  }
+
+  private written(query: string, ...args: SqlStorageValue[]): number {
+    const cur = this.sql.exec(query, ...args);
+    cur.toArray();
+    this.usage.rowsRead += cur.rowsRead;
+    this.usage.rowsWritten += cur.rowsWritten;
+    return cur.rowsWritten;
+  }
+
+  /** The kept counts, built from the tables once (a hub that predates them). */
+  private buildStats(): void {
+    if (this.meta("stats") === "1") return;
+    this.ctx.storage.transactionSync(() => {
+      this.run("DELETE FROM tbl_stat");
+      this.run(`INSERT INTO tbl_stat (tbl, op, n, last)
+                SELECT tbl, op, COUNT(*), MAX(seq) FROM row_state GROUP BY tbl, op`);
+      const b = this.run(`SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS bytes,
+                            COALESCE(SUM(home_acked = 0), 0) AS unacked FROM blob`)[0];
+      this.setMeta("blobs", String(b?.n ?? 0));
+      this.setMeta("blobBytes", String(b?.bytes ?? 0));
+      this.setMeta("blobsUnacked", String(b?.unacked ?? 0));
+      this.setMeta("stats", "1");
+    });
   }
 
   private meta(k: string): string | null {
-    const row = this.sql.exec("SELECT v FROM meta WHERE k = ?", k).toArray()[0];
-    return row ? String(row.v) : null;
+    return this.metaCache.get(k) ?? null;
   }
 
   private setMeta(k: string, v: string): void {
-    this.sql.exec("INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", k, v);
+    if (this.metaCache.get(k) === v) return;
+    this.run("INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v", k, v);
+    this.metaCache.set(k, v);
+  }
+
+  private bump(k: string, delta: number): void {
+    if (delta) this.setMeta(k, String(Number(this.meta(k) ?? "0") + delta));
   }
 
   /** Random at birth. A pit whose cursor was for another epoch starts over. */
@@ -191,27 +291,45 @@ export class SyncHub extends DurableObject<Env> {
     return Number(this.meta("seq") ?? "0");
   }
 
-  private seen(machine: string, name: string, role: Role, version: string, patch: Partial<{ pull: number; pushed: number; conflicts: number }> = {}): void {
+  /**
+   * Note a machine's visit. Written only when something about it changed
+   * (name, version, pull position, pushes), or last_seen is SEEN_FLUSH_MS
+   * old in storage: one statement, usually none.
+   */
+  private seen(id: string, name: string, role: Role, version: string, patch: Partial<{ pull: number; pushed: number; conflicts: number }> = {}): void {
+    this.usage.calls++;
     const now = Date.now();
-    this.sql.exec(
-      `INSERT INTO machine (id, name, role, version, first_seen, last_seen)
-       VALUES (?, ?, ?, ?, ?, ?)
+    let m = this.machines.get(id);
+    const fresh = !m;
+    if (!m) {
+      m = { id, name, role, version, first_seen: now, last_seen: now, last_pull_seq: 0,
+            pushed: 0, conflicts: 0, stored: 0 };
+      this.machines.set(id, m);
+    }
+    const changed = fresh || m.name !== name || m.role !== role || m.version !== version
+      || (patch.pull !== undefined && patch.pull !== m.last_pull_seq)
+      || Boolean(patch.pushed) || Boolean(patch.conflicts);
+    m.name = name; m.role = role; m.version = version; m.last_seen = now;
+    if (patch.pull !== undefined) m.last_pull_seq = patch.pull;
+    m.pushed += patch.pushed ?? 0;
+    m.conflicts += patch.conflicts ?? 0;
+    if (!changed && now - m.stored < SEEN_FLUSH_MS) return;
+    this.run(
+      `INSERT INTO machine (id, name, role, version, first_seen, last_seen, last_pull_seq, pushed, conflicts)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name = excluded.name, role = excluded.role,
-         version = excluded.version, last_seen = excluded.last_seen`,
-      machine, name, role, version, now, now);
-    if (patch.pull !== undefined) {
-      this.sql.exec("UPDATE machine SET last_pull_seq = ? WHERE id = ?", patch.pull, machine);
-    }
-    if (patch.pushed || patch.conflicts) {
-      this.sql.exec("UPDATE machine SET pushed = pushed + ?, conflicts = conflicts + ? WHERE id = ?",
-        patch.pushed ?? 0, patch.conflicts ?? 0, machine);
-    }
+         version = excluded.version, last_seen = excluded.last_seen,
+         last_pull_seq = excluded.last_pull_seq, pushed = excluded.pushed,
+         conflicts = excluded.conflicts`,
+      m.id, m.name, m.role, m.version, m.first_seen, m.last_seen, m.last_pull_seq,
+      m.pushed, m.conflicts);
+    m.stored = now;
   }
 
   private row(tbl: string, uid: string): StoredRow | null {
-    const r = this.sql.exec(
+    const r = this.run(
       "SELECT seq, tbl, uid, op, data, origin, at FROM row_state WHERE tbl = ? AND uid = ?", tbl, uid,
-    ).toArray()[0];
+    )[0];
     return r ? decode(r) : null;
   }
 
@@ -223,6 +341,15 @@ export class SyncHub extends DurableObject<Env> {
     const results: PushResult[] = [];
     let pushed = 0;
     let conflicts = 0;
+    // Count changes per (tbl, op) here and write each once at the end.
+    const deltas = new Map<string, { tbl: string; op: string; n: number; last: number }>();
+    const count = (tbl: string, op: string, n: number, last: number) => {
+      const k = `${tbl}\u0000${op}`;
+      const d = deltas.get(k) ?? { tbl, op, n: 0, last: 0 };
+      d.n += n;
+      d.last = Math.max(d.last, last);
+      deltas.set(k, d);
+    };
 
     for (const c of changes.slice(0, MAX_CHANGES_PER_PUSH)) {
       const bad = invalid(c);
@@ -242,13 +369,25 @@ export class SyncHub extends DurableObject<Env> {
       }
       seq += 1;
       const data = c.op === "delete" ? null : JSON.stringify(c.data ?? {});
-      this.sql.exec(
+      this.run(
         `INSERT INTO row_state (tbl, uid, seq, op, data, origin, at) VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(tbl, uid) DO UPDATE SET seq = excluded.seq, op = excluded.op,
            data = excluded.data, origin = excluded.origin, at = excluded.at`,
         c.tbl, c.uid, seq, c.op, data, machine, Date.now());
+      if (cur) count(cur.tbl, cur.op, -1, 0);
+      count(c.tbl, c.op, 1, seq);
       results.push({ tbl: c.tbl, uid: c.uid, status: "ok", seq });
       pushed++;
+    }
+    for (const d of deltas.values()) {
+      if (!d.n && !d.last) continue;      // only ever decremented to zero
+      this.run(
+        `INSERT INTO tbl_stat (tbl, op, n, last) VALUES (?, ?, ?, ?)
+         ON CONFLICT(tbl, op) DO UPDATE SET n = n + excluded.n, last = MAX(last, excluded.last)`,
+        d.tbl, d.op, d.n, d.last);
+      const k = `${d.tbl}\u0000${d.op}`;
+      const s = this.stats.get(k) ?? { tbl: d.tbl, op: d.op, n: 0, last: 0 };
+      this.stats.set(k, { ...s, n: s.n + d.n, last: Math.max(s.last, d.last) });
     }
     this.setMeta("seq", String(seq));
     this.seen(machine, name, role, version, { pushed, conflicts });
@@ -259,10 +398,11 @@ export class SyncHub extends DurableObject<Env> {
     const epoch = this.epoch();
     const head = this.head();
     const n = Math.max(1, Math.min(MAX_PAGE, limit));
-    const rows = this.sql.exec(
+    // Up to date (the usual answer): no query at all.
+    const rows = since >= head ? [] : this.run(
       "SELECT seq, tbl, uid, op, data, origin, at FROM row_state WHERE seq > ? ORDER BY seq LIMIT ?",
       since, n + 1,
-    ).toArray().map(decode);
+    ).map(decode);
     const more = rows.length > n;
     const page = rows.slice(0, n);
     const reached = page.length ? page[page.length - 1].seq : since;
@@ -271,50 +411,88 @@ export class SyncHub extends DurableObject<Env> {
   }
 
   async registerBlob(info: Omit<BlobInfo, "created" | "home_acked">): Promise<void> {
-    this.sql.exec(
+    const wrote = this.written(
       `INSERT INTO blob (sha, bytes, kind, name, origin, created) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(sha) DO NOTHING`,
       info.sha, info.bytes, info.kind, info.name, info.origin, Date.now());
+    if (wrote > 0) {
+      this.bump("blobs", 1);
+      this.bump("blobBytes", info.bytes);
+      this.bump("blobsUnacked", 1);
+    }
+  }
+
+  private blobRow(sha: string): { bytes: number; home_acked: number } | null {
+    const r = this.run("SELECT bytes, home_acked FROM blob WHERE sha = ?", sha)[0];
+    return r ? { bytes: Number(r.bytes), home_acked: Number(r.home_acked) } : null;
   }
 
   async blobs(unackedOnly: boolean, limit: number): Promise<BlobInfo[]> {
+    const n = Math.max(1, Math.min(MAX_PAGE, limit));
+    // Nothing waiting for home (the usual answer): no query at all.
+    if (unackedOnly && Number(this.meta("blobsUnacked") ?? "0") <= 0) return [];
     const where = unackedOnly ? "WHERE home_acked = 0" : "";
-    return this.sql.exec(
+    return this.run(
       `SELECT sha, bytes, kind, name, origin, created, home_acked FROM blob ${where} ORDER BY created LIMIT ?`,
-      Math.max(1, Math.min(MAX_PAGE, limit)),
-    ).toArray() as unknown as BlobInfo[];
+      n,
+    ) as unknown as BlobInfo[];
   }
 
   async hasBlob(sha: string): Promise<boolean> {
-    return this.sql.exec("SELECT 1 FROM blob WHERE sha = ?", sha).toArray().length > 0;
+    return this.run("SELECT 1 FROM blob WHERE sha = ?", sha).length > 0;
   }
 
   async ackBlob(sha: string): Promise<boolean> {
-    const c = this.sql.exec("UPDATE blob SET home_acked = ? WHERE sha = ?", Date.now(), sha);
-    return c.rowsWritten > 0;
+    const before = this.blobRow(sha);
+    if (!before) return false;
+    this.run("UPDATE blob SET home_acked = ? WHERE sha = ?", Date.now(), sha);
+    if (!before.home_acked) this.bump("blobsUnacked", -1);
+    return true;
   }
 
   async forgetBlob(sha: string): Promise<void> {
-    this.sql.exec("DELETE FROM blob WHERE sha = ?", sha);
+    const before = this.blobRow(sha);
+    if (!before) return;
+    this.run("DELETE FROM blob WHERE sha = ?", sha);
+    this.bump("blobs", -1);
+    this.bump("blobBytes", -before.bytes);
+    if (!before.home_acked) this.bump("blobsUnacked", -1);
   }
 
   /** A machine retired or a test run: off every pit's Telemetry list. Its rows stay. */
   async forgetMachine(id: string): Promise<boolean> {
-    return this.sql.exec("DELETE FROM machine WHERE id = ?", id).rowsWritten > 0;
+    const gone = this.written("DELETE FROM machine WHERE id = ?", id) > 0;
+    return this.machines.delete(id) || gone;
   }
 
+  /** From memory: no rows read, however big the hub gets. */
   async status(): Promise<Record<string, unknown>> {
-    const one = (q: string) => Number(this.sql.exec(q).toArray()[0]?.n ?? 0);
+    const stats = [...this.stats.values()].filter((s) => s.n > 0)
+      .sort((a, b) => a.tbl.localeCompare(b.tbl));
+    const ops = (op: string) => stats.filter((s) => s.op === op).reduce((a, s) => a + Number(s.n), 0);
+    const tables = new Map<string, { tbl: string; n: number; last: number }>();
+    for (const s of stats) {
+      const t = tables.get(String(s.tbl)) ?? { tbl: String(s.tbl), n: 0, last: 0 };
+      t.n += Number(s.n);
+      t.last = Math.max(t.last, Number(s.last));
+      tables.set(t.tbl, t);
+    }
+    const num = (k: string) => Number(this.meta(k) ?? "0");
+    const machines = [...this.machines.values()]
+      .sort((a, b) => b.last_seen - a.last_seen)
+      .map(({ stored: _stored, ...m }) => m);
     return {
       epoch: this.epoch(),
       head: this.head(),
-      rows: one("SELECT COUNT(*) AS n FROM row_state WHERE op = 'upsert'"),
-      tombstones: one("SELECT COUNT(*) AS n FROM row_state WHERE op = 'delete'"),
-      blobs: one("SELECT COUNT(*) AS n FROM blob"),
-      blobBytes: one("SELECT COALESCE(SUM(bytes), 0) AS n FROM blob"),
-      blobsUnacked: one("SELECT COUNT(*) AS n FROM blob WHERE home_acked = 0"),
-      tables: this.sql.exec("SELECT tbl, COUNT(*) AS n, MAX(seq) AS last FROM row_state GROUP BY tbl ORDER BY tbl").toArray(),
-      machines: this.sql.exec("SELECT * FROM machine ORDER BY last_seen DESC").toArray(),
+      rows: ops("upsert"),
+      tombstones: ops("delete"),
+      blobs: num("blobs"),
+      blobBytes: num("blobBytes"),
+      blobsUnacked: num("blobsUnacked"),
+      tables: [...tables.values()],
+      machines,
+      // This instance's bill (a DO restarts when idle, so it's a sample, not the day).
+      usage: { since: this.usageSince, ...this.usage },
     };
   }
 }

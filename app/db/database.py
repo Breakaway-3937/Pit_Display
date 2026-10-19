@@ -172,6 +172,13 @@ class _Database:
 db: _Database = LazyProxy("db", "init_db")  # type: ignore[assignment]
 
 
+def default_path() -> Path:
+    """Where the database lives, for code that runs before `init_db()` (the
+    update guard pushes a rollback report before Qt starts). Resolved now,
+    not at import, so it follows `PIT_DISPLAY_DATA` as `paths` does."""
+    return paths.data("data", "pit_display.db")
+
+
 def init_db(path: Path | str | None = None) -> _Database:
     """
     Call once in main(), after init_config().

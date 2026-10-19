@@ -42,6 +42,7 @@ from app.widgets.helpers import clear_layout, divider, label
 from app.widgets.led_panel import LEDPanel
 from app.widgets.music_panel import MusicPanel
 from app.widgets.analysis_panel import AnalysisPanel
+from app.widgets.ask_panel import AskPanel
 from app.widgets.battery_panel import BatteryPanel
 from app.widgets.diagnostics_panel import DiagnosticsPanel
 from app.widgets.network_panel import NetworkPanel
@@ -58,7 +59,7 @@ from app.webcast import settings as webcast_settings
 # the pit owns, so they get their own sidebar group and their own panels.
 # Robot Logs is not its own entry any more: it is a section of Telemetry,
 # which is the home of every kind of telemetry the pit has — robot and link.
-SYSTEMS = ["leds", "music", "batteries", "network", "analysis", "nexus", "wording",
+SYSTEMS = ["leds", "music", "batteries", "network", "analysis", "ask", "nexus", "wording",
            "diagnostics", "updates"]
 
 # A window kept alive only for the pit network is laid out and painted but
@@ -68,7 +69,7 @@ SYSTEMS = ["leds", "music", "batteries", "network", "analysis", "nexus", "wordin
 _NO_SCREEN = Qt.WidgetAttribute.WA_DontShowOnScreen
 SYSTEM_LABELS = {"leds": "LED Strips", "music": "Music", "batteries": "Batteries",
                  "network": "Telemetry", "robot": "Robot Logs", "analysis": "Analysis",
-                 "nexus": "Event Feed", "wording": "Screen Wording",
+                 "ask": "Ask the Pit", "nexus": "Event Feed", "wording": "Screen Wording",
                  "diagnostics": "Diagnostics", "updates": "Software Updates"}
 
 # One muted line under each panel's title — where the thing physically is and
@@ -1331,6 +1332,8 @@ class SystemSettingsPanel(QWidget):
                    "own logs. Where to look first when a screen is wrong.",
         "analysis": "A local model reads each robot log and writes the crew a "
                     "board. Rate what it found: the ratings are how it gets better.",
+        "ask": "Ask about the robot's logs in plain words: the local model looks it "
+               "up and every figure it gives is checked against the logs.",
         "robot": "Import telemetry exported off the robot, and name the CAN "
                  "ids so every screen can say “Front-Left Drive” instead of "
                  "“TalonFX 11”.",
@@ -1361,7 +1364,7 @@ class SystemSettingsPanel(QWidget):
 
         self.body = {"leds": LEDPanel, "music": MusicPanel, "batteries": BatteryPanel,
                      "network": NetworkPanel, "robot": RobotLogPanel,
-                     "analysis": AnalysisPanel,
+                     "analysis": AnalysisPanel, "ask": AskPanel,
                      "nexus": NexusPanel, "wording": WordingPanel,
                      "diagnostics": DiagnosticsPanel,
                      "updates": UpdatePanel}[system_id]()

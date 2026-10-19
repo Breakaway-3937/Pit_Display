@@ -224,7 +224,9 @@ def record(kind: str, summary: str, *, severity: str = "error", detail: str = ""
                 _bump_state("throttled")
                 return None
         stamp = datetime.now()
-        eid = f"{stamp:%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:8]}"
+        # Milliseconds lead the suffix, so ids sort in time order within a
+        # second (the panel's newest-first list, the push order).
+        eid = f"{stamp:%Y%m%d-%H%M%S}-{stamp.microsecond // 1000:03d}{uuid.uuid4().hex[:5]}"
         event = {
             "schema": SCHEMA, "id": eid, "kind": kind, "severity": severity,
             "summary": scrub(str(summary))[:300],
@@ -427,7 +429,7 @@ def beat(**extra) -> None:
     then says roughly when the app died, not just that it did."""
     if _session is None:
         return
-    _session.update(beat=now_iso(), **extra)
+    _session.update(beat=now_iso(), beat_ts=time.time(), **extra)
     _write_json(root() / "session.json", _session)
 
 

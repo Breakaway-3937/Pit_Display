@@ -173,6 +173,39 @@ def _has_fault(call: Call) -> bool:
     return False
 
 
+def covered(a: dict, text: str) -> bool:
+    """Is detector item `a` named in a finding's (normalized) `text`? By its
+    device, its type and CAN id, or, for a bus-wide one, any device it lists."""
+    names = [a.get("device") or ""] + list(a.get("devices") or [])
+    if a.get("device_type") is not None:
+        names.append(f"{a['device_type']} {a['can_id']}")
+    return any(_norm(n) and _norm(n) in text for n in names)
+
+
+def _finding_text(f: dict) -> str:
+    return _norm(" ".join([f.get("claim", ""), (f.get("metric") or {}).get("name", ""),
+                           f.get("id", "")]))
+
+
+def wear_items(ledger: Ledger) -> list[dict]:
+    return [a for c in ledger.calls if c.tool in ("anomalies", "wear")
+            for a in (c.result.get("anomalies") or c.result.get("warnings") or [])
+            if a.get("kind") == "wear"]
+
+
+def about_wear(f: dict, a: dict) -> bool:
+    """Does finding `f` carry wear warning `a`: names its motor(s) and is about
+    wear (its figure, or the word, or the measure), not merely another
+    finding on the same motor."""
+    text = _finding_text(f)
+    if not covered(a, text):
+        return False
+    value = (f.get("metric") or {}).get("value")
+    return ("wear" in text or _norm(str(a.get("measure", ""))) in text
+            or (isinstance(value, (int, float)) and isinstance(a.get("value"), (int, float))
+                and equal(float(value), float(a["value"]))))
+
+
 def anomaly_coverage(insights: dict, ledger: Ledger) -> list[str]:
     """
     The detector finds, the model explains: every fault the `anomalies` tool
@@ -188,12 +221,19 @@ def anomaly_coverage(insights: dict, ledger: Ledger) -> list[str]:
         if c.tool != "anomalies":
             continue
         for a in c.result.get("anomalies") or []:
+            if a.get("kind") == "wear":
+                # Wear goes on the board too (Brayden, 2026-10-18), as a warning.
+                if not any(about_wear(f, a) for f in insights.get("findings") or []):
+                    problems.append(
+                        f"the detector flagged {a.get('device')} as wearing "
+                        f"({a.get('measure')}: {str(a.get('detail', ''))[:120]}) and no finding "
+                        f"covers it: add one, severity warn, metric {a.get('value')} with "
+                        f"compare_to {(a.get('normal') or {}).get('median')}, citing "
+                        f"{{\"tool\": \"anomalies\", \"args\": {{\"session_uid\": ...}}}}")
+                continue
             if a.get("severity") != "fault":
                 continue
-            names = [a.get("device") or ""]
-            if a.get("device_type") is not None:
-                names.append(f"{a['device_type']} {a['can_id']}")
-            if not any(_norm(n) and _norm(n) in text for n in names):
+            if not covered(a, text):
                 problems.append(
                     f"the detector flagged {a.get('device')} ({a.get('kind')}: "
                     f"{str(a.get('detail', ''))[:120]}) and no finding covers it: add one, "
@@ -348,6 +388,22 @@ def chart_options(insights: dict, ledger: Ledger | None = None,
             if ev.get("tool") == "compare_sessions" and a.get("signal"):
                 add("sessions", {"session_uids": a.get("session_uids") or [],
                                  "signal": a["signal"]}, fid)
+            # A wear finding: the motor's measure across its logs (a sessions
+            # chart over the wear tool's trend; one device, so never a bus group).
+            if ev.get("tool") in ("anomalies", "wear") and ledger is not None:
+                text = _norm(" ".join([f.get("claim", ""), fid,
+                                       (f.get("metric") or {}).get("name", "")]))
+                for call in ledger.calls:
+                    if call.tool not in ("anomalies", "wear"):
+                        continue
+                    items = call.result.get("anomalies") or call.result.get("warnings") or []
+                    for w in items:
+                        if (w.get("kind") != "wear" or w.get("device_type") is None
+                                or not covered(w, text) or len(w.get("trend") or []) < 2):
+                            continue
+                        add("sessions", {"session_uids": [p["session_uid"] for p in w["trend"]],
+                                         "signal": w["signal"], "device_type": w["device_type"],
+                                         "can_id": w["can_id"]}, fid)
     return out
 
 
@@ -375,9 +431,12 @@ def check_charts(board: dict, options: list[dict], session_uids: list[str]) -> l
         if kind == "sessions" and not any(
                 o["signal"] == src.get("signal")
                 and sorted(o["session_uids"]) == sorted(src.get("session_uids") or [])
+                and o.get("device_type") == src.get("device_type")
+                and o.get("can_id") == src.get("can_id")
                 for o in compared):
-            problems.append(f"{at}: sessions charts need a compare_sessions call in the "
-                            f"findings with the same sessions and signal")
+            problems.append(f"{at}: sessions charts need a compare_sessions call (or a wear "
+                            f"finding) in the findings with the same sessions and signal; "
+                            f"pick from the chart options")
         data = c.get("data") or {}
         if not problems and not (data.get("points") or data.get("bars") or data.get("sessions")):
             problems.append(f"{at}: no data for {src.get('signal')!r} "

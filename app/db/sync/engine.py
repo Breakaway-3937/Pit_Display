@@ -58,6 +58,10 @@ MANIFEST_PACK_AT = 200_000
 # size it's skipped. The 3.85 GB Phoenix export compresses to ~110 MB.
 RAW_MAX_BYTES = 512 * 1024 * 1024
 WAITING_FOR_FILES = ("bundle", "download")
+# The machine list (Telemetry) is asked for at most this often, not every
+# cycle: the hub's free plan counts rows read, and every pit and home asking
+# each minute spent 90% of a day's budget by midday (2026-10-18).
+STATUS_EVERY_S = 600
 
 
 @dataclass
@@ -108,6 +112,9 @@ class Engine:
         self.force_files = False
         # Blobs the hub was seen to hold this session (no need to ask again).
         self._present: set[str] = set()
+        self._machines: list[dict] = []
+        self._machines_at = 0.0         # monotonic; 0 = never asked
+        self._blobs_at = 0.0            # the last full blob listing, for origins
 
     def _files_open(self) -> bool:
         return self.force_files or transfer.is_open()
@@ -226,7 +233,10 @@ class Engine:
         return rep
 
     def _status(self, conn, rep: Report) -> None:
-        rep.machines = list(self.client.status().get("machines", []))
+        if not self._machines_at or time.monotonic() - self._machines_at >= STATUS_EVERY_S:
+            self._machines = list(self.client.status().get("machines", []))
+            self._machines_at = time.monotonic()
+        rep.machines = self._machines
 
     def _origins(self, conn, rep: Report) -> None:
         """Name the machine each pulled session was imported on.
@@ -242,7 +252,11 @@ class Engine:
                WHERE ls.source_file LIKE 'sync:%' AND ls.origin IS NULL
                  AND b.bundle_sha IS NOT NULL""").fetchall()
         changed = 0
-        if missing:
+        # A bundle home already evicted is never listed again: ask at most
+        # every STATUS_EVERY_S, not each cycle forever (the listing reads every blob).
+        if missing and (not self._blobs_at
+                        or time.monotonic() - self._blobs_at >= STATUS_EVERY_S):
+            self._blobs_at = time.monotonic()
             by_sha = {b["sha"]: b.get("origin") for b in self.client.blobs()}
             for sid, sha in missing:
                 if by_sha.get(sha):

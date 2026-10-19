@@ -99,7 +99,30 @@ has data in it, or not at all.
 Durable Object storage bills a row per write, 100,000 a day across the
 account (the Nexus relay shares it). A push writes one row per change plus the
 machine's row; a pull writes the machine's row. Sixty-second cycles on five
-machines is ~15,000 a day at rest. R2's free tier is 10 GB with no egress
+machines is ~15,000 a day at rest.
+
+**Rows read: 5,000,000 a day, and a row scanned counts.** `/v1/status` once
+counted `row_state` and `blob` from scratch, ~3,200 rows a call at 866 rows
+and 202 files, and every pit and home called it each minute: 90% of the day
+by midday (2026-10-18). Now:
+
+* counts are kept as they change (`tbl_stat`, blob counters in `meta`; built
+  once from the tables on the first start after an upgrade), one write per
+  (table, op) per push;
+* `meta`, `machine` and `tbl_stat` are cached in the instance, written
+  through, so status, an up-to-date pull and home's "anything unacked?"
+  run no query at all;
+* a machine's row is written only when something about it changed, or its
+  `last_seen` is 5 minutes old in storage (status reads the exact time from
+  memory);
+* a pit asks for status at most every 10 minutes (`engine.STATUS_EVERY_S`).
+
+**An idle minute across every machine reads and writes no rows.** Work
+costs what it moves: a pull reads the rows it returns (index range from the
+cursor), a push a key lookup and a write per change. `/v1/status` carries
+`usage`, the instance's own rows read/written since it started (a DO sleeps
+when idle, so it's a sample). `sync_check` holds the kept counts to a
+recount and an idle round to zero rows. **No request path may scan a table.** R2's free tier is 10 GB with no egress
 fees. Everything is zstd'd before it's sent: log bundles are ~1-3 MB each
 (the 3.85 GB test log is 2.98 MB), the CAD model 58 MB, raw logs (off by
 default) up to 512 MB compressed. The home agent deletes raw blobs from R2
@@ -107,7 +130,8 @@ once it has archived them.
 
 ## Rules
 
-* Everything in storage, nothing in class fields, no timers (same as the relay).
+* Everything in storage, no timers. Class fields only cache what storage holds,
+  written through and reloaded on start (`meta`, `machine`, `tbl_stat`).
 * The SQL API is synchronous: keep `push()` free of `await`, so two pushes
   can't interleave between the conflict check and the write.
 * Never edit a deployed migration tag in `wrangler.jsonc`; add one.

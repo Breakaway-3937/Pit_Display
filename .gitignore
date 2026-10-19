@@ -62,6 +62,8 @@ models/
 llama.log
 mcp.log
 ai.json
+# Ask the pit's answers (app/ai/service.py), for judging the prompt
+ask_log.jsonl
 
 # tools/validate.py: check logs and the --app test install, rebuilt each run
 .validation/
@@ -86,3 +88,6 @@ music/
 assets/judges_slides/
 assets/cad/*
 !assets/cad/subsystems.json
+
+# tools/cad_optimize.py installs its pinned Node packages here
+tools/cad_optimize/node_modules/

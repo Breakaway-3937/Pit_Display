@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import shutil
 import tempfile
 import time
 from datetime import datetime
@@ -207,6 +208,117 @@ def sessions() -> None:
     spool.begin_session()
 
 
+def firewall() -> None:
+    print("Windows Firewall (the pit-network screens)")
+    from app.diagnostics.checks import FAIL, PASS, judge_firewall
+    new = "c:\\users\\x\\appdata\\local\\breakaway pit display\\versions\\0.2.1-beta.9\\breakaway pit display.exe"
+    old = new.replace("beta.9", "beta.8")
+    lan = {"alias": "Ethernet", "category": "Public"}
+    rule = lambda prog, action, profile="Private, Public": {
+        "program": prog, "name": "Breakaway Pit Display", "enabled": "True",
+        "dir": "Inbound", "action": action, "profile": profile}
+    st, d = judge_firewall({"app": [rule(new, "Block")], "networks": [lan]}, {new}, 3938)
+    check("a dismissed prompt's Block rule fails, with the fix", st == FAIL
+          and "New-NetFirewallRule" in d and "3938,3939" in d, d)
+    st, d = judge_firewall({"app": [rule(old, "Allow")], "networks": [lan]}, {new}, 3938)
+    check("no Allow for this build is a note, never a false alarm (beta.9's screens worked)",
+          st == PASS and "no Allow rule found" in d and "beta.8" in d, d)
+    st, d = judge_firewall({"app": [rule(new, "Block")], "networks": [lan],
+                            "profiles": [{"name": "Public", "enabled": "False"}]}, {new}, 3938)
+    check("a Block rule on a network whose firewall is off doesn't fail", st == PASS, d)
+    port = {"name": "Breakaway Pit Display screens", "enabled": "True", "dir": "Inbound",
+            "action": "Allow", "profile": "Private, Public"}
+    st, d = judge_firewall({"app": [], "port": [port], "networks": [lan]}, {new}, 3938)
+    check("a port rule covers every build", st == PASS, d)
+    st, d = judge_firewall({"app": [rule(new, "Allow", "Any")], "networks": [lan]}, {new}, 3938)
+    check("this build allowed on Any passes", st == PASS, d)
+
+
+def update_guard() -> None:
+    print("Update guard (automatic rollback)")
+    from app.update import guard, install
+    now = time.time()
+    died = lambda v, lived: {"version": v, "started": "t", "started_ts": now - lived,
+                             "beat_ts": now}
+    disk = {"0.9", "1.0"}
+    v, ch = guard.decide({"current": "1.0", "previous": "0.9"}, "1.0", died("1.0", 30), disk)
+    check("one short-lived crash is a strike, not a rollback",
+          v == "stay" and ch["trial"]["failures"] == 1, ch)
+    p = {"current": "1.0", "previous": "0.9", "trial": ch["trial"]}
+    v, ch = guard.decide(p, "1.0", died("1.0", 45), disk)
+    check("the second in a row rolls back, and marks the build bad",
+          v == "rollback" and ch["bad"] == ["1.0"] and ch["rolled_back"]["to"] == "0.9"
+          and len(ch["rolled_back"]["strikes"]) == 2, ch)
+    v, ch = guard.decide(p, "1.0", died("1.0", 3600), disk)
+    check("a crash after an hour up isn't a bad update", v == "stay"
+          and ch["trial"]["failures"] == 1, ch)
+    v, ch = guard.decide({**p, "proven_versions": ["1.0"]}, "1.0", died("1.0", 30), disk)
+    check("a proven build is never rolled back automatically", v == "stay" and ch == {})
+    v, ch = guard.decide(p, "1.0", died("0.9", 30), disk)
+    check("the previous version's crash doesn't count against this one",
+          v == "stay" and ch["trial"]["failures"] == 1)
+    v, ch = guard.decide({**p, "bad": ["0.9"]}, "1.0", died("1.0", 30), disk)
+    check("never back onto a version that already failed: stuck, reported once",
+          v == "stuck" and ch["trial"]["stuck"])
+    v2, _ = guard.decide({**p, "bad": ["0.9"], "trial": ch["trial"]}, "1.0", died("1.0", 30), disk)
+    check("…and not reported again", v2 == "stay")
+    v, ch = guard.decide({**p, "previous": "0.8"}, "1.0", died("1.0", 30), disk)
+    check("no rollback to a version no longer on disk", v == "stuck")
+
+    # The whole path against a real install tree, only the frozen-app
+    # detection and the relaunch stood in for.
+    root = Path(tempfile.mkdtemp(prefix="guard-"))
+    for ver in ("0.9", "1.0"):
+        (root / "versions" / ver).mkdir(parents=True)
+    install.write_pointer(root, current="0.9")
+    install.point_at(root, "0.9")
+    saved = (install.install_root, install.running_version, install.relaunch,
+             guard._send_home)
+    launched = []
+    try:
+        install.install_root = lambda: root
+        install.write_pointer(root, current="1.0", previous="0.9")
+        install.point_at(root, "1.0")
+        install.running_version = lambda: "1.0"
+        install.relaunch = lambda: launched.append(1) or True
+        guard._send_home = lambda timeout=4.0: None
+        _clear_spool()
+        check("first failed launch: keeps running", guard.after_launch(died("1.0", 20)) is False
+              and install.read_pointer(root)["trial"]["failures"] == 1)
+        out = guard.after_launch(died("1.0", 20))
+        pointer = install.read_pointer(root)
+        check("second: rolled back, relaunched, this launch told to exit",
+              out is True and launched == [1] and pointer["current"] == "0.9"
+              and pointer["previous"] == "1.0" and pointer["bad"] == ["1.0"]
+              and (root / "current").resolve().name == "0.9", pointer)
+        ev = [e for e in spool.recent(5) if e["kind"] == "rollback"]
+        check("the rollback is an event, fatal, naming both versions",
+              ev and ev[0]["severity"] == "fatal" and "1.0" in ev[0]["summary"]
+              and "0.9" in ev[0]["summary"], [e["kind"] for e in spool.recent(5)])
+        install.running_version = lambda: "0.9"
+        check("the updater won't offer the bad version", "1.0" in guard.bad_versions())
+        check("…and the next launch knows it was rolled back",
+              guard.last_rollback().get("from") == "1.0")
+
+        install.write_pointer(root, current="1.0", previous="0.9", bad=[], trial=None)
+        install.running_version = lambda: "1.0"
+        guard.after_launch(died("1.0", 20))
+        guard.clean_exit()
+        check("a clean exit clears the strikes", not install.read_pointer(root).get("trial"))
+        guard.note_uptime(guard.PROVEN_AFTER_S + 1)
+        check("ten minutes up proves the build",
+              "1.0" in install.read_pointer(root).get("proven_versions", []))
+        install.running_version = lambda: "0.9"
+        install.write_pointer(root, trial=None)
+        check("a version started by hand from its folder is left alone",
+              guard.after_launch(died("0.9", 5)) is False
+              and not install.read_pointer(root).get("trial"))
+    finally:
+        (install.install_root, install.running_version, install.relaunch,
+         guard._send_home) = saved
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def settings_defaults() -> None:
     print("Who reports")
     check("a checkout reports by default", diag_settings.default_on() and diag_settings.enabled())
@@ -282,6 +394,11 @@ def service_and_panel():
               for e in spool.recent(50)))
 
     snap = svc.snapshot()
+    shown = snap.get("app", {}).get("screens", {})
+    check("every screen's content is named, never null (beta.9 read as blank)",
+          len(shown) == 3 and all(r.get("content") for r in shown.values())
+          and shown["presentation_a"]["content"] == "rotation"
+          and shown["project"]["content"] == "cad", shown)
     check("the status names build, platform, process, services and checks",
           {"build", "platform", "process", "services", "checks", "session", "counts"} <= set(snap),
           sorted(snap))
@@ -429,6 +546,8 @@ def main() -> int:
     harvest_real_crash()
     sessions()
     settings_defaults()
+    firewall()
+    update_guard()
     service_and_panel()
     engine()
     print()

@@ -102,6 +102,13 @@ next release will arrive by itself.
 - **Roll back:** Software Updates → *Roll back*, or if the app won't open,
   `"…\current\Breakaway Pit Display.exe" --rollback`. The previous version
   stays on disk until it's two updates behind.
+- **Automatic rollback** (`app/update/guard.py`, builds from v0.2.1-beta.10): a
+  new build whose launches end uncleanly twice in a row, each within 10 minutes
+  of starting, goes back to the previous version by itself, reports it home
+  (diagnostics `rollback`) and starts that version. Ten minutes up proves a
+  build, and it's never rolled back automatically after that. A rolled-back
+  version isn't offered again on that machine; the next release is. Both
+  versions failing is reported (`rollback_stuck`), never a loop.
 - **Channels:** `stable` (every pit machine) takes tagged releases; `beta` also
   takes prereleases.
 - **Turn automatic checks off before an event** and back on at home.

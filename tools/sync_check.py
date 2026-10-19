@@ -666,6 +666,50 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     status = home.status()
     check("the hub lists both machines",
           {"check-a", "check-b"} <= {m["id"] for m in status.get("machines", [])})
+    # status() reads kept counts (the free plan bills rows read); they must
+    # equal a recount of everything the hub holds.
+    rows, since = [], 0
+    while True:
+        page = home.changes(since, 1000)
+        rows += page["changes"]
+        if not page.get("more"):
+            break
+        since = page["changes"][-1]["seq"]
+    per_tbl: dict[str, list[int]] = {}
+    for r in rows:
+        t = per_tbl.setdefault(r["tbl"], [0, 0])
+        t[0], t[1] = t[0] + 1, max(t[1], r["seq"])
+    blobs = home.blobs()
+    check("the hub's kept counts equal a recount",
+          status["rows"] == sum(r["op"] == "upsert" for r in rows)
+          and status["tombstones"] == sum(r["op"] == "delete" for r in rows)
+          and {t["tbl"]: [t["n"], t["last"]] for t in status["tables"]} == per_tbl
+          and status["blobs"] == len(blobs)
+          and status["blobBytes"] == sum(b["bytes"] for b in blobs)
+          and status["blobsUnacked"] == sum(not b["home_acked"] for b in blobs),
+          f"{ {k: status[k] for k in ('rows', 'tombstones', 'blobs', 'blobBytes', 'blobsUnacked')} }"
+          f" vs {len(rows)} rows, {len(blobs)} blobs")
+    # The bill of an idle minute: a pit and home pulling at the head, home
+    # asking for unacked files, a status. The free plan counts rows read and
+    # written; an idle hub spends none.
+    idle_pit = HubClient(url, pit_token, "check-idle", "idle", "check")
+
+    def idle_round() -> dict:
+        head = home.status()["head"]
+        for c in (idle_pit, home):
+            c.changes(head, 500)
+            c.changes(head, 500)
+        home._json("GET", "/v1/blobs?unacked=1&limit=500")
+        return home.status()
+
+    before = idle_round()               # the first visit writes check-idle's row
+    after = idle_round()
+    used = {k: after["usage"][k] - before["usage"][k] for k in ("rowsRead", "rowsWritten")}
+    check("an idle minute reads and writes no rows on the hub (but home's unarchived files)",
+          after["usage"]["since"] != before["usage"]["since"]     # the hub restarted: no sample
+          # Home's listing reads the files it hasn't archived; the check's home never archives.
+          or used == {"rowsRead": after["blobsUnacked"], "rowsWritten": 0},
+          f"{used}, {after['blobsUnacked']} files unacked")
     import urllib.error
     req = urllib.request.Request(url + "/v1/machine/check-b", method="DELETE", headers={
         "Authorization": f"Bearer {pit_token}", "X-Pit-Machine": "check-a"})
@@ -709,6 +753,24 @@ def diagnostics_section(a, b, home) -> None:
           rb.ok and b.one("SELECT COUNT(*) FROM sync_pending WHERE tbl LIKE 'pit_%'") == 0)
     ra = a.sync()
     check("nothing is sent twice", ra.ok and ra.pushed == 0, f"pushed {ra.pushed}")
+
+    # An automatic rollback pushes its report before relaunching: the version
+    # it starts may predate diagnostics (app/update/guard.py).
+    from app.db.sync import settings as sync_settings
+    from app.update import guard
+    with a.env():
+        sync_settings.save(url=a.url, machine_id="check-a", machine_name="check-a", enabled=True)
+        os.environ["PIT_SECRET_SYNC_TOKEN"] = a.token
+        try:
+            guard._report_rollback("9.9.9", "9.9.8", [{"lived_s": 12}, {"lived_s": 15}])
+            guard._send_home()
+            left = spool.pending()
+        finally:
+            os.environ.pop("PIT_SECRET_SYNC_TOKEN", None)
+    rows = home.changes(0, 1000)["changes"]
+    rb = [c for c in rows if c["tbl"] == "pit_event" and c["data"].get("kind") == "rollback"]
+    check("a rollback's report reaches the hub before the old version starts",
+          rb and "9.9.9" in rb[-1]["data"]["summary"] and not left, f"left {left}")
 
 
 if __name__ == "__main__":

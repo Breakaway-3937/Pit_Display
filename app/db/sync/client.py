@@ -41,6 +41,12 @@ class SyncError(Exception):
         self.status = status
 
 
+def _header(value: str) -> str:
+    """HTTP headers are latin-1: a song named with `｜` or `“` failed its upload
+    with UnicodeEncodeError (2026-10-18). The names sent are labels only."""
+    return value.encode("latin-1", "replace").decode("latin-1")
+
+
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -59,9 +65,9 @@ class HubClient:
         self.timeout = TIMEOUT_S     # JSON calls; the quit-time farewell shortens it
         self._headers = {
             "Authorization": f"Bearer {token}",
-            "X-Pit-Machine": machine_id,
-            "X-Pit-Name": machine_name,
-            "X-Pit-Version": version,
+            "X-Pit-Machine": _header(machine_id),
+            "X-Pit-Name": _header(machine_name),
+            "X-Pit-Version": _header(version),
             "User-Agent": "breakaway-pit-display",
         }
 
@@ -131,7 +137,7 @@ class HubClient:
         if self.has_blob(sha):
             return
         size = os.path.getsize(path)
-        meta = {"X-Blob-Kind": kind, "X-Blob-Name": name[:300]}
+        meta = {"X-Blob-Kind": kind, "X-Blob-Name": _header(name[:300])}
         if size <= SINGLE_PUT_MAX:
             with open(path, "rb") as f:
                 data = f.read()

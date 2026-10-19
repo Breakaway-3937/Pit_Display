@@ -31,6 +31,10 @@ comparing pit logs with matches and an enabled-but-idle robot were the noise.
 * **config_changed**: firmware version, inversion (AppliedRotorPolarity),
   attached motor type, licence differ from what the device usually reports.
 * **new_fault**: a device latched a fault it has never latched before.
+* **wear**: a motor getting worse across logs (more current for the same
+  speed, heating or faulting more than the other motors, more each log):
+  `app/robot/wear.py`'s warnings, carried here so everything that reads the
+  detector reads them too.
 
 "Earlier logs" are the same bus's (`bus_of`: the AdvantageKit logs, the Rio
 hoots, each CANivore's hoots), newest `HISTORY` of them. Thresholds are named
@@ -275,10 +279,15 @@ def find(db, session_uid: str, phases_of) -> dict[str, Any]:
                             "detail": f"first time in {len(hist_ids)} logs this device latched "
                                       f"{name.replace('StickyFault_', '')}"})
 
+    # ── wearing out across logs ─────────────────────────────────────────
+    from app.robot import wear
+    worn = wear.find(db, session_uid)
+    out += worn.get("warnings") or []
+
     order = {"fault": 0, "warn": 1}
     out.sort(key=lambda a: (order.get(a["severity"], 2), a["kind"], a["device"]))
     return {"bus": bus, "history_logs": len(hist_ids), "enabled_s": _r(enabled_s),
-            "anomalies": out,
+            "anomalies": out, "wear_note": worn.get("note"),
             "note": None if len(hist_ids) >= MIN_HISTORY else
             f"only {len(hist_ids)} earlier log(s) on this bus: history checks need "
             f"{MIN_HISTORY}; partner checks still ran"}

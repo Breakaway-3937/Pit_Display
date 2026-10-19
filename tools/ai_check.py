@@ -679,6 +679,9 @@ def _board_without(board: dict, finding_id: str) -> dict:
     return b
 
 
+_QAPP = None
+
+
 def app_section(uid: str) -> None:
     """The service and the panel, offscreen, with a scripted model and stand-in strips."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -692,7 +695,8 @@ def app_section(uid: str) -> None:
     from app.leds import leds
 
     print("\nIn the app: the service, the strips, the panel")
-    app = QApplication.instance() or QApplication([])
+    global _QAPP                        # outlives this function: ask_section reuses it
+    app = _QAPP = QApplication.instance() or QApplication([])
     init_config()
 
     class Strips:                       # records what the service asks of the LEDs
@@ -840,6 +844,231 @@ def app_section(uid: str) -> None:
     face.close()
 
 
+def ask_section(uid: str) -> None:
+    """Ask the pit (app/ai/ask.py): the loop, the figure check, the service, the panel."""
+    from app.ai import ask, tools
+    from app.ai.local import LocalToolbox
+    print("\nAsk the pit")
+    ov = tools.session_overview(uid)
+    real = next(v for v in __import__("app.ai.checks", fromlist=["numbers"]).numbers(ov)
+                if v > 1 and v != int(v))
+    shown = f"{real:.1f}"
+    tb = LocalToolbox()
+
+    llm = Scripted([[("session_overview", {"session_uid": uid})],
+                    f"In the newest log the figure was {shown}."])
+    a = ask.ask(tb, llm, "scripted", "What was it in the newest log?")
+    check("a figure a tool returned is answered, display-rounded", a.status == "answered"
+          and not a.unverified and a.calls == [{"tool": "session_overview",
+                                                "args": {"session_uid": uid}}], str(a))
+
+    llm = Scripted([[("session_overview", {"session_uid": uid})],
+                    "The motor peaked at 987.65 amps.", "It peaked at 987.65 amps."])
+    a = ask.ask(tb, llm, "scripted", "How high did it peak?")
+    check("a figure no tool returned goes back once, then is marked unverified",
+          a.status == "unverified" and a.unverified == ["987.65"] and llm.calls == 3, str(a))
+
+    llm = Scripted([[("session_overview", {"session_uid": uid})],
+                    "It peaked at 987.65 amps.", f"The logs show {shown}."])
+    a = ask.ask(tb, llm, "scripted", "How high did it peak?")
+    check("…and a corrected answer passes", a.status == "answered" and not a.unverified, str(a))
+
+    a = ask.ask(tb, Scripted(["Your question names qm14 and TalonFX 17: nothing more found."]),
+                "scripted", "Did TalonFX 17 fault in qm14?")
+    check("numbers from the question itself aren't flagged", a.status == "answered", str(a))
+
+    wrong = "The hottest motor was TalonFX 9 at 26.0 °C."
+    a = ask.ask(tb, Scripted([wrong, wrong]), "scripted", "Which motor ran hottest?")
+    check("a real figure pinned on a device no row ties it to is caught (a real run did this)",
+          a.status == "unverified" and any(u.startswith("26.0 → talonfx 9") for u in a.unverified),
+          str(a.unverified))
+    a = ask.ask(tb, Scripted([wrong, [("series_stats", {"session_uid": uid, "signal": "DeviceTemp"})],
+                              "Front-Left Drive Motor Long Name reached 26.0 °C."]),
+                "scripted", "Which motor ran hottest?")
+    check("…and sent back, it looks the device up and passes", a.status == "answered"
+          and any(c["tool"] == "series_stats" for c in a.calls), str(a))
+
+    class Broken:
+        def chat(self, *a, **k):
+            raise ConnectionError("engine went away")
+    a = ask.ask(tb, Broken(), "scripted", "Anything?")
+    check("an engine that dies is a failed answer, never an exception",
+          a.status == "failed" and "engine went away" in a.error)
+
+    # The service and the panel, offscreen, behind a running analysis.
+    from PyQt6.QtCore import QEventLoop, QTimer
+    from PyQt6.QtWidgets import QApplication
+    from app.ai.service import analysis
+    from app.widgets.ask_panel import AskPanel
+    app = _QAPP or QApplication.instance()
+    analysis._llm_factory = lambda: Scripted([[("faults", {"session_uid": uid})],
+                                              "No latched faults in the newest log."])
+    panel = AskPanel()
+    panel.resize(900, 900)
+    panel.show()
+    analysis.busy = True                # stands in for an analysis run in progress
+    panel.ask("Any faults in the newest log?")
+    check("asked while an analysis runs: it waits, ahead of queued logs",
+          analysis.questions_waiting == 1 and not analysis.asking)
+    analysis.busy = False
+    got: list = []
+    loop = QEventLoop()
+    analysis.answered.connect(got.append)
+    analysis.answered.connect(loop.quit)
+    QTimer.singleShot(30_000, loop.quit)
+    analysis._next()                    # what a finishing run does
+    loop.exec()
+    app.processEvents()
+    check("…then it's answered off the GUI thread, and the panel shows it",
+          got and got[0].status == "answered" and analysis.answers[-1] is got[0]
+          and panel._answers.count() >= 1, str(got))
+    from app import paths
+    log = paths.data("ask_log.jsonl")
+    check("every answer is logged for judging the prompt later",
+          log.exists() and "Any faults in the newest log?" in log.read_text(encoding="utf-8"))
+    panel.ask("   ")
+    check("an empty question isn't sent", "Type a question" in panel._state.text())
+    panel.close()
+
+
+def _wear_logs() -> list[str]:
+    """Nine logs on a bus of their own, eight motors running steadily at 20 rps.
+    Planted: TalonFX 41 needs 50% more current for the same speed in logs 6-8;
+    TalonFX 42 heats 8 °C more than the others in 6-8; 41, 42 and 43 fault 15
+    times more in 6-8 (a shared cause, three of eight, as on the team's
+    CANivore); every motor heats 10 °C more in log 8
+    (a hard session, robot-wide); log 9 has 41 back to normal. Returns uids."""
+    import sqlite3
+    from app.db import db
+    conn = sqlite3.connect(str(db.path))
+    conn.execute("ATTACH DATABASE ? AS samples", (str(db.samples_path),))
+    sig = {}
+    for name in ("RotorVelocity", "StatorCurrent", "DeviceTemp", "Fault_RemoteSensorDataInvalid"):
+        conn.execute("INSERT OR IGNORE INTO signal (device_type, name) VALUES ('TalonFX', ?)", (name,))
+        sig[name] = conn.execute("SELECT id FROM signal WHERE device_type = 'TalonFX' AND name = ?",
+                                 (name,)).fetchone()[0]
+    dev = {}
+    for can in range(41, 49):
+        conn.execute("INSERT OR IGNORE INTO device (device_type, can_id) VALUES ('TalonFX', ?)", (can,))
+        dev[can] = conn.execute("SELECT id FROM device WHERE device_type = 'TalonFX' AND can_id = ?",
+                                (can,)).fetchone()[0]
+    uids = []
+    for n in range(1, 10):
+        cur = conn.execute(
+            "INSERT INTO log_session (source_file, source_name, source_kind, device_serial, "
+            "started_at, duration_s, uid) VALUES (?, ?, 'hoot', 'WEARCHECK', ?, 120, ?)",
+            (f"/wear/{n}.hoot", f"WEARCHECK_{n}.hoot", f"2026-10-0{n} 12:00:00", f"wearcheck{n:02d}"))
+        sid = cur.lastrowid
+        uids.append(f"wearcheck{n:02d}")
+        recent = 6 <= n <= 8
+        for can, did in dev.items():
+            k = 0.45 if (can == 41 and recent) else 0.30
+            rise = 10.0 + (8.0 if can == 42 and recent else 0.0) + (10.0 if n == 8 else 0.0)
+            ids = {}
+            for name in ("RotorVelocity", "StatorCurrent", "DeviceTemp"):
+                lo, hi = (25.0, 25.0 + rise) if name == "DeviceTemp" else (None, None)
+                c = conn.execute("INSERT INTO series (session_id, device_id, signal_id, n_raw, "
+                                 "n_stored, v_min, v_max) VALUES (?, ?, ?, 60, 60, ?, ?)",
+                                 (sid, did, sig[name], lo, hi))
+                ids[name] = c.lastrowid
+            for t in range(60):
+                conn.execute("INSERT INTO samples.sample_1s VALUES (?, ?, 19.5, 20.5, 20.0, 50)",
+                             (ids["RotorVelocity"], t))
+                conn.execute("INSERT INTO samples.sample_1s VALUES (?, ?, ?, ?, ?, 50)",
+                             (ids["StatorCurrent"], t, k * 20 - 0.2, k * 20 + 0.2, k * 20))
+            faults = 2 + (15 if can in (41, 42, 43) and recent else 0)
+            for i in range(faults):
+                conn.execute("INSERT INTO fault_event (session_id, device_id, signal_id, sticky, "
+                             "t_ms_start) VALUES (?, ?, ?, 0, ?)",
+                             (sid, did, sig["Fault_RemoteSensorDataInvalid"], i * 1000))
+    conn.commit()
+    conn.close()
+    return uids
+
+
+def wear_section(uid: str) -> None:
+    """Wear (app/robot/wear.py) and its path through the whole analysis."""
+    from app.ai import ask, checks, pipeline, tools
+    from app.ai.local import LocalToolbox
+    print("\nWear: motors getting worse across logs")
+    logs = _wear_logs()
+    got = tools.call("wear", {"session_uid": logs[7]})
+    warn = {(w["measure"], w["device"]): w for w in got["warnings"]}
+    load = warn.get(("load_per_speed", "TalonFX 41"))
+    check("more current for the same speed on one motor is a wear warning, with the trend",
+          load is not None and load["value"] == 9.0 / 20.0 and load["normal"]["median"] == 0.3
+          and load["change_pct"] == 50 and len(load["trend"]) == 8, str(got["warnings"])[:400])
+    check("a motor heating more than the others, more each log, is one",
+          ("heat_vs_peers", "TalonFX 42") in warn, str(list(warn)))
+    group = next((w for w in got["warnings"] if w["measure"] == "faults_vs_peers"), None)
+    check("three motors faulting more at once is one warning for the bus, naming them",
+          group is not None and group["devices"] and len(group["devices"]) == 3
+          and group["device_type"] is None and "shared cause" in group["detail"], str(group))
+    check("a robot-wide hotter session flags nobody's heat but the drifting motor",
+          [d for m, d in warn if m == "heat_vs_peers"] == ["TalonFX 42"], str(list(warn)))
+    check("a wear warning is a warning, never a fault",
+          all(w["severity"] == "warn" for w in got["warnings"]))
+    later = tools.call("wear", {"session_uid": logs[8]})
+    check("once the motor's back to normal, its load warning is gone",
+          not any(w["measure"] == "load_per_speed" for w in later["warnings"]),
+          str(later["warnings"])[:300])
+    early = tools.call("wear", {"session_uid": logs[2]})
+    check("too few logs is a note, not a judgement", not early["warnings"] and early["note"])
+    an = tools.call("anomalies", {"session_uid": logs[7]})
+    check("the anomaly detector carries the wear warnings",
+          sum(a["kind"] == "wear" for a in an["anomalies"]) == len(got["warnings"]))
+
+    # Through the analysis: coverage, the detector's own findings, cards, charts.
+    ledger = checks.Ledger()
+    ledger.add("anomalies", an)
+    other = {"findings": [{"id": "talonfx_41_faults", "claim": "TalonFX 41 latched faults.",
+                           "metric": {"name": "faults", "value": 17, "unit": ""},
+                           "severity": "warn", "evidence": []}]}
+    check("a finding that only names the motor doesn't count as covering its wear",
+          any("as wearing" in p and "TalonFX 41" in p
+              for p in checks.anomaly_coverage(other, ledger)))
+    good = {"findings": [{"id": "talonfx_41_wear", "claim": "TalonFX 41 is wearing: more "
+                          "current for the same speed.", "metric": {"name": "load per speed",
+                          "value": load["value"], "unit": "A/rps", "compare_to": 0.3},
+                          "severity": "warn", "evidence": [{"tool": "anomalies",
+                          "args": {"session_uid": logs[7]}, "value": load["value"]}]}]}
+    left = checks.anomaly_coverage(good, ledger)
+    check("…a finding about its wear does", not any("TalonFX 41" in p for p in left), str(left))
+    made = pipeline._detector_findings(ledger, good)
+    check("the detector's own wear findings fill in what the model left out, as warnings "
+          "with the earlier figure to compare", made and all(f["severity"] == "warn" for f in made)
+          and all("compare_to" in f["metric"] for f in made)
+          and not any("TalonFX 41" in f["claim"] and "load" in f["id"] for f in made),
+          str([f["id"] for f in made]))
+    opts = checks.chart_options(good, ledger)
+    trend = [o for o in opts if o["source"]["signal"] == "wear:load_per_speed"]
+    check("a wear finding offers its motor's trend as a chart",
+          trend and trend[0]["kind"] == "sessions" and trend[0]["source"]["can_id"] == 41)
+    data = pipeline._chart_data(LocalToolbox(), {"kind": "sessions", "source": trend[0]["source"]})
+    check("…and code fetches that trend, log by log",
+          [round(x["max"], 2) for x in data["sessions"]] == [0.3] * 5 + [0.45] * 3, str(data)[:300])
+    board = {"vitals": [], "faults": [], "headline": {}}
+    pipeline._wear_cards(board, good, ledger)
+    pipeline.assign_status(board, good)
+    card = next((c for c in board["vitals"] if c["finding"] == "talonfx_41_wear"), None)
+    check("a wear finding the designer left off the board gets its card, amber",
+          card is not None and card["status"] == "warn" and card["value"] == "0.45"
+          and "0.3" in card.get("detail", ""), str(board["vitals"]))
+    board = {"vitals": [], "faults": [], "charts": [], "headline": {}}
+    pipeline._wear_cards(board, good, ledger, LocalToolbox())
+    drawn = [c for c in board["charts"] if c["finding"] == "talonfx_41_wear"]
+    check("…and, with room on the board, its trend chart, data fetched by code",
+          drawn and drawn[0]["kind"] == "sessions" and len(drawn[0]["data"]["sessions"]) == 8
+          and not checks.check_charts(board, checks.chart_options(good, ledger), [logs[7]]),
+          str(board["charts"])[:300])
+    prompt = pipeline._must_cover(ledger)
+    check("the analyst is told, where it writes, to cover each wear warning",
+          "wear warning" in prompt and "TalonFX 41" in prompt)
+    primer = ask._primer(LocalToolbox(), checks.Ledger(), {"uid": logs[7], "started_at":
+                         "2026-10-08 12:00", "duration_s": 120, "match_key": None})
+    check("Ask the Pit reads the wear warnings up front", '"kind": "wear"' in primer)
+
+
 def mcp_section(uid: str) -> None:
     """`main.py --mcp`, spoken to as a host would: newline-delimited JSON-RPC on stdio."""
     import subprocess
@@ -862,8 +1091,9 @@ def mcp_section(uid: str) -> None:
               init["result"]["protocolVersion"] == "2025-06-18"
               and "tools" in init["result"]["capabilities"])
         names = [t["name"] for t in rpc(2, "tools/list")["result"]["tools"]]
-        check("it lists the twelve tools and the two analysis ones",
-              len(names) == 14 and "anomalies" in names and "analysis_scoreboard" in names
+        check("it lists the thirteen tools and the two analysis ones",
+              len(names) == 15 and "anomalies" in names and "wear" in names
+              and "analysis_scoreboard" in names
               and "match_context" in names and "match_phases" in names, ", ".join(names))
         got = rpc(3, "tools/call", {"name": "faults", "arguments": {"session_uid": uid}})
         sc = got["result"]["structuredContent"]
@@ -1000,6 +1230,8 @@ def main() -> int:
     anomaly_section()
     pipeline_section(uid)
     app_section(uid)
+    ask_section(uid)
+    wear_section(uid)
     mcp_section(uid)
     if opts.model or opts.engine == "llama":
         from app.ai.pipeline import DEFAULT_QUESTION

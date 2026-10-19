@@ -75,8 +75,14 @@ def process_memory() -> tuple[int, int]:
                             ("PeakPagefileUsage", ctypes.c_size_t)]
             pmc = PMC()
             pmc.cb = ctypes.sizeof(PMC)
-            proc = ctypes.windll.kernel32.GetCurrentProcess()
-            if ctypes.windll.psapi.GetProcessMemoryInfo(proc, ctypes.byref(pmc), pmc.cb):
+            # Typed, or the pseudo-handle (-1) goes through as a 32-bit int and
+            # the call fails on 64-bit Windows (beta.9 reported 0 MB).
+            k32 = ctypes.windll.kernel32
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            k32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(PMC),
+                                                    wintypes.DWORD]
+            k32.K32GetProcessMemoryInfo.restype = wintypes.BOOL
+            if k32.K32GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb):
                 return int(pmc.WorkingSetSize), int(pmc.PeakWorkingSetSize)
             return 0, 0
         import resource
@@ -255,6 +261,133 @@ def check_webcast():
     return PASS, detail
 
 
+# ── Windows Firewall, for the pit-network screens ─────────────────────────
+#
+# The screens are reached from other machines, and Windows Firewall keys an
+# app's rule on the exe's path; the updater runs each build from its own
+# `versions\<v>\` folder. Localhost is never filtered, so a blocked build still
+# works on the machine itself. **It fails only on an explicit Block rule for
+# this build** on a network whose firewall is on (a dismissed prompt makes
+# one); a missing Allow is only noted, since a firewall that's off, or a
+# broader rule, lets the screens through without one (beta.9's screens worked
+# with no rule found). PowerShell takes a few seconds, so a thread reads the
+# rules (at most every 30 min) and the check reports the latest.
+
+_FW_EVERY_S = 30 * 60
+_fw: dict = {"data": None, "error": "", "at": 0.0, "running": False}
+
+_FW_SCRIPT = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+$name = $env:PIT_FW_EXE
+$port = $env:PIT_FW_PORT
+$app = foreach ($f in (Get-NetFirewallApplicationFilter | Where-Object { $_.Program -like "*\$name" })) {
+  foreach ($x in ($f | Get-NetFirewallRule)) {
+    [pscustomobject]@{ program = $f.Program; name = $x.DisplayName; enabled = [string]$x.Enabled;
+      dir = [string]$x.Direction; action = [string]$x.Action; profile = [string]$x.Profile } } }
+$ports = foreach ($f in (Get-NetFirewallPortFilter -Protocol TCP | Where-Object { @($_.LocalPort) -contains $port })) {
+  foreach ($x in ($f | Get-NetFirewallRule)) {
+    [pscustomobject]@{ name = $x.DisplayName; enabled = [string]$x.Enabled; dir = [string]$x.Direction;
+      action = [string]$x.Action; profile = [string]$x.Profile } } }
+$fw = foreach ($p in Get-NetFirewallProfile) {
+  [pscustomobject]@{ name = [string]$p.Name; enabled = [string]$p.Enabled } }
+$nets = foreach ($c in Get-NetConnectionProfile) {
+  [pscustomobject]@{ name = $c.Name; alias = $c.InterfaceAlias; category = [string]$c.NetworkCategory } }
+[pscustomobject]@{ app = @($app); port = @($ports); networks = @($nets); profiles = @($fw) } | ConvertTo-Json -Depth 4 -Compress
+"""
+
+FIREWALL_FIX = ('In an administrator PowerShell, once (a port rule outlives updates): '
+                'New-NetFirewallRule -DisplayName "Breakaway Pit Display screens" '
+                '-Direction Inbound -Protocol TCP -LocalPort {port},{socket} -Action Allow '
+                '-Profile Private,Public')
+
+
+def _read_firewall(port: int) -> None:
+    import json
+    import subprocess
+    try:
+        env = {**os.environ, "PIT_FW_EXE": os.path.basename(sys.executable),
+               "PIT_FW_PORT": str(port)}
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", "-"],
+            input=_FW_SCRIPT, capture_output=True, text=True, timeout=60, env=env,
+            creationflags=0x08000000)     # CREATE_NO_WINDOW: no console flashing up
+        _fw["data"] = json.loads(out.stdout or "{}")
+        _fw["error"] = "" if out.stdout else (out.stderr or "no output")[:300]
+    except Exception as e:
+        _fw["error"] = f"{type(e).__name__}: {e}"[:300]
+    finally:
+        _fw["at"] = time.time()
+        _fw["running"] = False
+
+
+def _covers(profile: str, category: str) -> bool:
+    profile = profile.lower()
+    category = {"domainauthenticated": "domain"}.get(category.lower(), category.lower())
+    return "any" in profile or category in profile
+
+
+def _as_list(v) -> list:
+    return v if isinstance(v, list) else ([] if v is None else [v])
+
+
+def judge_firewall(data: dict, mine: set[str], port: int) -> tuple[str, str]:
+    """(status, detail) from what PowerShell read. `mine`: this build's exe
+    paths, lower-cased (as launched, and through the `current` junction)."""
+    nets = _as_list(data.get("networks"))
+    inbound = lambda r: r.get("enabled") == "True" and r.get("dir") == "Inbound"
+    app = [r for r in _as_list(data.get("app")) if inbound(r)]
+    ports = [r for r in _as_list(data.get("port")) if inbound(r)]
+    ours = [r for r in app if str(r.get("program", "")).lower() in mine]
+    others = [r for r in app if r not in ours]
+    cats = sorted({n.get("category", "") for n in nets if n.get("category")}) or ["Public"]
+    norm = lambda c: {"domainauthenticated": "domain"}.get(c.lower(), c.lower())
+    off = {norm(str(p.get("name", ""))) for p in _as_list(data.get("profiles"))
+           if str(p.get("enabled")) in ("False", "0")}
+    lines = ["networks: " + (", ".join(f"{n.get('alias') or n.get('name')} ({n.get('category')})"
+                                       for n in nets) or "none connected")]
+    if off:
+        lines.append(f"firewall off for: {', '.join(sorted(off))}")
+    for r in (ours + ports + others)[:8]:
+        where = r.get("program", f"TCP {port}")
+        lines.append(f"rule '{r.get('name')}': {r.get('action')} on {r.get('profile')} for {where}")
+    guarded = [c for c in cats if norm(c) not in off]
+    blocked = [c for c in guarded if any(r.get("action") == "Block" and _covers(r.get("profile", ""), c)
+                                         for r in ours)]
+    if blocked:
+        fix = FIREWALL_FIX.format(port=port, socket=port + 1)
+        return FAIL, (f"Windows Firewall blocks this build on {', '.join(blocked)} networks "
+                      "(a dismissed firewall prompt leaves a Block rule): other machines "
+                      "can't reach the screens. Delete the Block rule(s) below, then: "
+                      + fix + "\n" + "\n".join(lines))
+    allowed = [c for c in guarded if any(r.get("action") == "Allow" and _covers(r.get("profile", ""), c)
+                                         for r in ours + ports)]
+    if [c for c in guarded if c not in allowed]:
+        lines.append("no Allow rule found for this build (fine if displays connect: a broader "
+                     "rule or a firewall that's off lets them through)")
+    return PASS, "\n".join(lines)
+
+
+def check_firewall():
+    if sys.platform != "win32":
+        return SKIP, "not Windows"
+    from app.webcast import settings as wset
+    prefs = wset.load()
+    if not prefs["enabled"] or not prefs["screens"]:
+        return SKIP, "no screens published to the pit network"
+    port = int(prefs["port"])
+    if not _fw["running"] and time.time() - _fw["at"] > _FW_EVERY_S:
+        _fw["running"] = True
+        threading.Thread(target=_read_firewall, args=(port,), name="firewall-read",
+                         daemon=True).start()
+    if _fw["data"] is None:
+        if _fw["error"]:
+            return WARN, f"couldn't read Windows Firewall's rules: {_fw['error']}"
+        return SKIP, "reading Windows Firewall's rules (a few seconds); the next run reports them"
+    exe = sys.executable
+    mine = {exe.lower(), os.path.realpath(exe).lower()}
+    return judge_firewall(_fw["data"], mine, port)
+
+
 def check_analysis():
     from app.ai.service import analysis
     return PASS, f"{analysis.describe()}, {analysis.queued} queued"
@@ -280,7 +413,8 @@ QUICK = [
     ("process", check_process), ("disk", check_disk), ("data_dir", check_data_dir),
     ("responsive", check_responsive), ("crashes", check_crashes),
     ("database", check_database), ("sync", check_sync), ("leds", check_leds),
-    ("nexus", check_nexus), ("webcast", check_webcast), ("analysis", check_analysis),
+    ("nexus", check_nexus), ("webcast", check_webcast), ("firewall", check_firewall),
+    ("analysis", check_analysis),
     ("updates", check_updates), ("qt", check_qt),
 ]
 

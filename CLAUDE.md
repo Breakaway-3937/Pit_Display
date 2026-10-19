@@ -49,6 +49,7 @@ the one that covers what you touched.
 | [`home/REQUESTS.md`](home/REQUESTS.md) | **The channel to the home Claude session**: dated asks, each with a check. The home repo's `CLAUDE.md` imports it. The other direction is `../Database_Robotics_Pipeline/docs/INTEGRATION_GUIDE.md`. A change to a contract home implements gets a request here |
 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | Build, release, install, update, the `--self-check` table |
 | [`OPERATOR_GUIDE.md`](OPERATOR_GUIDE.md) | What the crew does. Operator-facing detail goes there, not here |
+| [`IDEAS.md`](IDEAS.md) | Features worth building, not scheduled. Park an idea there, not in a request |
 
 ## Packaging rules that constrain code
 
@@ -345,6 +346,12 @@ identity → CAD → Act 472 → reach → programs → sponsors (the footer, pi
   gets a carbon plate; never recolour a mark to suit the panel. The spec ships
   the folder and `--self-check`'s `sponsors` line names any file that's lost.
 
+- **The CAD model goes through `tools/cad_optimize.py`.** Onshape exports one
+  primitive per face as base64 JSON: 72,625 draw calls, 147 ms a frame in the
+  app's Chromium. Merged per material inside each mesh (nodes and names kept,
+  the subsystem focus needs them): 979 draw calls, 14 ms, pixel-identical.
+  `--compress` (meshopt, 25 MB) needs the viewer's decoder, so only once every
+  pit runs a build that has it: the model syncs to all of them.
 - **There is one CAD viewer and it moves.** A `QWebEngineView` is a Chromium
   process; `ProjectScreen` lends it to the board (`attach_cad`) and takes it
   back for the full-screen face (`detach_cad`). Never build a second.
@@ -402,7 +409,7 @@ Touch targets ≥ 46px. **The body scrolls as one** (`_body_scroll`, sidebar and
 settings together) under a fixed top bar.
 
 **Pit Systems:** LED Strips, Music, Batteries (mock-up), **Telemetry** (sidebar
-id `network`), **Analysis** (runs and the crew's ratings), Event Feed, Screen Wording (admin),
+id `network`), **Analysis** (runs and the crew's ratings), **Ask the Pit** (questions about the logs), Event Feed, Screen Wording (admin),
 **Diagnostics** (the check suite, Report a problem, what went home), Software Updates.
 
 **Telemetry (`network_panel.py`) is the home of all telemetry.** It has the
@@ -788,8 +795,8 @@ never blue or red.
 
 ## Robot-log analysis (`app/ai/`)
 
-A local model reads a session through **twelve read-only tools** (the home MCP
-server's nine plus `match_context`, `match_phases` and `anomalies`) and a board comes out: analyst (tool calls → findings, `insight.schema.json`) →
+A local model reads a session through **thirteen read-only tools** (the home MCP
+server's nine plus `match_context`, `match_phases`, `anomalies` and `wear`) and a board comes out: analyst (tool calls → findings, `insight.schema.json`) →
 check → designer (board, `board.schema.json`) → check → publish into
 `analysis_board`. The same `pipeline.analyse()` runs at home with a different
 toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
@@ -850,7 +857,7 @@ toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
   match, bars across devices; never red). The webcast serves it through
   `state.analysis_board_state()`.
 - **`--mcp`** (`mcp_server.py`): MCP over stdio, written by hand (no SDK in
-  the bundle), the twelve tools plus `analysis_runs` / `analysis_scoreboard`,
+  the bundle), the thirteen tools plus `analysis_runs` / `analysis_scoreboard`,
   read-only, from this machine's synced copy. Proven against the official
   client (mcp 2.2.0). The windowed exe has no `sys.stdin`; `_stdio()` opens
   the host's pipe handles.
@@ -903,6 +910,40 @@ toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
   drops and moves, never a figure. Proven on 3 real recordings: all publish,
   each led by the detector's catch. A validation pass rated the 303 v2 findings (notes
   "Validation pass (Claude, 2026-10-05)"); v2 scored 31.7% useful.
+- **Wear: what's getting worse, through the whole analysis** (`app/robot/wear.py`,
+  tool `wear`, PROMPT_VERSION 6; Brayden 2026-10-18). Per motor, per log:
+  `load_per_speed` (stator A per rotor rps, steady running: friction,
+  binding), `heat_vs_peers` and `faults_vs_peers` (its rise / live faults
+  minus the **other motors' median in the same log**: on the team's 63 logs
+  raw heat and fault counts moved with the session on every motor at once).
+  A warning when the newest 3 logs sit beyond the ones before by the
+  measure's margin and this log is still up; 3+ motors at once is one
+  bus-wide warning (a shared cause). Current limits and power-on faults are
+  left out. **Carried everywhere:** `anomalies` returns them as kind `wear`
+  (so home gets them: it runs anomaly.py); the analyst prompt and
+  `_must_cover` ask for one finding each, severity warn, `compare_to` the
+  earlier figure; `anomaly_coverage` needs a finding *about* the wear, not
+  merely naming the motor; `_detector_findings` fills one in; `_wear_cards`
+  adds a missing card and the motor's trend chart (kind `sessions`, signal
+  `wear:<measure>`, contract unchanged); Ask the Pit's primer has them.
+  Never red. Tuned on `.validation/team_pull`: no warnings on healthy logs;
+  `ai_check`'s planted wear (9 synthetic logs) is caught, a robot-wide
+  hotter session isn't, a recovered motor clears. Home: R17.
+- **Ask the Pit** (`ask.py`, `ask_panel.py`, the service's `ask()`): a crew
+  question, answered in a few sentences through the same tools on the same
+  engine (one at a time: a question waits for a run, then goes before queued
+  logs; it waits while a batch import holds the queue). Code fetches the
+  focused log's overview, faults and phases first (the log a question names,
+  else the conversation's, else the newest), as the analysis does. **Two
+  checks, then honest marking:** every figure must be a tool result
+  (`unsupported`), and a figure written beside a device must be in a row
+  about that device (`misattributed`: a real run pinned the overview's
+  "hottest motor" 26.0 °C, which names no device, on TalonFX 9). A failure
+  goes back once, then shows as "Not found in the logs"; never dropped
+  silently, never passed off as checked. Answers go to `ask_log.jsonl`
+  (never synced) for judging the prompt; bump `ASK_VERSION` with a prompt
+  or check change. Known weak spot (v4, qwen3:8b): fault answers stay
+  generic about brownouts the fault guide calls low priority.
 - **Not built:** syncing the scoreboard's prompt text (only its version),
   multi-session (match-to-match) runs, `breakdown_json` from TBA.
 
@@ -937,6 +978,14 @@ is not in this repo and is built from `home/HANDOFF.md`.
   samples as columns on each series' exact quantum, zstd'd: 3.85 GB → 2.98 MB,
   bit-exact). Everything sent is zstd'd (`codec.py`). The original log goes
   only with `upload_raw` (off by default; the bundle is audited lossless).
+- **The hub's free plan bills rows (5M read, 100k written a day), and a
+  scanned row counts**: `/v1/status` counting every row each minute from
+  every machine spent 90% of the reads by midday (2026-10-18). Counts are
+  kept as they change, meta/machines/counts are cached in the instance
+  (written through), a machine's row is written only on a change; a pit
+  asks for status every 10 min (`STATUS_EVERY_S`). **An idle minute costs
+  zero rows** (`sync_check` enforces it; `usage` in `/v1/status`). Never add
+  a hub query that scans a table.
 - Off with no `secrets/sync_token`; `PIT_SYNC_QUIET=1` (set by
   `--self-check`) opens nothing. The self-check's `sync` line fails if a
   synced table lost a trigger.
@@ -970,6 +1019,14 @@ turns it on; off means nothing leaves, it's still kept and shown.
   (`spool.begin_session()`); a launch that finds one records
   `unclean_exit` *there*, before anything that can fail (a boot crash once
   lost the previous report).
+- **`firewall` (Windows, screens published)** fails only on an explicit Block
+  rule for this build (a dismissed prompt makes one; Windows keys app rules on
+  the exe's `versions\<v>\` path). A missing Allow is a note, never a warning:
+  beta.9's screens worked with none found. PowerShell is slow, so a thread
+  reads the rules (≤ every 30 min) and the check reports the latest.
+- **A status names what each screen shows** (`content` with the screen's
+  default, `where` network/monitor, connected `displays`): beta.9 sent
+  `content: null` for unset defaults, and a working screen read as blank.
 - **The check suite** (`checks.py`): quick (live services and machine, every
   5 min; a check that changes state is an event) and full (adds the
   self-check's checks that are safe in a running app). A check that raises
@@ -1000,6 +1057,14 @@ Windows-only CI (macOS bills 10×).
   windowed child prints nowhere, so `verify()` reads the scratch
   `selfcheck.log` / `crash.log` and keeps `update_check.log`.
 - Prune at startup, not at swap. An install not of this shape is left alone.
+- **A new build that can't stay up rolls itself back** (`guard.py`, right
+  after `spool.begin_session()` in `main()`, before Qt): two unclean exits in
+  a row, each within 10 min of starting → `install.rollback()`, the report
+  pushed at once (`Engine.farewell`; the older build may not report), the
+  previous version relaunched. State lives in `pointer.json` (`trial`,
+  `proven_versions`, `bad`, `rolled_back`). Proven (10 min up) is never rolled
+  back; `bad` is never a target and never offered again; both failing is
+  `rollback_stuck`, not a loop. Only the managed install's `current` build.
 - **Checking is automatic; downloading never is.**
 - Private repo: fetch assets by id; **drop `Authorization` on the redirect to
   object storage** (`_Redirect`). A release without `manifest.json` is skipped.

@@ -620,7 +620,7 @@ warning), never `save()`.
 13. **Diagnostics are pushed only, from the spool** (R16), and only while the
     machine reports (`app/diagnostics/settings.py`: dev and beta by
     default). `pit_event`, uid `<machine_id>:<event id>` (id
-    `YYYYMMDD-HHMMSS-<8 hex>`): `{schema: 1, id, kind, severity
+    `YYYYMMDD-HHMMSS-<8 hex>`, the hex led by the milliseconds so ids sort in time order): `{schema: 1, id, kind, severity
     (fatal|error|warn|info), summary, at (the pit's clock, ISO with offset),
     signature (groups one fault across launches and machines), session,
     build: {version, channel, commit}, detail, data: {…}, attachments:

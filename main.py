@@ -187,7 +187,13 @@ def main():
     # (killed, a native crash, a boot step that throws), the next launch says
     # so and sends home what crash.log caught. Standard library only.
     from app.diagnostics import spool
-    spool.begin_session()
+    previous = spool.begin_session()
+    # A new build whose launches keep dying goes back to the previous version
+    # by itself (app/update/guard.py): rolled back, reported, relaunched.
+    from app.update import guard
+    if guard.after_launch(previous):
+        _close_launcher_splash()
+        sys.exit(0)
 
     _launcher_status("Starting Qt…")
     app = QApplication(sys.argv)
