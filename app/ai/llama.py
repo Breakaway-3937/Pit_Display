@@ -22,7 +22,7 @@ import time
 import urllib.error
 import urllib.request
 
-from app.ai.ollama import OllamaError, Reply
+from app.ai.ollama import SAMPLING, OllamaError, Reply
 
 
 class LlamaServer:
@@ -54,10 +54,15 @@ class LlamaServer:
 
     def chat(self, model: str, messages: list[dict], *, tools: list[dict] | None = None,
              format: dict | None = None, temperature: float = 0.2,
-             think: bool | None = False) -> Reply:
+             think: bool | None = False, max_tokens: int | None = None,
+             presence_penalty: float = 0.0) -> Reply:
         body: dict = {"model": model, "messages": [_message(m) for m in messages],
-                      "temperature": temperature, "stream": False,
+                      "temperature": temperature, "stream": False, **SAMPLING,
                       "chat_template_kwargs": {"enable_thinking": bool(think)}}
+        if max_tokens:
+            body["max_tokens"] = int(max_tokens)
+        if presence_penalty:
+            body["presence_penalty"] = presence_penalty
         if tools:
             body["tools"] = [{"type": "function", "function": {
                 "name": t["name"], "description": t["description"],
@@ -67,7 +72,8 @@ class LlamaServer:
                                        "json_schema": {"name": "output", "schema": format}}
         t0 = time.monotonic()
         out = self._post("/v1/chat/completions", body)
-        msg = ((out.get("choices") or [{}])[0]).get("message") or {}
+        choice = (out.get("choices") or [{}])[0]
+        msg = choice.get("message") or {}
         calls = []
         for c in msg.get("tool_calls") or []:
             fn = c.get("function") or {}
@@ -83,7 +89,8 @@ class LlamaServer:
                      prompt_tokens=int(usage.get("prompt_tokens") or 0),
                      output_tokens=int(usage.get("completion_tokens") or 0),
                      seconds=time.monotonic() - t0,
-                     message={"tool_calls": msg.get("tool_calls")} if calls else {})
+                     message={"tool_calls": msg.get("tool_calls")} if calls else {},
+                     truncated=choice.get("finish_reason") == "length")
 
 
 def _message(m: dict) -> dict:

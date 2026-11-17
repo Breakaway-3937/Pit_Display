@@ -394,6 +394,11 @@ def begin_session() -> dict | None:
                     "started_ts": time.time(), "pid": os.getpid(),
                     "version": version.VERSION, "beat": now_iso()}
         _write_json(path, _session)
+        if previous is not None and previous.get("handover"):
+            # The last launch started this one and is closing as we start
+            # (an update's restart): it records its own exit, so it isn't
+            # unclean. beta.10's update reported one, 2 s before its exit.
+            previous = _previous = None
         if previous is not None:
             # Recorded here, first thing in main(), not when the service
             # starts: a launch that dies during boot would otherwise lose
@@ -427,14 +432,34 @@ def previous_unclean() -> dict | None:
 def beat(**extra) -> None:
     """The session is still alive (written every minute): an unclean exit
     then says roughly when the app died, not just that it did."""
-    if _session is None:
-        return
+    if _session is None or _session.get("handover"):
+        return                      # the successor's mark may be there now
     _session.update(beat=now_iso(), beat_ts=time.time(), **extra)
     _write_json(root() / "session.json", _session)
 
 
+def hand_over(on: bool = True) -> None:
+    """This launch is starting its successor and then closing (an update's
+    restart): mark the session so the new launch, which may read it before
+    this one has finished closing, doesn't take it for an unclean exit.
+    `on=False` takes the mark back when the successor didn't start."""
+    if _session is None:
+        return
+    if on:
+        _session["handover"] = now_iso()
+    else:
+        _session.pop("handover", None)
+    _write_json(root() / "session.json", _session)
+
+
 def end_session() -> None:
+    """Remove this launch's mark, never a successor's: after `hand_over()`
+    the new launch may already have written its own."""
     try:
-        (root() / "session.json").unlink(missing_ok=True)
+        path = root() / "session.json"
+        mine = (_session or {}).get("id")
+        if mine and (read_json(path) or {}).get("id") not in (mine, None):
+            return
+        path.unlink(missing_ok=True)
     except OSError:
         pass

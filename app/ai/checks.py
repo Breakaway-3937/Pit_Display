@@ -45,7 +45,9 @@ from typing import Any, Callable
 
 from app.robot.diagnostics import BROWNOUT_V, CAN_FULL_PCT, LOOP_PERIOD_MS
 
-PUBLISHED = (BROWNOUT_V, LOOP_PERIOD_MS, 70.0, CAN_FULL_PCT)
+# Constants a sentence may name: brownout, the loop period, motor safety's
+# timeout (app/robot/loop_health.py), hot, a full CAN bus.
+PUBLISHED = (BROWNOUT_V, LOOP_PERIOD_MS, 100.0, 70.0, CAN_FULL_PCT)
 SEVERITY_ORDER = {"fault": 0, "warn": 1, "ok": 2, "idle": 3}
 
 # A number standing on its own: not glued to a word before it ("qm14", "frc3937"),
@@ -170,6 +172,8 @@ def _has_fault(call: Call) -> bool:
         return any(v.get("status") == "fault" for v in r.get("vitals") or [])
     if call.tool == "anomalies":         # the detector's faults (app/robot/anomaly.py)
         return any(a.get("severity") == "fault" for a in r.get("anomalies") or [])
+    if call.tool == "incidents":         # the CSA's issues (app/robot/incidents.py)
+        return any(i.get("severity") == "fault" for i in r.get("issues") or [])
     return False
 
 
@@ -231,15 +235,44 @@ def anomaly_coverage(insights: dict, ledger: Ledger) -> list[str]:
                         f"compare_to {(a.get('normal') or {}).get('median')}, citing "
                         f"{{\"tool\": \"anomalies\", \"args\": {{\"session_uid\": ...}}}}")
                 continue
-            if a.get("severity") != "fault":
+            # Faults, and anything the detector marks must_cover (the loop's
+            # overruns, a partner not sharing the work: Brayden, 2026-11-03).
+            if a.get("severity") != "fault" and not a.get("must_cover"):
+                continue
+            if covered(a, text):
+                # Covered, but say what the detector found, not just that it fired
+                # (a real run: "the robot's loop overran" with no part named).
+                gap = _missing_specifics(a, insights)
+                if gap:
+                    problems.append(gap)
                 continue
             if not covered(a, text):
                 problems.append(
                     f"the detector flagged {a.get('device')} ({a.get('kind')}: "
                     f"{str(a.get('detail', ''))[:120]}) and no finding covers it: add one, "
-                    f"severity fault, citing {{\"tool\": \"anomalies\", \"args\": "
+                    f"severity {a.get('severity') or 'fault'}, metric {a.get('value')} "
+                    f"{a.get('unit') or ''}, citing {{\"tool\": \"anomalies\", \"args\": "
                     f"{{\"session_uid\": ...}}}}")
     return problems
+
+
+def _missing_specifics(a: dict, insights: dict) -> str:
+    """What a finding about detector item `a` must also name: the slow parts
+    of a loop overrun, both motors of a partner pair. "" when it does."""
+    names: list[str] = []
+    if a.get("kind") == "loop_overrun":
+        names = [p["part"] for p in (a.get("slow_parts") or [])[:2]]
+    elif str(a.get("kind", "")).startswith("partner_"):
+        names = [n for n in (a.get("partner"),) if n]
+    if not names:
+        return ""
+    about = [f for f in insights.get("findings") or [] if covered(a, _finding_text(f))]
+    text = " ".join(_finding_text(f) for f in about)
+    left = [n for n in names if _norm(n.split("(")[0]) not in text]
+    if not left:
+        return ""
+    return (f"the finding about {a.get('device')} ({a.get('kind')}) must say what the detector "
+            f"found: name {', '.join(left)} (from its detail: {str(a.get('detail', ''))[:160]})")
 
 
 def check_findings(insights: dict, ledger: Ledger, session_uids: list[str],

@@ -22,4 +22,6 @@ the way it imports `app.db.sync.bundle`.
     checks.py    "every number is real", for findings and for boards
     pipeline.py  the run itself
     local.py     the pit's toolbox and sink
+    playbook.py  lessons learned from the crew's verdicts: chosen, measured, enforced
+    curate.py    the model turns new verdicts into lessons; code checks each
 """

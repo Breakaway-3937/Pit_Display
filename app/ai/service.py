@@ -22,6 +22,16 @@
   lunch mode suppress it, as they do every alert. Rejected and failed runs
   don't flash: they're not news for the crew; the panel shows them.
 
+* **Learning** (`learn` preference, default on; `curate.py`): when the
+  engine has nothing queued and enough new verdicts have come in, the model
+  turns them into playbook lessons, lowest priority of all (a log or a
+  question waiting goes first). At most one attempt every
+  `CURATE_RETRY_S`; a rating restarts a short settle timer so a crew rating
+  ten findings gets one pass, not ten.
+* **A run left "running"** by a quit or a crash mid-run is marked failed at
+  startup (one launch runs one run at a time, so nothing can still be
+  running); it read as running forever (run 4, 2026-10-03, until 2026-11-03).
+
 `PIT_AI_QUIET=1` (set by `--self-check`): no engine probe, no auto-run.
 """
 
@@ -43,6 +53,9 @@ from app.leds.service import Alert
 
 STRIP_PURPLE = "#8000FF"        # palette.snap → "violet", the strips' purple
 PROBE_EVERY_MS = 30_000
+CURATE_SETTLE_MS = 90_000        # after the last rating
+CURATE_RETRY_S = 20 * 60         # between attempts that found the engine unwilling
+STALE_RUN_H = 3                  # a run older than this still "running" never finished
 BUILT_IN, OLLAMA = "llama", "ollama"
 
 
@@ -62,15 +75,19 @@ class _AnalysisService(QObject):
     run_finished = pyqtSignal(int, str)
     # runs or verdicts arrived from another machine (sync)
     runs_changed = pyqtSignal()
+    # the playbook changed (a curation pass, an admin's switch, a sync)
+    playbook_changed = pyqtSignal()
 
     # Cross-thread hand-offs (emitted from worker threads, queued to this one)
     _worker_step = pyqtSignal(str)
     _worker_done = pyqtSignal(int, str, str)
+    _worker_board = pyqtSignal(str)       # a board went up mid-run (the CSA's first look)
     answered = pyqtSignal(object)        # ask.Answer: Ask the pit has a reply
     _ask_done = pyqtSignal(object)
     _probe_done = pyqtSignal(object, object)
     _dl_progress = pyqtSignal(object, object)
     _dl_done = pyqtSignal(str)
+    _curate_done = pyqtSignal(object)
 
     def __init__(self, llm_factory=None):
         super().__init__()
@@ -93,14 +110,19 @@ class _AnalysisService(QObject):
         self._questions: list[str] = []      # Ask the pit, ahead of queued logs
         self.asking = ""                     # the question being answered
         self.answers: list = []              # this launch's, newest last
-
+        self.curating = False
+        self.last_curation = None            # curate.Result
+        self._curate_tried = 0.0             # monotonic time of the last attempt
 
         self._worker_step.connect(self._on_step)
         self._worker_done.connect(self._on_done)
+        self._worker_board.connect(self._on_board)
+        self._flashed = False            # this run's board already flashed the strips
         self._ask_done.connect(self._on_ask_done)
         self._probe_done.connect(self._on_probe)
         self._dl_progress.connect(self._on_dl_progress)
         self._dl_done.connect(self._on_dl_done)
+        self._curate_done.connect(self._on_curate_done)
         config.logs_changed.connect(self._on_logs_changed)
 
         self._idle = QTimer(self)
@@ -109,7 +131,11 @@ class _AnalysisService(QObject):
         self._probe_timer = QTimer(self)
         self._probe_timer.setInterval(PROBE_EVERY_MS)
         self._probe_timer.timeout.connect(self.probe)
+        self._curate_timer = QTimer(self)
+        self._curate_timer.setSingleShot(True)
+        self._curate_timer.timeout.connect(self._maybe_curate)
         if not self._quiet:
+            _close_stale_runs()
             self._probe_timer.start()
             self.probe()
 
@@ -173,6 +199,8 @@ class _AnalysisService(QObject):
 
     def describe(self) -> str:
         """One line for the panel: what's stopping a run, or what's running."""
+        if self.curating:
+            return "Learning from the crew's ratings"
         more = f" · {len(self._queue)} more queued" if self._queue else ""
         if self._questions:
             more += f" · {len(self._questions)} question(s) waiting"
@@ -283,6 +311,81 @@ class _AnalysisService(QObject):
             self._start_ask(self._questions.pop(0))
         elif self._queue:
             self.analyse(self._queue.pop(0))
+        else:
+            self._curate_timer.start(5_000)     # nothing waiting: time to learn?
+
+    # ── learning (app/ai/curate.py) ───────────────────────────────────────
+
+    def verdict_changed(self) -> None:
+        """The crew rated something (the panel calls this): learn once they pause."""
+        if not self._quiet:
+            self._curate_timer.start(CURATE_SETTLE_MS)
+
+    def _maybe_curate(self, force: bool = False) -> bool:
+        import time
+        from app.ai import curate
+        if (self._quiet or self.busy or self._held or self._queue or self._questions
+                or not self.ready or not (self.prefs.get("learn") or force)):
+            return False
+        if not force and time.monotonic() - self._curate_tried < CURATE_RETRY_S \
+                and self._curate_tried:
+            return False
+        try:
+            if not (force or curate.due()):
+                return False
+        except Exception:
+            return False
+        self._curate_tried = time.monotonic()
+        self._idle.stop()
+        self.busy, self.curating, self.step = True, True, "Learning from the crew's ratings"
+        self.state_changed.emit()
+        model, llm = self.model_name(), self._make_llm()
+        threading.Thread(target=self._curate_run, args=(model, llm), name="ai-curate",
+                         daemon=True).start()
+        return True
+
+    def learn_now(self) -> str:
+        """The panel's "Learn from ratings now" (admin): "" or why it can't."""
+        from app.ai import curate
+        if self.busy:
+            return "The engine is busy; it learns when it's free."
+        if not self.ready:
+            return self.describe()
+        try:
+            if not curate.pending():
+                return "No new ratings to learn from."
+        except Exception as e:
+            return f"{type(e).__name__}: {e}"
+        return "" if self._maybe_curate(force=True) else "It can't learn right now."
+
+    def _curate_run(self, model: str, llm) -> None:
+        from app.ai import curate, tools
+        from app.ai.local import ThreadDB
+        handle = None
+        try:
+            if isinstance(llm, LlamaServer) and not self.runtime.running:
+                self._worker_step.emit("starting the built-in engine")
+            handle = ThreadDB()
+            with tools.using(handle):
+                res = curate.curate(llm, model, conn=handle)
+        except Exception as e:
+            res = curate.Result("failed", model=model, error=f"{type(e).__name__}: {e}")
+        finally:
+            if handle is not None:
+                handle.close()
+        _log_line("curate_log.jsonl", res.as_dict())
+        self._curate_done.emit(res)
+
+    def _on_curate_done(self, res) -> None:
+        self.busy, self.curating, self.step = False, False, ""
+        self.last_curation = res
+        self.state_changed.emit()
+        if res.status == "changed":
+            self.playbook_changed.emit()
+        if self._questions or (self._queue and not self._held):
+            self._next()
+        elif self.runtime.running:
+            self._idle.start(_seconds(self.prefs["keep_alive"]) * 1000)
 
     # ── Ask the pit ───────────────────────────────────────────────────────
 
@@ -366,13 +469,15 @@ class _AnalysisService(QObject):
         prefs = dict(self.prefs, model=self.model_name())
         llm = self._make_llm()
         lessons = feedback.lessons()        # the crew's verdicts, read on this thread
-        from app.ai import brief
-        threading.Thread(target=self._run, args=(uids, prefs, llm, lessons, brief.for_model()),
+        from app.ai import brief, playbook
+        threading.Thread(target=self._run, args=(uids, prefs, llm, lessons, brief.for_model(),
+                                                 playbook.active(), feedback.confirmations()),
                          name="ai-run", daemon=True).start()
         return True
 
     def _run(self, uids: list[str], prefs: dict, llm, lessons: list[str],
-             robot_brief: str = "") -> None:
+             robot_brief: str = "", lessons_in_force: list[dict] | None = None,
+             confirmed: dict[str, int] | None = None) -> None:
         # Imported here: the worker is the only thing that needs them.
         from app.ai import pipeline, tools
         from app.ai.local import LocalToolbox, SqliteSink, ThreadDB
@@ -385,7 +490,10 @@ class _AnalysisService(QObject):
                 res = pipeline.analyse(
                     LocalToolbox(), SqliteSink(), llm, uids, analyst=prefs["model"],
                     designer=prefs["designer"] or None, on_step=self._worker_step.emit,
-                    lessons=lessons, brief=robot_brief)
+                    lessons=lessons, brief=robot_brief,
+                    playbook_lessons=lessons_in_force, ctx_tokens=prefs["num_ctx"],
+                    diagnose_issues=True, csa_confirmed=confirmed, publish_early=True,
+                    on_board=self._worker_board.emit)
             self._worker_done.emit(res.run_id, res.status, res.reason)
         except Exception as e:      # before a run row existed (no database, etc.)
             self._worker_done.emit(-1, "failed", f"{type(e).__name__}: {e}")
@@ -401,15 +509,29 @@ class _AnalysisService(QObject):
         self.busy, self.step = False, ""
         self._running = None
         self.last = (run_id, status, reason)
-        if status == "published":
-            leds.start_alert(Alert(sides=STRIP_PURPLE, centre_white=True,
-                                   flash_s=2.0, steady_s=1.0, label="analysis"))
+        if status == "published" and not self._flashed:
+            self._flash()
+        self._flashed = False
         self.state_changed.emit()
         self.run_finished.emit(run_id, status)
         if (self._questions or self._queue) and not self._held:
             self._next()
-        elif self.runtime.running:
-            self._idle.start(_seconds(self.prefs["keep_alive"]) * 1000)
+        else:
+            if self.runtime.running:
+                self._idle.start(_seconds(self.prefs["keep_alive"]) * 1000)
+            self._curate_timer.start(5_000)     # learn while the model is still loaded
+
+    def _flash(self) -> None:
+        leds.start_alert(Alert(sides=STRIP_PURPLE, centre_white=True,
+                               flash_s=2.0, steady_s=1.0, label="analysis"))
+
+    def _on_board(self, _uid: str) -> None:
+        """A board went up before the run ended (the CSA's diagnoses): the
+        faces reload now, and the strips flash once for the run, here."""
+        if not self._flashed:
+            self._flashed = True
+            self._flash()
+        self.runs_changed.emit()
 
     def _stop_if_idle(self) -> None:
         if not self.busy:
@@ -424,13 +546,31 @@ class _AnalysisService(QObject):
 def _log_answer(answer) -> None:
     """Every answer, for judging the prompt later (`ask_log.jsonl` beside the
     database; never synced). Best effort."""
+    _log_line("ask_log.jsonl", answer.as_dict())
+
+
+def _log_line(name: str, record: dict) -> None:
     import json
     from app import paths
     try:
-        with open(paths.data("ask_log.jsonl"), "a", encoding="utf-8") as f:
-            f.write(json.dumps(answer.as_dict(), default=str) + "\n")
+        with open(paths.data(name), "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, default=str) + "\n")
     except OSError:
         pass
+
+
+def _close_stale_runs() -> None:
+    """Runs a quit or crash left "running" (see the module docstring)."""
+    from app.db import db
+    try:
+        with db.transaction() as conn:
+            conn.execute(
+                f"""UPDATE analysis_run SET status = 'failed', finished_at = datetime('now'),
+                      reject_reason = 'never finished: the app closed or stopped during the run'
+                    WHERE status = 'running'
+                      AND started_at < datetime('now', '-{int(STALE_RUN_H)} hours')""")
+    except Exception:
+        pass                    # a broken database is reported elsewhere
 
 
 analysis: _AnalysisService = LazyProxy("analysis", "init_analysis")  # type: ignore[assignment]

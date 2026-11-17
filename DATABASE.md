@@ -314,7 +314,7 @@ One row per imported file.
 | `source_file` | absolute path, **UNIQUE** — a second import of the same file fails loudly instead of silently doubling the data. `sync:<uid>` for a session that arrived by sync |
 | `origin`, `origin_name` | the machine it was imported on (where the original file is): NULL for a log imported here; for a synced session, the hub's `origin` on its bundle blob (only the importer uploads it) and that machine's current name, filled by the sync engine (`_origins`). Not watched, not synced; shown as the session list's **From** column |
 | `source_name` | basename, for display |
-| `source_kind` | `hoot` \| `wpilog` — the same tables hold both sources. A `.hoot` is `hoot`; the roboRIO's own DataLogManager file is `wpilog`. Sessions imported by older builds from a text export also read `hoot` |
+| `source_kind` | `hoot` \| `wpilog` \| `dslog` — the same tables hold every source. A `.hoot` is `hoot`; the roboRIO's own DataLogManager file is `wpilog`; the Driver Station's `.dslog` (with its `.dsevents`) is `dslog`, its signals `DS/…` on the `Robot` pseudo-device (`DS/TripTimeMS`, `DS/PacketLossPct`, `DS/BatteryVoltage`, `DS/CPUPct`, `DS/CANUtilPct`, `DS/WifiDb`, `DS/WifiMb`, the 0/1 flags `DS/Brownout`, `DS/Watchdog`, `DS/DSDisabled`, `DS/DSTeleop`, `DS/RobotDisabled`, `DS/RobotAuto`, `DS/RobotTeleop`, derived `DS/Comms`, `DS/Enabled`, `DS/Autonomous`, `DS/PDCurrent[n]`, and the text `DS/Events` as `[code] message \| other fields`); its `started_at` comes from its own header and `match_key` from the FMS message. Sessions imported by older builds from a text export also read `hoot` |
 | `device_serial`, `started_at` | parsed from the filename |
 | `duration_s` | length of the log in seconds |
 | `raw_rows`, `stored_rows` | compression audit — **read it against `source_kind`**. A hoot compresses ~19×; a wpilog is *already* change-only and lands near 1.1×, which is normal and not a fault. A hoot far off 19× is the cheapest signal that the export format changed |
@@ -536,7 +536,7 @@ Every pit machine's team data meets at the hub (`sync.bh-stack.com`,
 | Scope | What | How |
 |---|---|---|
 | Team-owned rows | `led_presets`, `eq_presets`, `playlists`, `playlist_items`, `checklist`, `checklist_item` (not `done`), `admin_credential`, `device` (the CAN names) | triggers → `sync_outbox` → hub; `app/db/sync/tables.py` `SPECS` |
-| Team settings | `nexus.json`'s event and feed keys; `update.json`'s `auto_check`, `check_interval_hours`; `transfer`; `datasets.json`'s `enabled`; `wording.json`'s `texts` (admin-edited screen words, key → text; only edits are stored, absent = shipped text) | `tbl = "setting"`, by hash (`docs.py`) |
+| Team settings | `nexus.json`'s event and feed keys; `update.json`'s `auto_check`, `check_interval_hours`; `transfer`; `datasets.json`'s `enabled`; `wording.json`'s `texts` (admin-edited screen words, key → text; only edits are stored, absent = shipped text); `robot_brief.json`'s `text`; `playbook.json`'s `lessons`, `retired_seeds`, `curated_at`, `history` (what the analyst learned from the crew's verdicts, `app/ai/playbook.py`; `curated_at` is `"<rated_at>|<feedback uid>"`, the last verdict learned from; the built-in seed lessons are code and never stored) | `tbl = "setting"`, by hash (`docs.py`) |
 | Team files | `assets/judges_slides/*`, `assets/cad/*` in the data tree; **every scanned song** as `music/<sha[:16]>_<file name>` (received ones land in the data tree's `music/`) | `tbl = "file"` → an R2 blob by SHA-256. **R2 is a relay** (R8): bytes move only in the night window; see Rules 8–11 |
 | Machine-produced | `log_session` (hand-edited fields in the row; the data as a **bundle**; the original log as a zstd **raw** blob only with `upload_raw`, off by default) | `bundle.py`, `columns.py` |
 | TheBlueAlliance | `tba_event`, `tba_match`, `tba_team`, `tba_rival`, `tba_fact` (home pushes; `home/REQUESTS.md` R5) | pulled only; the engine special-cases them |
@@ -639,6 +639,21 @@ warning), never `save()`.
     machine_id, machine_name}`. Each queued once; a sent event moves to
     `sent/`; an event the spool dropped leaves the outbox without a
     tombstone. Not in `APPLIED`, so no catch-up scans for them.
+14. **"Sync files now" can be ordered from another machine** (`sync_order`,
+    uid `<target machine id>:<YYYYMMDD-HHMMSS>-<6 hex>`): `{action:
+    "files_now", target, target_name, by, by_name, asked_at, state}`.
+    `state` is `asked` (the asker), then `running` (`started_at`), then
+    `done` or `timed_out` (`finished_at`, `up_bytes`, `down_bytes`, `left`),
+    each written by the target on the same row (base = the seq it pulled, so
+    never a conflict). The target runs an `asked` order whose hub `at` is
+    under 12 h old (`ORDER_TTL_S`; a catch-up never runs last week's) and
+    opens the night window until nothing is waiting, at most 3 h
+    (`FORCE_MAX_S`), as the local button does. A `running` order of its own
+    that the target finds on starting (the app closed mid-order) carries on
+    while under 12 h old, else is written `timed_out` with `left` null:
+    never `running` forever. Kept in `sync_meta`
+    (`order:<uid>`) for the panel, forgotten after 3 days; the hub keeps the
+    rows. Home may push one to any machine.
 
 ---
 

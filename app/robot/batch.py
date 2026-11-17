@@ -52,7 +52,9 @@ from typing import Callable
 from app import paths
 from app.robot.naming import parse_log_name
 
-LOG_SUFFIXES = (".hoot", ".wpilog")
+LOG_SUFFIXES = (".hoot", ".wpilog", ".dslog")
+# Files that travel with a log, same name, other suffix (the DS's messages).
+COMPANIONS = {".dslog": (".dsevents",)}
 ARCHIVE_DIR = "robot_logs"
 HEAD_BYTES = 64 * 1024
 _CHUNK = 8 * 1024 * 1024
@@ -104,6 +106,15 @@ class _Hasher:
 def describe_header(start: bytes, suffix: str) -> tuple[str, bool, str]:
     """(the header as text, whether it's the format `suffix` claims, why not)."""
     suffix = suffix.lower()
+    head = start[:600].lstrip().lower()
+    if head.startswith((b"<!doctype html", b"<html")):
+        # The roboRIO's web file browser saves its error page under the log's
+        # name when a download fails: 208 of 373 "logs" on the team's USB drive
+        # were "404 -- Not Found" pages (2026-11-05).
+        why = "a web page, not a log: the copy from the robot failed"
+        if b"404" in head or b"not found" in head:
+            why += " (the robot answered 404 Not Found)"
+        return "", False, why + "; copy it again"
     if suffix == ".wpilog":
         if not start.startswith(b"WPILOG") or len(start) < 12:
             return "", False, "not a WPILib log (no WPILOG header)"
@@ -111,6 +122,13 @@ def describe_header(start: bytes, suffix: str) -> tuple[str, bool, str]:
         n = int.from_bytes(start[8:12], "little")
         extra = start[12:12 + n].decode("utf-8", "replace").strip()
         return f"WPILOG {major}.{minor}" + (f" {extra}" if extra else ""), True, ""
+    if suffix == ".dslog":
+        if len(start) < 20 or int.from_bytes(start[:4], "big") != 4:
+            return "", False, "not a Driver Station log (version 4 header)"
+        from app.robot import dslog
+        _v, t = dslog.read_header(start)
+        from datetime import UTC, datetime
+        return f"DSLOG 4 {datetime.fromtimestamp(t, UTC):%Y-%m-%d %H:%M:%S}", True, ""
     if suffix == ".hoot":
         text = start.split(b"\0", 1)[0].decode("ascii", "replace").strip()
         if not text or not text.isprintable():
@@ -261,7 +279,29 @@ def copy_in(plan: Plan, progress: Callable[[str, float], None] | None = None,
         else:
             f.dest.parent.mkdir(parents=True, exist_ok=True)
             os.replace(part, f.dest)
+        copy_companions(f.source, f.dest)
     return plan
+
+
+def copy_companions(source: Path, dest: Path) -> None:
+    """The files a log travels with (`COMPANIONS`: a `.dslog`'s `.dsevents`),
+    copied beside its copy. Best effort: a missing one only loses its data."""
+    for suffix in COMPANIONS.get(source.suffix.lower(), ()):
+        sib = source.with_suffix(suffix)
+        if not sib.is_file():
+            continue
+        try:
+            target = dest.with_suffix(suffix)
+            if not (target.is_file() and target.stat().st_size == sib.stat().st_size):
+                shutil.copyfile(sib, target.with_name(target.name + ".part"))
+                os.replace(target.with_name(target.name + ".part"), target)
+        except OSError:
+            pass
+
+
+def remove_with_companions(path: Path) -> None:
+    for suffix in COMPANIONS.get(path.suffix.lower(), ()):
+        path.with_suffix(suffix).unlink(missing_ok=True)
 
 
 def mark_duplicates(plan: Plan, db_path: Path) -> Plan:
@@ -347,6 +387,7 @@ def discard(path: str | Path | None, db_path: Path | None = None) -> bool:
     p = Path(path)
     try:
         p.unlink(missing_ok=True)
+        remove_with_companions(p)
         if p.parent != archive_root() and not any(p.parent.iterdir()):
             p.parent.rmdir()
     except OSError:

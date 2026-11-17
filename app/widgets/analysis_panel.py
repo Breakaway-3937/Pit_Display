@@ -12,9 +12,15 @@ runs get rated. What an operator needs, in order:
 * **Which model is earning its keep?** The scoreboard: per model and prompt
   version, the share of rated findings the crew called useful or wrong, how
   many they acted on, the mean rank, and how often a run passed the checks.
+* **What has it learned?** The playbook (`app/ai/playbook.py`): the
+  lessons the analyst has drawn from these ratings, each with its record
+  (did findings on it get rated better once it was given?) and whether
+  code enforces it. An admin can enforce, retire or restore a lesson and
+  start a learning pass.
 * **Was it any good?** Recent runs; the chosen run's findings, each rated
-  **Useful / Not useful / Wrong** plus **Acted on**, and a **1–5 rank** for
-  the run. Ratings are the reward signal (`app/ai/feedback.py`): a clean bill
+  **Useful / Not useful / Wrong** plus **Acted on** (and, for the last two,
+  one tap of *why*: the reason is what a lesson is learned from), and a
+  **1–5 rank** for the run. Ratings are the reward signal (`app/ai/feedback.py`): a clean bill
   of health the crew trusted is as useful as a fault, so nothing here counts
   problems found.
 
@@ -124,6 +130,183 @@ class _BriefEditor(QWidget):
         self._apply_lock(True)
 
 
+class _PlaybookView(QWidget):
+    """
+    The playbook (`app/ai/playbook.py`): every lesson in force, what it's
+    learned from, its record, and whether code enforces it. Switching a
+    lesson steers every run on every pit, so the switches are admin-only
+    (hidden, not disabled); reading the book isn't.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from app.admin import admin
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+        lay.addWidget(eyebrow("Playbook · what the analyst has learned from your ratings"))
+        lay.addWidget(_prose(
+            "Your ratings, and the reason you give for a Not useful or Wrong, become short "
+            "lessons the analyst reads before each log it's relevant to. Each one is scored "
+            "by your later ratings. When the analyst keeps ignoring an Avoid lesson, code "
+            "enforces it and leaves those findings out (never a fault)."))
+        learn = QHBoxLayout()
+        learn.setSpacing(12)
+        txt = label("Learn from the crew's ratings when the engine is free", "stat_value")
+        txt.setWordWrap(True)
+        txt.setStyleSheet("font-size: 15px;")
+        learn.addWidget(txt, stretch=1)
+        self._learn = ToggleSwitch()
+        self._learn.setChecked(bool(analysis.prefs.get("learn", True)))
+        self._learn.toggled.connect(self._set_learn)
+        learn.addWidget(self._learn, alignment=Qt.AlignmentFlag.AlignVCenter)
+        lay.addLayout(learn)
+        self._state = _prose("")
+        lay.addWidget(self._state)
+        self._rows = QVBoxLayout()
+        self._rows.setSpacing(0)
+        lay.addLayout(self._rows)
+        self._admin = QWidget()
+        a = QHBoxLayout(self._admin)
+        a.setContentsMargins(0, 8, 0, 0)
+        self._learn_btn = RoundedButton("Learn from ratings now", variant="secondary")
+        self._learn_btn.setMinimumHeight(_TOUCH)
+        self._learn_btn.clicked.connect(self._learn_now)
+        a.addWidget(self._learn_btn)
+        a.addStretch()
+        lay.addWidget(self._admin)
+        self._unlocked = False
+        self._waiting = 0
+        try:
+            admin.lock_state_changed.connect(self._apply_lock)
+            self._unlocked = admin.unlocked
+        except RuntimeError:                  # no lock service (a check): stay locked
+            pass
+        analysis.playbook_changed.connect(self.refresh)
+        analysis.state_changed.connect(self._refresh_state)
+        self.refresh()
+
+    def _apply_lock(self, unlocked: bool) -> None:
+        self._unlocked = bool(unlocked)
+        self.refresh()
+
+    def _set_learn(self, on: bool) -> None:
+        analysis.set_pref(learn=bool(on))
+
+    def _learn_now(self) -> None:
+        why = analysis.learn_now()
+        if why:
+            self._state.setText(why)
+
+    def _refresh_state(self) -> None:
+        from app.ai import curate, playbook
+        n = len(playbook.active())
+        last = analysis.last_curation
+        if analysis.curating:
+            text = "Learning from the crew's ratings now…"
+        elif last is not None and last.status == "failed":
+            text = f"The last learning pass didn't finish: {last.error[:160]}"
+        else:
+            waiting = self._waiting          # counted in refresh(): this runs on every step
+            text = (f"{n} lesson(s) in force · {waiting} rating(s) not learned from yet"
+                    + (f" (it learns after {curate.DUE_COUNT})" if waiting < curate.DUE_COUNT
+                       else ""))
+            hist = playbook.load()["history"]
+            if hist:
+                text += f" · last change {hist[-1]['at'][:16]} UTC: {hist[-1]['what'][:140]}"
+        self._state.setText(text)
+
+    def refresh(self) -> None:
+        from app.ai import curate, playbook
+        try:
+            self._waiting = len(curate.pending(limit=10_000))
+        except Exception:
+            self._waiting = 0
+        clear_layout(self._rows)
+        doc = playbook.load()
+        lessons = playbook.active(doc)
+        try:
+            records = playbook.evaluate(lessons=lessons)
+        except Exception:
+            records = {}
+        retired = ([s for s in playbook.SEEDS if s["id"] in doc["retired_seeds"]]
+                   + [x for x in doc["lessons"] if x["retired"] and x.get("by") != "seed"])
+        for x in lessons:
+            self._rows.addWidget(self._row(x, records.get(x["id"]), retired=False))
+        if self._unlocked:
+            for x in retired:
+                self._rows.addWidget(self._row(x, None, retired=True))
+        self._admin.setVisible(self._unlocked)
+        self._refresh_state()
+
+    def _row(self, x: dict, record, *, retired: bool) -> QWidget:
+        box = QWidget()
+        box.setObjectName("lesson_row")
+        box.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        box.setStyleSheet(f"QWidget#lesson_row {{ border-bottom: 1px solid "
+                          f"{brand.CARBON_LINE}; }}")
+        col = QVBoxLayout(box)
+        col.setContentsMargins(0, 10, 0, 10)
+        col.setSpacing(4)
+        kind = "Avoid" if x["kind"] == "avoid" else "Do"
+        rule = label(f"{kind}: {x['rule']}", "stat_value")
+        rule.setWordWrap(True)
+        rule.setStyleSheet("font-size: 15px;")
+        col.addWidget(rule)
+        if x.get("seed"):
+            origin = "built in · " + x.get("why", "")
+        else:
+            n = len(x.get("learned_from") or [])
+            origin = f"learned {x.get('added', '')} by {x.get('by') or 'the model'} from {n} rating(s)"
+        bits = [origin]
+        if record is not None:
+            bits.append(record.summary(x["kind"]))
+        if x.get("enforce") and x["kind"] == "avoid":
+            bits.append("enforced by code")
+        if retired:
+            bits.append("retired")
+        meta = label("  ·  ".join(b for b in bits if b), "stat_label")
+        meta.setFont(mono_font(12))
+        meta.setWordWrap(True)
+        col.addWidget(meta)
+        if self._unlocked:
+            chips = QHBoxLayout()
+            chips.setSpacing(6)
+            if x["kind"] == "avoid" and not retired:
+                c = _chip("Enforced by code")
+                c.set_active(bool(x.get("enforce")))
+                c.setProperty("lesson", x["id"])
+                c.clicked.connect(self._toggle_enforce)
+                chips.addWidget(c)
+            c = _chip("Restore" if retired else "Retire")
+            c.setProperty("lesson", x["id"])
+            c.setProperty("retired", retired)
+            c.clicked.connect(self._toggle_retired)
+            chips.addWidget(c)
+            chips.addStretch()
+            col.addLayout(chips)
+        return box
+
+    def _toggle_enforce(self) -> None:
+        from app.ai import playbook
+        btn = self.sender()
+        if btn is None:
+            return
+        lid = str(btn.property("lesson"))
+        now = next((x for x in playbook.active() if x["id"] == lid), {}).get("enforce")
+        playbook.set_flag(lid, enforce=not now)
+        self.refresh()
+
+    def _toggle_retired(self) -> None:
+        from app.ai import playbook
+        btn = self.sender()
+        if btn is None:
+            return
+        playbook.set_flag(str(btn.property("lesson")),
+                          retired=not bool(btn.property("retired")))
+        self.refresh()
+
+
 def _chip(text: str) -> SelectableChip:
     c = SelectableChip(text)
     c.setMinimumHeight(_TOUCH)
@@ -204,6 +387,11 @@ class AnalysisPanel(QWidget):
         root.addWidget(divider())
         root.addSpacing(16)
         root.addWidget(_BriefEditor())
+        root.addSpacing(16)
+        root.addWidget(divider())
+        root.addSpacing(16)
+        self._playbook = _PlaybookView()
+        root.addWidget(self._playbook)
         root.addSpacing(16)
         root.addWidget(divider())
         root.addSpacing(16)
@@ -326,6 +514,7 @@ class AnalysisPanel(QWidget):
 
     def _reload(self) -> None:
         self._fill_scoreboard()
+        self._playbook.refresh()
         runs = feedback.recent_runs()
         clear_layout(self._runs_box)
         if not runs:
@@ -384,6 +573,22 @@ class AnalysisPanel(QWidget):
         meta.setFont(mono_font(12))
         meta.setWordWrap(True)
         self._detail.addWidget(meta)
+        # What code left out, so nothing is dropped where nobody can see it.
+        left = []
+        if s.get("filler"):
+            left.append(f"{len(s['filler'])} all-clear finding(s) beside a real one")
+        if s.get("enforced"):
+            left.append(", ".join(f"{d['finding']} (playbook: {d['lesson']})"
+                                  for d in s["enforced"]))
+        if s.get("playbook"):
+            left_text = f"Given {len(s['playbook'])} playbook lesson(s)"
+        else:
+            left_text = ""
+        if left:
+            left_text += ("  ·  " if left_text else "") + "Left out by code: " + "; ".join(left)
+        if left_text:
+            self._detail.addSpacing(4)
+            self._detail.addWidget(_prose(left_text))
         self._detail.addSpacing(10)
         self._add_trace(run)
         self._detail.addSpacing(16)
@@ -406,8 +611,10 @@ class AnalysisPanel(QWidget):
             self._detail.addSpacing(16)
             self._detail.addWidget(eyebrow("Findings · was each one worth the crew's time?"))
             self._detail.addSpacing(8)
+            csa = {d.get("finding"): d for d in (run["stats"] or {}).get("incidents") or []}
             for f in run["findings"]:
-                self._detail.addWidget(self._finding(f, verdict.get(f.get("id", "")) or {}))
+                self._detail.addWidget(self._finding(f, verdict.get(f.get("id", "")) or {},
+                                                     csa.get(f.get("id"))))
 
     # ── what it looked at ─────────────────────────────────────────────────
 
@@ -456,7 +663,7 @@ class AnalysisPanel(QWidget):
         self._traces_open ^= {rid}
         self._reload()
 
-    def _finding(self, f: dict, verdict: dict) -> QWidget:
+    def _finding(self, f: dict, verdict: dict, diagnosis: dict | None = None) -> QWidget:
         box = QWidget()
         box.setObjectName("finding_row")
         box.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -496,7 +703,59 @@ class AnalysisPanel(QWidget):
         chips.addWidget(acted)
         chips.addStretch()
         col.addLayout(chips)
+        if diagnosis:
+            self._add_diagnosis(col, fid, diagnosis, verdict)
+        # Why, one tap (feedback.REASONS): what a playbook lesson is learned from.
+        reasons = feedback.REASONS.get(verdict.get("rating") or "")
+        if reasons:
+            why = QHBoxLayout()
+            why.setSpacing(6)
+            why.addWidget(label("Why?", "stat_label"))
+            for text in reasons:
+                c = _chip(text)
+                c.setProperty("finding", fid)
+                c.setProperty("reason", text)
+                c.set_active(verdict.get("note") == text)
+                c.clicked.connect(self._set_reason)
+                why.addWidget(c)
+            why.addStretch()
+            col.addLayout(why)
         return box
+
+    def _add_diagnosis(self, col, fid: str, d: dict, verdict: dict) -> None:
+        """The CSA's reasoning (app/ai/diagnose.py), and "what was it really?":
+        one tap on the cause the crew found, recorded as a confirmation the
+        next diagnoses see (feedback.confirmations)."""
+        who = "the model" if d.get("by") == "model" else "code (the model's answer didn't pass)"
+        ruled = [c["cause"] for c in d.get("candidates") or [] if c["id"] in (d.get("ruled_out") or [])]
+        # Three kinds of statement, kept apart (Brayden, 2026-11-05: "we need
+        # diagnosable tools and noted extrapolation"): what the logs show,
+        # what the model infers from it, and where it's reaching.
+        if d.get("measured"):
+            col.addWidget(_prose("Measured: " + "; ".join(d["measured"]) + "."))
+        text = (f"Inferred ({d.get('confidence', 'low')} confidence, by {who}): "
+                f"{d.get('why', '')}"
+                + (f" Ruled out: {'; '.join(ruled)}." if ruled else ""))
+        why = _prose(text)
+        col.addWidget(why)
+        if d.get("hunch"):
+            col.addWidget(_prose("A reach (not checked against the knowledge base): "
+                                 + d["hunch"]))
+        cands = [c for c in d.get("candidates") or []][:4]
+        if not cands:
+            return
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        row.addWidget(label("What was it really?", "stat_label"))
+        for c in cands:
+            chip = _chip(c["cause"][:40] + ("…" if len(c["cause"]) > 40 else ""))
+            chip.setProperty("finding", fid)
+            chip.setProperty("reason", feedback.CONFIRMED + c["id"])
+            chip.set_active(verdict.get("note") == feedback.CONFIRMED + c["id"])
+            chip.clicked.connect(self._set_reason)
+            row.addWidget(chip)
+        row.addStretch()
+        col.addLayout(row)
 
     # ── verdicts (a second tap clears) ────────────────────────────────────
 
@@ -507,6 +766,7 @@ class AnalysisPanel(QWidget):
         n = int(btn.property("score"))
         current = (feedback.verdicts(self._selected).get(feedback.RUN) or {}).get("score")
         feedback.set_score(self._selected, None if current == n else n)
+        analysis.verdict_changed()
         self._reload()
 
     def _rate(self) -> None:
@@ -514,8 +774,24 @@ class AnalysisPanel(QWidget):
         if btn is None or self._selected is None:
             return
         fid, key = str(btn.property("finding")), str(btn.property("rating"))
-        current = (feedback.verdicts(self._selected).get(fid) or {}).get("rating")
-        feedback.set_rating(self._selected, fid, None if current == key else key)
+        before = feedback.verdicts(self._selected).get(fid) or {}
+        feedback.set_rating(self._selected, fid, None if before.get("rating") == key else key)
+        if before.get("note") and before.get("rating") != key:
+            feedback.set_note(self._selected, fid, None)   # a reason belongs to its verdict
+        analysis.verdict_changed()
+        self._reload()
+
+    def _set_reason(self) -> None:
+        btn = self.sender()
+        if btn is None or self._selected is None:
+            return
+        fid, text = str(btn.property("finding")), str(btn.property("reason"))
+        before = feedback.verdicts(self._selected).get(fid) or {}
+        current = before.get("note")
+        feedback.set_note(self._selected, fid, None if current == text else text)
+        if text.startswith(feedback.CONFIRMED) and current != text and not before.get("rating"):
+            feedback.set_rating(self._selected, fid, "useful")   # it was right enough to name
+        analysis.verdict_changed()
         self._reload()
 
     def _toggle_acted(self) -> None:
@@ -525,4 +801,5 @@ class AnalysisPanel(QWidget):
         fid = str(btn.property("finding"))
         current = (feedback.verdicts(self._selected).get(fid) or {}).get("acted")
         feedback.set_acted(self._selected, fid, not current)
+        analysis.verdict_changed()
         self._reload()

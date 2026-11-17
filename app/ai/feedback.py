@@ -17,6 +17,14 @@ from app.db import db
 RATINGS = ("useful", "not_useful", "wrong")
 RUN = ""        # finding_id of the whole-run row
 
+# Why a finding wasn't worth the crew's time, one tap each (Control →
+# Analysis). Stored in `analysis_feedback.note`; the curator learns most from
+# these (app/ai/curate.py): a verdict says what, a reason says why.
+REASONS = {
+    "not_useful": ("Normal reading", "By design", "Already known", "Not actionable"),
+    "wrong": ("Wrong figure", "Wrong device", "Misread the fault"),
+}
+
 
 def _session_names(uids: list[str]) -> tuple[str, str, str]:
     """(file name, match key, when the log started) of a run's first session."""
@@ -82,7 +90,7 @@ def run_trace(run_id: int) -> tuple[list, dict[str, str]]:
     return steps, names
 
 
-def lessons(limit: int = 8) -> list[str]:
+def lessons(limit: int = 6) -> list[str]:
     """
     The crew's verdicts on earlier findings, as short lines the analyst reads
     before it starts (pipeline `lessons`): the closest thing this model gets
@@ -90,7 +98,7 @@ def lessons(limit: int = 8) -> list[str]:
     ones before useful ones, one line per distinct claim.
     """
     rows = db.fetchall(
-        """SELECT f.finding_id, f.rating, f.acted, r.insights
+        """SELECT f.finding_id, f.rating, f.acted, f.note, r.insights
            FROM analysis_feedback f JOIN analysis_run r ON r.id = f.run_id
            WHERE f.finding_id <> '' AND (f.rating IS NOT NULL OR f.acted = 1)
            ORDER BY f.rated_at DESC""")
@@ -107,14 +115,16 @@ def lessons(limit: int = 8) -> list[str]:
             continue
         seen.add(claim)
         verdict = "acted on (useful)" if r["acted"] else (r["rating"] or "").replace("_", " ")
-        picked.append((0 if r["acted"] else order.get(r["rating"], 3), f"{verdict}: {claim}"))
+        why = f" (their reason: {r['note'][:120]})" if r["note"] else ""
+        picked.append((0 if r["acted"] else order.get(r["rating"], 3),
+                       f"{verdict}: {claim}{why}"))
     return [line for _rank, line in sorted(picked, key=lambda x: x[0])[:limit]]
 
 
 def verdicts(run_id: int) -> dict[str, dict]:
     """finding_id → {rating, acted, score}; the run's own row is under ''."""
     return {r["finding_id"]: {"rating": r["rating"], "acted": bool(r["acted"]),
-                              "score": r["score"]}
+                              "score": r["score"], "note": r["note"] or ""}
             for r in db.fetchall("SELECT * FROM analysis_feedback WHERE run_id = ?",
                                  (run_id,))}
 
@@ -131,6 +141,26 @@ def set_rating(run_id: int, finding_id: str, rating: str | None) -> None:
     if rating is not None and rating not in RATINGS:
         raise ValueError(rating)
     _upsert(run_id, finding_id, "rating", rating)
+
+
+CONFIRMED = "Confirmed: "      # a note naming the cause it really was (`csa.py` id)
+
+
+def confirmations() -> dict[str, int]:
+    """How often the crew confirmed each CSA cause ("Confirmed: brownout.weak_battery"),
+    across every run: this robot's own history, shown with the candidates."""
+    out: dict[str, int] = {}
+    for r in db.fetchall("SELECT note FROM analysis_feedback WHERE note LIKE ?",
+                         (CONFIRMED + "%",)):
+        key = r["note"][len(CONFIRMED):].strip()
+        if key:
+            out[key] = out.get(key, 0) + 1
+    return out
+
+
+def set_note(run_id: int, finding_id: str, note: str | None) -> None:
+    """The crew's reason for a verdict (one of `REASONS`, or None)."""
+    _upsert(run_id, finding_id, "note", (note or "").strip()[:200] or None)
 
 
 def set_acted(run_id: int, finding_id: str, acted: bool) -> None:

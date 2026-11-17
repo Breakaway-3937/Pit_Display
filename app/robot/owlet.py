@@ -26,6 +26,7 @@ hoot where the hoot already is; it may well not have gigabytes free on `C:`.
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -81,16 +82,64 @@ def _patterns_for_this_machine() -> list[str]:
     return by_arch.get(arch, by_arch["x86_64"])
 
 
+# A hoot's format version ("compliancy") is the byte at 0x46, after the bus
+# name, and each owlet reads only its own (owlet 26.3.0 refuses last season's
+# hoots: "Input file is an unsupported version: 0"; the team's 2025 logs are
+# format 13, 2026's are 19). From CTRE's redistribution index
+# (redist.ctr-electronics.com/index.json, 2026-11-05): the newest owlet for
+# each format, and the season it belongs to.
+COMPLIANCY_AT = 0x46
+OWLET_FOR = {6: "1.0.1.1", 9: "25.0.0", 10: "25.0.1", 11: "25.0.2", 12: "25.0.3",
+             13: "25.4.1", 18: "26.0.0", 19: "26.3.0", 20: "25.90.2", 21: "26.70.0"}
+SEASON = {6: "2024", 9: "2025 beta", 10: "2025 beta", 11: "2025 beta", 12: "2025 beta",
+          13: "2025", 18: "2026 beta", 19: "2026", 20: "2027 alpha", 21: "2027 alpha"}
+COMPLIANCY_OF = {v: c for c, v in OWLET_FOR.items()} | {
+    "25.1.0": 13, "25.2.0": 13, "25.4.0": 13, "26.1.0": 19, "26.1.3": 19, "26.2.0": 19,
+    "25.90.0": 20, "25.90.1": 20}
+REDIST = "https://redist.ctr-electronics.com/tools/owlet/{v}/owlet-{v}-{platform}"
+
+
+def hoot_compliancy(path: Path) -> int | None:
+    """The hoot's format version, or None if the header is too short to say."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(COMPLIANCY_AT + 1)
+    except OSError:
+        return None
+    return head[COMPLIANCY_AT] if len(head) > COMPLIANCY_AT else None
+
+
+def _version(exe: Path) -> str | None:
+    m = re.match(r"owlet-(\d+(?:\.\d+){2,3})-", exe.name)
+    return m.group(1) if m else None
+
+
 class OwletError(Exception):
     """Conversion failed in a way the operator can act on."""
 
 
-def find_owlet() -> Path | None:
+def _bundled() -> list[Path]:
+    """Every bundled owlet for this machine, best platform match first, then
+    newest version first."""
+    out: list[Path] = []
+    if BUNDLED_DIR.is_dir():
+        for pattern in _patterns_for_this_machine():
+            found = sorted(BUNDLED_DIR.glob(pattern), key=lambda p: tuple(
+                int(x) for x in (_version(p) or "0").split(".")), reverse=True)
+            out += [p for p in found if p not in out]
+            if found:
+                break
+    return out
+
+
+def find_owlet(compliancy: int | None = None) -> Path | None:
     """
-    The owlet binary for this machine, or None.
+    The owlet binary for this machine, or None. With `compliancy` (a hoot's
+    format, `hoot_compliancy`), the bundled owlet that reads that format if
+    there is one: last season's logs need last season's owlet.
 
     Order: `$PIT_OWLET` (an explicit override always wins), then the bundled
-    copy in `tools/owlet/`, then `owlet` on `PATH` for a system install.
+    copies in `tools/owlet/`, then `owlet` on `PATH` for a system install.
     """
     override = os.environ.get("PIT_OWLET")
     if override:
@@ -98,13 +147,13 @@ def find_owlet() -> Path | None:
         if p.is_file():
             return p
 
-    if BUNDLED_DIR.is_dir():
-        for pattern in _patterns_for_this_machine():
-            # Sorted so a directory holding two versions picks the higher one
-            # rather than whatever the filesystem happened to return first.
-            found = sorted(BUNDLED_DIR.glob(pattern))
-            if found:
-                return found[-1]
+    bundled = _bundled()
+    if compliancy is not None:
+        for exe in bundled:
+            if COMPLIANCY_OF.get(_version(exe) or "") == compliancy:
+                return exe
+    if bundled:
+        return bundled[0]
 
     on_path = shutil.which("owlet")
     return Path(on_path) if on_path else None
@@ -226,7 +275,11 @@ def convert(hoot: Path, out: Path,
     and a pit crew that cannot read last match's log because a licence server is
     unreachable is exactly the failure this app exists to avoid.
     """
-    exe = find_owlet()
+    comp = hoot_compliancy(hoot)
+    exe = find_owlet(comp)
+    have = COMPLIANCY_OF.get(_version(exe) or "") if exe is not None else None
+    if exe is not None and comp is not None and have is not None and have != comp:
+        raise OwletError(_wrong_owlet(hoot, comp, exe))
     if exe is None:
         raise OwletError(
             f"No owlet binary for {platform.system()} {platform.machine()}. "
@@ -257,6 +310,21 @@ def convert(hoot: Path, out: Path,
         raise OwletError(
             f"owlet reported success but wrote no data for {hoot.name}.")
     return out
+
+
+def _wrong_owlet(hoot: Path, comp: int, exe: Path) -> str:
+    """What to do about a hoot from another season: name the owlet it needs."""
+    want = OWLET_FOR.get(comp)
+    season = SEASON.get(comp, f"format {comp}")
+    if want is None:
+        return (f"{hoot.name} is a hoot in format {comp}, which no owlet CTRE lists "
+                f"reads ({exe.name} reads format {COMPLIANCY_OF.get(_version(exe) or '')}).")
+    plat = {"Darwin": "macosuniversal", "Windows": "windowsx86-64.exe"}.get(
+        platform.system(), "linuxx86-64")
+    return (f"{hoot.name} is a {season} hoot (format {comp}); {exe.name} reads only "
+            f"its own season's. Put owlet {want} from CTRE in {BUNDLED_DIR} beside it "
+            f"({REDIST.format(v=want, platform=plat)}); the app picks the right one "
+            f"for each log.")
 
 
 def _is_licence_failure(result: subprocess.CompletedProcess) -> bool:

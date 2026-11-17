@@ -16,6 +16,7 @@ password, the Nexus event, judges slides, the CAD model.
 from __future__ import annotations
 
 import os
+import json
 import time
 
 from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
@@ -199,12 +200,43 @@ class _SyncService(QObject):
             pass
 
     def sync_files_now(self) -> None:
-        """Move team files in the next cycle even outside the night window
-        (R8): the admin's override on venue or hotel Wi-Fi. One cycle only."""
+        """Move team files now, outside the night window (R8): the admin's
+        override on venue or hotel Wi-Fi. Keeps going, cycle after cycle,
+        until nothing is waiting (at most `engine.FORCE_MAX_S`)."""
         if not self.enabled:
             return
         self._engine_for(self.prefs).force_files = True
         self.sync_now()
+
+    def order_files_now(self, machine_id: str, name: str = "") -> None:
+        """The same on another machine: a `sync_order` row it runs when it
+        next pulls (within a minute while it's on), reporting back on the row."""
+        if not self.enabled:
+            return
+        self._engine_for(self.prefs).ask_files_now(machine_id, name)
+        self.sync_now()
+
+    @property
+    def files_forced(self) -> bool:
+        return self._engine is not None and self._engine.force_files
+
+    def orders(self) -> dict[str, dict]:
+        """The newest order for each machine: {target id: order}."""
+        from app.db import db
+        out: dict[str, dict] = {}
+        try:
+            rows = db.fetchall("SELECT v FROM sync_meta WHERE k LIKE 'order:%'")
+        except Exception:
+            return out
+        for (v,) in rows:
+            try:
+                o = json.loads(v)
+            except ValueError:
+                continue
+            t = o.get("target")
+            if t and str(o.get("asked_at", "")) >= str(out.get(t, {}).get("asked_at", "")):
+                out[t] = o
+        return out
 
     def _notice_local_change(self) -> None:
         """A local edit waiting to go: don't make it wait for the minute timer."""
@@ -242,8 +274,9 @@ class _SyncService(QObject):
             self._refresh(rep.applied)
             self.applied.emit(set(rep.applied))
         self.state_changed.emit()
-        progressed = rep.ok and (rep.pulled or rep.downloaded_bytes)
-        if self._again or (rep.waiting and progressed):
+        progressed = rep.ok and (rep.pulled or rep.downloaded_bytes or
+                                 (rep.forcing and rep.uploaded_bytes))
+        if self._again or ((rep.waiting or rep.forcing) and progressed):
             # A change arrived mid-cycle, or downloads are landing: go again
             # soon. A download that failed waits for the timer instead.
             self._again = False

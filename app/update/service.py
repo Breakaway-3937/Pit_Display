@@ -215,8 +215,15 @@ class _UpdateService(QObject):
         return target
 
     def restart(self) -> bool:
-        """Relaunch through the link, so the new version is what comes up."""
-        return install.relaunch()
+        """Relaunch through the link, so the new version is what comes up.
+        The session is handed over first: the new build starts while this
+        one is still closing."""
+        from app.diagnostics import spool
+        spool.hand_over()
+        started = install.relaunch()
+        if not started:
+            spool.hand_over(False)
+        return started
 
     # ── Plumbing ─────────────────────────────────────────────────────────
 

@@ -118,9 +118,18 @@ def short_match_key(match_key: str) -> str:
 PIT_STATUS, PIT_EVENT = "pit_status", "pit_event"
 PUSHED_ONLY = (PIT_STATUS, PIT_EVENT)
 
+# "Sync files now" on another machine (Brayden, 2026-10-18: a pit with no
+# music can't wait for the night window). uid `<target machine>:<order id>`,
+# `{action: "files_now", target, target_name, by, by_name, asked_at, state:
+# asked|running|done|timed_out, started_at?, finished_at?, up_bytes?,
+# down_bytes?, left?}`. Any machine (or home) asks; the target runs it and
+# writes the state back on the same row. Kept in `sync_meta` (`order:<uid>`).
+SYNC_ORDER = "sync_order"
+
 # Push order for everything the outbox can hold.
 ORDER = [s.name for s in SPECS] + [LOG_SESSION, "setting", "file", ANALYSIS_BOARD,
-                                   BLOB_REQUEST, MACHINE_MANIFEST, PIT_STATUS, PIT_EVENT]
+                                   BLOB_REQUEST, MACHINE_MANIFEST, SYNC_ORDER, PIT_STATUS,
+                                   PIT_EVENT]
 
 
 def order_key(tbl: str) -> int:

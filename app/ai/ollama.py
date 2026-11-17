@@ -41,6 +41,16 @@ class Reply:
     output_tokens: int = 0
     seconds: float = 0.0
     message: dict = field(default_factory=dict)            # as returned, for the transcript
+    truncated: bool = False                                # stopped at max_tokens, not done
+
+
+# Qwen3's own sampling for non-thinking use (its model card: top_k 20, top_p
+# 0.8, min_p 0; "don't use greedy decoding", which loops). The temperature
+# stays each caller's: the checks, not variety, make an answer right, and
+# structured output is grammar-bound either way. A retry after a loop adds a
+# presence penalty (the card's remedy for "endless repetitions").
+SAMPLING = {"top_k": 20, "top_p": 0.8, "min_p": 0.0}
+LOOP_PENALTY = 1.0
 
 
 class Ollama:
@@ -83,10 +93,15 @@ class Ollama:
 
     def chat(self, model: str, messages: list[dict], *, tools: list[dict] | None = None,
              format: dict | None = None, temperature: float = 0.2,
-             think: bool | None = False) -> Reply:
+             think: bool | None = False, max_tokens: int | None = None,
+             presence_penalty: float = 0.0) -> Reply:
+        options = {"temperature": temperature, "num_ctx": self.num_ctx, **SAMPLING}
+        if max_tokens:
+            options["num_predict"] = int(max_tokens)
+        if presence_penalty:
+            options["presence_penalty"] = presence_penalty
         body: dict = {"model": model, "messages": messages, "stream": False,
-                      "keep_alive": self.keep_alive,
-                      "options": {"temperature": temperature, "num_ctx": self.num_ctx}}
+                      "keep_alive": self.keep_alive, "options": options}
         if tools:
             body["tools"] = [{"type": "function", "function": {
                 "name": t["name"], "description": t["description"],
@@ -117,4 +132,5 @@ class Ollama:
         return Reply(content=msg.get("content") or "", tool_calls=calls,
                      prompt_tokens=int(out.get("prompt_eval_count") or 0),
                      output_tokens=int(out.get("eval_count") or 0),
-                     seconds=time.monotonic() - t0, message=msg)
+                     seconds=time.monotonic() - t0, message=msg,
+                     truncated=out.get("done_reason") == "length")

@@ -1345,7 +1345,7 @@ Mac online, channel `dev`; (3) `kill -9` the app and relaunch → a `fatal`
 > last 7 days of `crash.log`. The Windows test machine runs beta.9 overnight
 > from tonight. **Over to home:** run checks (1)–(4) against `ops.*`.
 
-## R17 · 2026-10-18 · From Brayden: wear warnings, through the whole analysis · **Home built (2026-10-18, 5bc9d09); waits for the pit to push wear.py**
+## R17 · 2026-10-18 · From Brayden: wear warnings, through the whole analysis · **Done (2026-10-18, home 5bc9d09 against pit 31a49c9)**
 
 **Why.** Brayden wants the analysis to catch a motor wearing out before it
 fails, and that ability carried through every part of the analysis. The pit
@@ -1448,3 +1448,154 @@ the same pipeline, so it needs the same tool.
 > re-runs parity (17 calls), `wear_check.py` and the 63-session pass on
 > the clone, and marks R17 Done. Home's analysis runs on the Mac, so the VM
 > needs no redeploy for R17.
+
+## R18 · 2026-10-18 · From Brayden: "Sync files now" on another machine · **Pit built (after beta.10); nothing required of home**
+
+**Why.** Central_Home had no music: team files move only in the night
+window, and "Sync files now" moved them for one cycle (≤ 240 s), on that
+machine only. Brayden: "I need to have the ability to hard push a sync on
+each system."
+
+**What changed on the pit:** "Sync files now" keeps the window open until
+nothing is waiting (≤ 3 h). A new pushed-and-pulled table, **`sync_order`**
+(DATABASE.md Sync rule 14), orders it on another machine: uid
+`<target machine id>:<order id>`, `{action: "files_now", target,
+target_name, by, by_name, asked_at, state: asked|running|done|timed_out,
+started_at?, finished_at?, up_bytes?, down_bytes?, left?}`. The target writes
+each state back on the same row. Orders whose hub `at` is over 12 h old are
+never run.
+
+**For home:** the rows arrive in the feed like any table; mirror them as you
+mirror the rest (nothing to apply). Optional: home may order a machine by
+pushing an `asked` row (`by: "home"`), e.g. from an `ops` procedure after a
+`sync_verdict` finds it missing files. **Check:** after a pit's order, the
+row's last version at the hub has `state` `done` and `finished_at`.
+
+R17 is pushed: `beta` 31a49c9 (v0.2.1-beta.10).
+
+> **Home, 2026-10-18 (later). R17 done.** Home pulled `../Pit_Display_home`
+> to `31a49c9` (v0.2.1-beta.10, `PROMPT_VERSION` 6); its `wear.py`,
+> `anomaly.py` and `tools.py` are byte-identical to the copy checked above.
+> All checks were re-run on home's own clone:
+> * **R1 parity: ALL CHECKS PASSED**, 17 calls (12 tools; `wear` three ways:
+>   whole session, TalonFX 1, a missing session) plus BridgeBrownout 8 and
+>   Pigeon2 25 = 4.
+> * `anomalies` on all 63 sessions: **no `wear` items** (the same 21 other
+>   flags, no errors); `wear` on all 63: no warnings, 14 with the too-few-logs note.
+> * TalonFX 10 on `07b51a57…`: `faults_vs_peers`
+>   `[20.0, 6.0, 2.0, 20.0, 18.0, 42.0]`, no warning ✓.
+> * `tools/wear_check.py`: **6/6** (TalonFX 41 0.45 against 0.3, +50%).
+> * `HomeToolbox` now offers 12 tools including `wear`; the pipeline's
+>   interface to home is unchanged (its one new call, `toolbox.call("wear")`,
+>   is served). Home's next analysis runs are v6. No VM redeploy (analysis
+>   runs on the Mac).
+
+## R19 · 2026-11-03 · From Brayden: the playbook, a learning loop on the crew's verdicts · **Open**
+
+The pit's analysis now learns from the crew's ratings (`app/ai/playbook.py`,
+`app/ai/curate.py`, PROMPT_VERSION 7; CLAUDE.md "Robot-log analysis"). When
+the engine is idle, a pit turns new verdicts (and the crew's one-tap reason,
+`analysis_feedback.note`) into short lessons, checked by code, kept in a
+synced team setting doc **`playbook`** (`{lessons, retired_seeds,
+curated_at, history}`). Every run is given the lessons its data touches, and
+code applies an `avoid` lesson the model keeps ignoring. `pipeline.analyse()`
+also drops "nothing to see" filler findings by code now, and keeps every
+request inside the context.
+
+What home needs to do, all of it in the call home already makes:
+
+* pass `playbook_lessons=playbook.active(doc)`, where `doc` is the `playbook`
+  setting doc's data as pulled (`playbook.active` takes the dict; an absent
+  doc is `playbook.DEFAULTS`, which gives the built-in seeds);
+* pass `ctx_tokens=` the context the model runs with (home's Ollama
+  `num_ctx`; the default is 16384);
+* **don't curate at home.** The pits learn and the doc syncs; two curators
+  would race on one doc. Home reads it.
+
+Nothing changes in the tools, the contracts or the tables: `stats` gains
+`playbook` (lesson ids given), `filler`, `enforced`, `repeats`, `condensed`,
+`recovered`, which home stores as it stores the rest of `stats`.
+
+**Check:** a home run after this has `stats.prompt_version` 7 and a
+non-empty `stats.playbook` for a log with a BootDuringEnable or
+UnlicensedFeatureInUse fault (seeds `seed_reboot_while_enabled`,
+`seed_unlicensed_feature`), and `analysis.vw_scoreboard` shows a v7 row.
+
+> **Pit, 2026-11-03. Addendum (PROMPT_VERSION 8): two new detectors inside
+> `anomaly.find`, which home runs unchanged.** `app/robot/partners.py` (twin
+> motors found from velocity; reads `series`, `signal`, `device`,
+> `samples.sample_1s`) and `app/robot/loop_health.py` (the code's loop and
+> console; also reads **`signal_enum`** and **`samples.sample`** for the
+> `RealOutputs/Console` text, inside a `try`, so a database without them only
+> loses the slow-part names). New kinds `partner_idle`, `partner_mismatch`,
+> `loop_overrun` carry `must_cover: true`, `value`, `unit`. Plain SQL, no
+> SQLite-only syntax; per home's ask, the warning first. **Check:** home's
+> `anomalies` for `akit_26-10-01_22-51-54_omb.wpilog` returns a
+> `loop_overrun` (warn, `stall_s` 1, slow parts led by
+> `SmartDashboard.updateValues`), equal to the pit's (R1 parity).
+
+## R20 · 2026-11-03 · From Brayden: the stationary CSA (Driver Station logs, incidents, diagnosis) · **Open**
+
+The pit's analysis now works like a Control System Advisor (CLAUDE.md "The
+stationary CSA"; PROMPT_VERSION 9):
+
+* **A third log kind, `dslog`**: the Driver Station's `.dslog` + `.dsevents`
+  (`app/robot/dslog.py`). Sessions with `source_kind = 'dslog'` and `DS/…`
+  signals on `Robot` arrive in bundles like any other; home's tables take
+  them unchanged (DATABASE.md, `source_kind`). Home's `recorded_with` port
+  should also take a DS log whose span covers a robot log
+  (`incidents.recording`: same start ± 60 s, or a dslog overlapping it).
+* **Two new read-only tools**, `incidents(session_uid)` and
+  `moment(session_uid, at_s, span_s)` (`app/ai/tools.py`, over
+  `app/robot/events.py` and `incidents.py`, plain SQL; they read
+  `signal_enum` and `samples.sample` too). Home's toolbox should serve them
+  with the same keys (R1 parity), as it serves `anomalies`.
+* **The CSA stage**: `pipeline.analyse(..., diagnose_issues=True,
+  csa_confirmed=…)` diagnoses each issue before the analyst writes;
+  `csa_confirmed` is `{cause id: count}` from `analysis_feedback.note`
+  values starting `Confirmed: ` (the pit's `feedback.confirmations()`). Until
+  home serves `incidents`, the stage finds no tool and is skipped, never
+  fatal.
+
+**Check:** home's `incidents` for `akit_26-10-01_21-15-07_omb.wpilog` lists
+a `disabled_mid_match` issue (fault) and a `device_fault:RemoteSensorDataInvalid`
+issue (×10 or so, 6 devices), as the pit's does; a home run with
+`diagnose_issues=True` has `stats.incidents` and `csa_…` findings.
+
+**Addendum (2026-11-03, PROMPT_VERSION 10):**
+
+* `incidents` issues carry **`before`** (`incidents.history` /
+  `incidents.before`): over the robot's last 10 earlier recordings, `in`,
+  `of`, `streak`, `last`, `last_match`, or `{"in": 0, "of": n, "new": true}`;
+  absent when there are no earlier recordings. The knowledge base scores it
+  (`{"recurring_gte": 3}`) and the CSA's claim says "new" or "also in n of
+  the last m recordings", so home's `incidents` needs the same key for its
+  diagnoses to match the pit's.
+* **`publish_early=True`** publishes a board laid out by code
+  (`app/ai/layout.py`) as soon as the CSA's diagnoses exist, then the full
+  board **under the same uid**: home's sink `publish(uid, board)` must
+  upsert (the pit's does). Off by default; home can leave it off.
+* A designer board rejected twice is now laid out by code
+  (`models.designer = "code"`) instead of rejecting the run.
+* Both clients (`ollama.py`, `llama.py`) send Qwen3's sampling (`top_k` 20,
+  `top_p` 0.8, `min_p` 0) and a per-call `max_tokens` / `num_predict`; a reply
+  that hits it is `Reply.truncated` and goes back as "cut off", not as bad
+  JSON. Home imports them from the checkout, so nothing to port.
+
+* Past 3 detector items, code writes their findings up front and the model
+  adds only what they don't cover (`stats.code_wrote`); 3+ controllers
+  missing from one bus are one `detector_missing_<n>_controllers` finding.
+  Both are in `pipeline.analyse`, so home gets them from the checkout.
+
+* **The team's real DS logs (2026-11-05)** changed the reader and the
+  events: DS sessions start in **UTC** (`dslog.Reader.started`; the
+  reader was never released in local time, so nothing needs re-importing); `DS/Enabled` rides through
+  sub-second brownout disables; new event kinds (`low_memory`,
+  `console_spam`, `radio_firmware`, `fms_lost`, `ds_overloaded`,
+  `joystick_missing`, `ping_radio_bad` / `ping_rio_bad` / `ping_ds_radio_bad`)
+  and `incidents` returns `recording_kinds`. All in `app/robot/`, which home
+  imports from the checkout.
+
+**Check (addendum):** home's `incidents` for `akit_26-09-21_03-37-41.wpilog`
+gives the `device_fault:RemoteSensorDataInvalid` issue `before.in` 5 of 10,
+as `uv run tools/csa_report.py` does on the pit.

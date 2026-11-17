@@ -9,7 +9,8 @@ manifests) sync all day; only bytes wait. Robot-log bundles aren't covered.
 
 A **team setting** (setting doc `transfer`), so home can switch `enforce` off
 off-season. Enforced until anyone says otherwise. "Sync files now" on the
-Telemetry panel opens it for one cycle (`Engine.force_files`).
+Telemetry panel opens it until nothing is waiting (`Engine.force_files`, at
+most `FORCE_MAX_S`), on this machine or, by a `sync_order`, on another.
 """
 
 from __future__ import annotations

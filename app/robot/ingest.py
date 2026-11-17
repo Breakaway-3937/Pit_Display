@@ -229,16 +229,62 @@ class _HootSource:
         owlet.clear_scratch(self._dir)
 
 
+class _DslogSource:
+    """The Driver Station's `.dslog`, with its `.dsevents` read from beside it
+    (app/robot/dslog.py). Knows its own start time and, from the FMS's
+    message, its match."""
+
+    kind = "dslog"
+
+    def __init__(self, path: Path):
+        from app.robot import dslog
+        try:
+            self._reader = dslog.Reader(path)
+        except (OSError, ValueError) as err:
+            raise ImportError_(str(err)) from err
+        self.started = self._reader.started
+        self.match_key = self._reader.match
+
+    def rows(self) -> Iterator[Row]:
+        yield from self._reader.rows()
+
+    def fraction(self) -> float:
+        return self._reader.fraction()
+
+    @property
+    def skipped(self) -> int:
+        return self._reader.skipped
+
+    @property
+    def enum_overflow(self) -> set[str]:
+        return self._reader.enum_overflow
+
+    def close(self) -> None:
+        self._reader.close()
+
+
 def _open_source(path: Path, say: Callable[[str, float], None]):
     """The right `_Source` for this file, chosen by extension."""
     suffix = path.suffix.lower()
+    from app.robot import batch
+    try:
+        with open(path, "rb") as f:
+            start = f.read(600)
+    except OSError:
+        start = b""
+    _, ok, why = batch.describe_header(start, suffix)
+    if not ok and why.startswith("a web page"):
+        # Said plainly, before owlet's "unsupported version: 0" or a missing header.
+        raise ImportError_(f"{path.name} is {why}.")
+    if suffix == ".dslog":
+        return _DslogSource(path)
     if suffix == ".hoot":
         return _HootSource(path, say)
     if suffix == ".wpilog":
         return _WpilogSource(path)
     raise ImportError_(
         f"Don't know how to read {path.name}. Import a .hoot from the "
-        f"controller or a .wpilog from the roboRIO.")
+        f"controller, a .wpilog from the roboRIO or a .dslog from the Driver Station.")
 
 
 def _connect(main_path: Path) -> sqlite3.Connection:
@@ -324,8 +370,9 @@ def import_log(
                     started_at, match_key, source_bytes, archive_path,
                     source_sha256, source_head_sha256, source_header)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (str(path), path.name, src.kind, meta.serial, meta.started,
-             meta.match_key, total_bytes, str(archive_path) if archive_path else None,
+            (str(path), path.name, src.kind, meta.serial,
+             getattr(src, "started", None) or meta.started,
+             getattr(src, "match_key", None) or meta.match_key, total_bytes, str(archive_path) if archive_path else None,
              fp.sha256, fp.head_sha256, fp.header),
         )
         session_id = cur.lastrowid

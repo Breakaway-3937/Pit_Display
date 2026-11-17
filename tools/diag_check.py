@@ -203,8 +203,32 @@ def sessions() -> None:
           previous is not None and previous.get("id") == sid)
     spool.end_session()
     check("a clean exit removes the mark", not (spool.root() / "session.json").exists())
+
+    # An update's restart: the new build starts while this one is closing
+    # (beta.10 reported the old session unclean, 2 s before its own exit).
     spool._session = None
     spool._previous = None
+    spool.begin_session()
+    spool.hand_over()
+    old = dict(spool._session)
+    spool._session = None          # the successor starts, the old one not closed yet
+    check("a launch started by an update's restart finds no unclean exit",
+          spool.begin_session() is None)
+    new = dict(spool._session)
+    spool._session = old           # the old one closes now
+    spool.beat()
+    spool.end_session()
+    check("…and the closing build leaves the successor's mark alone",
+          (spool.read_json(spool.root() / "session.json") or {}).get("id") == new["id"])
+    spool._session = new
+    spool.hand_over()
+    spool.hand_over(False)         # the successor didn't start
+    spool._session = None
+    check("a restart that didn't start keeps the crash watch",
+          (spool.begin_session() or {}).get("id") == new["id"])
+    spool._session = None
+    spool._previous = None
+    (spool.root() / "session.json").unlink(missing_ok=True)
     spool.begin_session()
 
 

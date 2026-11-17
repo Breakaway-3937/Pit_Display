@@ -28,7 +28,7 @@ from app.ai import checks
 from app.ai.pipeline import FAULT_GUIDE
 
 # Bump when the prompt or the checks change what an answer can say.
-ASK_VERSION = 5
+ASK_VERSION = 6      # 6: incidents and moment (the CSA's tools)
 _MATCH = re.compile(r"\b((?:qm|qf|sf|f|pm|em)\d{1,3})\b", re.I)
 
 ASK_SYSTEM = """You answer an FRC pit crew's questions about their robot's logs, during an event, \
@@ -51,6 +51,10 @@ motor getting worse across logs (more current for the same speed, heating or fau
 the other motors): say so whenever the question is about a motor's health or what to maintain. \
 The wear tool gives any motor's trend log by log; if it has no warnings, nothing is wearing out \
 that the logs can show.
+- "What went wrong", "why did it die", "did we lose comms": incidents lists every moment \
+something went wrong across every log of that recording (the Driver Station log too), \
+grouped into issues with the readings at their worst moment; moment gives what every log \
+read at one time.
 - The overview's vitals don't say which device a figure came from. To say which motor or \
 device ("hottest", "highest current"), call series_stats for that signal and use the device it \
 names for that figure. Never attach a device to a figure some other way.
@@ -237,7 +241,7 @@ def ask(toolbox, llm, model: str, question: str, *,
             step("thinking" if attempt == 0 else "checking its figures")
             while True:
                 reply = llm.chat(model, msgs, tools=specs if used < max_tool_calls else None,
-                                 temperature=0.1 if attempt == 0 else 0.4)
+                                 temperature=0.1 if attempt == 0 else 0.4, max_tokens=900)
                 msgs.append({"role": "assistant", "content": reply.content,
                              **({"tool_calls": reply.message.get("tool_calls")}
                                 if reply.tool_calls else {})})

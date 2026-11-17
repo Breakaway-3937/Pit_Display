@@ -226,6 +226,66 @@ of the robot running before it can judge; until then it says so. When several
 motors warn at once, it says so once and points at a shared cause (wiring,
 power, a code change) rather than every motor.
 
+**The pit's CSA.** Import the Driver Station's logs too: in
+`C:\Users\Public\Documents\FRC\Log Files` on the DS laptop, each match is a
+`.dslog` and a `.dsevents` with the same name. Import the `.dslog` (or the
+whole folder); the `.dsevents` beside it comes along. With them the analysis
+sees what the robot's own logs can't: comms drops, lost packets, the
+watchdog, the radio, and the DS's messages.
+
+Every analysis now goes through the match like a Control System Advisor:
+it lines up every log recorded together (the robot's, each CAN bus's, the
+DS's), finds each moment something went wrong (a brownout, a comms drop, a
+controller rebooting, a config that failed at boot, an auto file that wasn't
+deployed, the CAN bus erroring), and diagnoses each kind of problem: the
+likely cause, how sure it is, the evidence, and what to check first. When it
+can't tell, it says so. Under each of those findings, tap **What was it
+really?** once you've found the real cause: the next diagnosis knows this
+robot has had it before.
+
+Each diagnosis also says whether the problem is **new** ("new, not in the
+last 10 recordings": something changed since the last match) or **keeps
+happening** ("also in 5 of the last 10 recordings": the cause travels with
+the robot, so wiring, code or a mechanism, not one battery or one field).
+
+**Copying logs off the robot.** If an import says a file is "a web page,
+not a log: the copy from the robot failed", the robot's web file browser
+saved its error page instead of the log; copy that log again (a USB stick
+in the roboRIO, or SFTP, is more reliable). Last season's `.hoot` files need
+last season's owlet: the import names the file to add.
+
+**What the Driver Station log adds.** With the DS's logs in, the
+analysis also reads: the roboRIO running low on memory, a line the robot
+code prints over and over (it names the line: printing every loop slows the
+code), the radio's firmware being out of date, the DS losing the field,
+the laptop not keeping up, a controller the code expects on a port with
+nothing plugged in, and, when comms drop, which hop failed (the robot's
+radio, the roboRIO, or the DS side). It tells a roboRIO reboot (about a
+minute without comms, then the code starting fresh) from a code crash. A
+robot switched off in the pit or the queue isn't reported as a comms loss.
+
+**The first look.** The diagnoses go on the Analysis screen about a minute
+into a run, marked "First look: the CSA's diagnoses", and the strips flash
+then. The full board replaces it when the analysis finishes, a few minutes
+later; it doesn't flash again. If you're short on time before a match, the
+first look is the part to read.
+
+**Problems the robot never reports itself.** Two more things the analysis
+checks in every log:
+
+* **The robot code falling behind.** When the code's loop takes longer than
+  its 20 ms, and especially past 100 ms (long enough for motor safety to cut
+  the motors and the Driver Station to show its watchdog), the board says so,
+  with the parts of the code the robot's own console named as slow
+  (`Shooter.periodic`, `SmartDashboard.updateValues`, …). That's usually too
+  much logging or dashboard data each loop, PDH or CAN reads, or vision.
+* **A motor not pulling its weight.** Two motors that turn together (a
+  shooter's pair, a geared intake) should share the work. If one is turned
+  by its partner but draws almost no current and stays cool, it's dead,
+  unplugged or never set up in the code: that's red. If a pair drifts out of
+  its usual balance (a belt slipping, a motor failing), that's amber. It
+  finds the pairs on its own, so nothing has to be labelled first.
+
 **Put a board on an overhead screen:** pick the screen in the sidebar →
 Content → **Analysis board**. It shows the newest board, with its charts, and
 updates by itself when the next one is ready.
@@ -240,6 +300,23 @@ because of it, and rank the run **1–5**. Tap again to undo. Ratings sync to
 every machine, so they can be done later from anywhere. **"All clear" is a
 useful finding when it's right**: rate what saved the crew time, not what
 found the most problems.
+
+**Say why, with one tap.** After **Not useful** or **Wrong**, a row of
+reasons appears (*Normal reading*, *By design*, *Already known*, *Not
+actionable*; *Wrong figure*, *Wrong device*, *Misread the fault*). Tap the
+one that fits. The reason is what the analysis learns from.
+
+**The playbook: what it has learned.** When the engine is free and enough
+new ratings are in, the model turns them into short lessons ("StickyFaultField
+is a bitfield, not a fault: don't report it") and reads the relevant ones
+before each log. The Playbook section lists every lesson in force, where it
+came from, and whether findings on its topic were rated better once it was
+given. When the model keeps ignoring an *Avoid* lesson, the app enforces it
+and leaves those findings out. It never leaves out a fault. A lesson
+learned on one machine reaches every pit. An admin (unlock with the
+Breakaway mark) can retire or restore a lesson, switch enforcement on or
+off, or start a learning pass now; the switch above the list turns
+learning off on this machine.
 
 ### Ask the Pit
 
@@ -331,7 +408,11 @@ other pits and home call it), turns sync off, and picks what it downloads.
 machines only from 00:00 to 05:00 (laptops stay on at an event, and the signal
 is best then); everything else syncs all day. Telemetry → Team sync shows how
 many files are waiting. On good venue or hotel Wi-Fi, an admin can press
-**Sync files now** to move them at once. Every song any machine scans is
+**Sync files now** to move them at once: it keeps going until nothing is
+waiting (at most 3 hours), then stops by itself. **Other machines** lists
+every pit with its own **Sync files now**: the machine starts within a minute
+(if it's on and running this build or newer) and its row says when it
+finished and how much moved. Every song any machine scans is
 shared with the team; **Team music** turns that off for one machine.
 
 **Deleting a song for the team** (Music → select it → *Delete for the team…*,

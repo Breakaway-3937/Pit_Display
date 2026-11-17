@@ -62,6 +62,16 @@ WAITING_FOR_FILES = ("bundle", "download")
 # cycle: the hub's free plan counts rows read, and every pit and home asking
 # each minute spent 90% of a day's budget by midday (2026-10-18).
 STATUS_EVERY_S = 600
+# "Sync files now", here or ordered from another machine (`sync_order`):
+# team files move outside the night window until nothing is waiting, at most
+# this long. One cycle used to be the whole override, and a cycle moves files
+# for FILE_BUDGET_S: a pit missing 681 MB of music never caught up.
+FORCE_MAX_S = 3 * 3600
+# An order older than this (the hub's clock) is history, not an instruction:
+# a build catching up on the table must not act on last week's.
+ORDER_TTL_S = 12 * 3600
+# Orders kept in sync_meta for the panel, then forgotten here (the hub keeps them).
+ORDER_KEEP = timedelta(days=3)
 
 
 @dataclass
@@ -88,6 +98,8 @@ class Report:
     held_uploads: int = 0
     held_downloads: int = 0
     open_requests: int = 0
+    # Forced ("Sync files now"): files still to move; 0 = not forced.
+    forcing: int = 0
 
     @property
     def ok(self) -> bool:
@@ -108,13 +120,32 @@ class Engine:
         self.prefs = prefs
         self._say = say or (lambda _msg: None)
         self.hasher = docs.FileHasher()
-        # "Sync files now": the next cycle moves team files outside the window.
-        self.force_files = False
+        # "Sync files now": team files move outside the window until nothing
+        # is waiting or FORCE_MAX_S passes (`force_files`).
+        self.force_until = 0.0          # monotonic deadline; 0 = not forced
+        self._forcing = False
+        # The order this machine is carrying out ({uid, up, down}), and the
+        # ones it was asked to send ([(target id, name)], from the GUI thread).
+        self._order: dict | None = None
+        self.outgoing: list[tuple[str, str]] = []
         # Blobs the hub was seen to hold this session (no need to ask again).
         self._present: set[str] = set()
         self._machines: list[dict] = []
         self._machines_at = 0.0         # monotonic; 0 = never asked
         self._blobs_at = 0.0            # the last full blob listing, for origins
+
+    @property
+    def force_files(self) -> bool:
+        return time.monotonic() < self.force_until
+
+    @force_files.setter
+    def force_files(self, on: bool) -> None:
+        self.force_until = time.monotonic() + FORCE_MAX_S if on else 0.0
+        self._forcing = bool(on)
+
+    def ask_files_now(self, target: str, name: str = "") -> None:
+        """Order `target` to sync its files now; sent with the next cycle."""
+        self.outgoing.append((target, name or target))
 
     def _files_open(self) -> bool:
         return self.force_files or transfer.is_open()
@@ -200,7 +231,7 @@ class Engine:
         try:
             # The second push sends what this cycle queued: requests, their
             # done marks, the manifest. Same cycle, not a minute later.
-            for step in (self._scan, self._push, self._catch_up, self._pull, self._retry,
+            for step in (self._orders, self._scan, self._push, self._catch_up, self._pull, self._retry,
                          self._fetch, self._status, self._origins, self._manifest,
                          self._diagnostics, self._push):
                 try:
@@ -226,8 +257,8 @@ class Engine:
             rep.held_downloads = conn.execute(
                 "SELECT COUNT(*) FROM sync_pending WHERE reason = 'download'"
             ).fetchone()[0] if not self._files_open() else 0
+            self._settle_force(conn, rep)
         finally:
-            self.force_files = False
             conn.close()
         rep.seconds = round(time.monotonic() - t0, 2)
         return rep
@@ -324,6 +355,9 @@ class Engine:
             return dict(row) if row else None
         if tbl == tables.MACHINE_MANIFEST:
             return self._manifest_data(conn)
+        if tbl == tables.SYNC_ORDER:
+            held = self._meta(conn, f"order:{uid}")
+            return json.loads(held) if held else None
         if tbl == tables.PIT_EVENT:
             from app.diagnostics import spool
             ev = spool.load(uid.partition(":")[2])
@@ -620,6 +654,10 @@ class Engine:
 
         if tbl in (tables.BLOB_REQUEST, tables.MACHINE_MANIFEST) + tables.PUSHED_ONLY:
             return          # every pit's requests, manifests and reports are home's to read
+
+        if tbl == tables.SYNC_ORDER:
+            self._apply_order(conn, ch, rep)
+            return
 
         if spec is not None:
             with self._guarded(conn):
@@ -920,6 +958,98 @@ class Engine:
              data.get("codec") or "none"))
         self._enqueue(conn, tables.BLOB_REQUEST, f"{self.me}:{blob}", "upsert")
 
+    # ── orders: "Sync files now" on another machine ───────────────────────
+
+    def _orders(self, conn, rep: Report) -> None:
+        """Queue the orders asked for since the last cycle; forget old ones."""
+        while self.outgoing:
+            target, name = self.outgoing.pop(0)
+            uid = f"{target}:{datetime.now():%Y%m%d-%H%M%S}-{os.urandom(3).hex()}"
+            self._set_meta(conn, f"order:{uid}", json.dumps({
+                "action": "files_now", "target": target, "target_name": name,
+                "by": self.me, "by_name": self.prefs.get("machine_name") or self.me,
+                "asked_at": _now_iso(), "state": "asked"}))
+            self._enqueue(conn, tables.SYNC_ORDER, uid, "upsert")
+            rep.applied.add(tables.SYNC_ORDER)
+        if self._order is None:
+            self._resume_order(conn, rep)
+        cutoff = datetime.now().astimezone() - ORDER_KEEP
+        for k, v in conn.execute("SELECT k, v FROM sync_meta WHERE k LIKE 'order:%'").fetchall():
+            try:
+                old = datetime.fromisoformat(json.loads(v)["asked_at"]) < cutoff
+            except Exception:
+                old = True
+            if old:
+                conn.execute("DELETE FROM sync_meta WHERE k = ?", (k,))
+
+    def _resume_order(self, conn, rep: Report) -> None:
+        """An order of ours left running (the app closed, or a new engine):
+        carry on while it's young, else say it stopped. Never "running" forever."""
+        for k, v in conn.execute("SELECT k, v FROM sync_meta WHERE k LIKE 'order:%'").fetchall():
+            try:
+                data = json.loads(v)
+                age_s = time.time() - datetime.fromisoformat(data["asked_at"]).timestamp()
+            except Exception:
+                continue
+            if data.get("target") != self.me or data.get("state") != "running":
+                continue
+            self._order = {"uid": k.partition(":")[2], "up": int(data.get("up_bytes") or 0),
+                           "down": int(data.get("down_bytes") or 0)}
+            if age_s < ORDER_TTL_S:
+                self.force_files = True
+                return
+            self._order_state(conn, "timed_out", finished_at=_now_iso(), left=None)
+            self._order = None
+            rep.applied.add(tables.SYNC_ORDER)
+
+    def _apply_order(self, conn, ch: dict, rep: Report) -> None:
+        uid, data = ch["uid"], ch.get("data") or {}
+        self._saw(conn, tables.SYNC_ORDER, uid, int(ch.get("seq", 0)))
+        key = f"order:{uid}"
+        if ch.get("op") != "upsert":
+            conn.execute("DELETE FROM sync_meta WHERE k = ?", (key,))
+            return
+        mine = json.loads(self._meta(conn, key) or "{}")
+        if data.get("target") == self.me and mine.get("state") not in (None, "asked"):
+            return          # already carrying it out (or done): our state is newer
+        self._set_meta(conn, key, json.dumps(data))
+        rep.applied.add(tables.SYNC_ORDER)
+        age_s = time.time() - float(ch.get("at") or 0) / 1000
+        if data.get("target") == self.me and data.get("state") == "asked" and age_s < ORDER_TTL_S:
+            self.force_files = True
+            self._order = {"uid": uid, "up": 0, "down": 0}
+            self._order_state(conn, "running", started_at=_now_iso())
+
+    def _order_state(self, conn, state: str, **extra) -> None:
+        uid = self._order["uid"]
+        data = json.loads(self._meta(conn, f"order:{uid}") or "{}")
+        data.update(state=state, up_bytes=self._order["up"], down_bytes=self._order["down"],
+                    **extra)
+        self._set_meta(conn, f"order:{uid}", json.dumps(data))
+        self._enqueue(conn, tables.SYNC_ORDER, uid, "upsert")
+
+    def _settle_force(self, conn, rep: Report) -> None:
+        """After a forced cycle: stop once nothing is waiting (or time's up),
+        and tell whoever ordered it how it went."""
+        if not self._forcing:
+            return
+        if self._order:
+            self._order["up"] += rep.uploaded_bytes
+            self._order["down"] += rep.downloaded_bytes
+        held_up = conn.execute("SELECT COUNT(*) FROM sync_outbox WHERE tbl = 'file' "
+                               "AND op = 'upsert'").fetchone()[0]
+        held_down = conn.execute("SELECT COUNT(*) FROM sync_pending WHERE reason = 'download'"
+                                 ).fetchone()[0]
+        rep.forcing = left = held_up + held_down
+        if left and self.force_files:
+            return
+        self.force_until, self._forcing, rep.forcing = 0.0, False, 0
+        if self._order:
+            self._order_state(conn, "done" if not left else "timed_out",
+                              finished_at=_now_iso(), left=left)
+            self._order = None
+            self._push(conn, rep, only=(tables.SYNC_ORDER,))   # say so now, not next minute
+
     # ── nightly manifest (R8) ─────────────────────────────────────────────
 
     def _manifest(self, conn, rep: Report) -> None:
@@ -1061,6 +1191,10 @@ class Engine:
             self._saw(conn, docs.FILE, uid, ch["seq"])
             conn.execute("DELETE FROM sync_pending WHERE tbl = ? AND uid = ?", (ch["tbl"], uid))
         rep.applied.add(f"file:{uid.partition('/')[0]}")
+
+
+def _now_iso() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def _label(tbl: str, uid: str, data: dict | None) -> str:

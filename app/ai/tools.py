@@ -307,8 +307,9 @@ def faults(session_uid: str) -> dict[str, Any]:
 
 
 # Where each log type records the robot's state (the Robot pseudo-device).
-_ENABLED = ("DriverStation/Enabled", "RobotEnable")
-_AUTO = ("DriverStation/Autonomous",)
+# DS/… : the Driver Station's own log (app/robot/dslog.py): what it commanded.
+_ENABLED = ("DriverStation/Enabled", "RobotEnable", "DS/Enabled")
+_AUTO = ("DriverStation/Autonomous", "DS/Autonomous")
 _MODE = ("RobotMode",)                     # hoot: an enum label, "Disabled" / "Autonomous" / …
 _FMS = ("DriverStation/FMSAttached", "DS:IsFMSAttached")
 
@@ -569,6 +570,60 @@ def match_context(session_uid: str) -> dict[str, Any]:
     return {"args": args, "match": match, "how": how, "team": team}
 
 
+def incidents(session_uid: str) -> dict[str, Any]:
+    """
+    The moments this log's recording went wrong, as a CSA reads them
+    (app/robot/incidents.py): every log recorded with it (the AdvantageKit
+    log, each CAN bus's hoot, the Driver Station's log) on one clock, their
+    events grouped into incidents, and incidents that are the same problem
+    again grouped into issues, each with its worst moment's readings.
+    """
+    args = {"session_uid": session_uid}
+    if _session_id(session_uid) is None:
+        return _missing(args)
+    from app.robot import incidents as inc
+    got = inc.build(connection(), session_uid, match_phases)
+    if "error" in got:
+        return {"args": args, **got}
+    by_id = {i["id"]: i for i in got["incidents"]}
+    try:          # new-or-recurring is extra: it must never cost the incidents
+        hist = inc.history(connection(), session_uid, match_phases) if got["issues"] else {}
+    except Exception:
+        hist = {}
+    issues = []
+    for it in got["issues"][:MAX_ISSUES]:
+        worst = by_id[it["worst"]]
+        m = inc.moment(connection(), session_uid, worst["start_s"], MOMENT_S, match_phases)
+        issues.append({**{k: it.get(k) for k in ("id", "primary", "severity", "count", "at",
+                                                  "phases", "kinds", "devices", "buses",
+                                                  "longest_s", "figures")},
+                       "worst": {k: worst[k] for k in ("id", "at", "phase", "start_s", "end_s",
+                                                       "events")},
+                       "readings": m.get("readings") or {},
+                       **({"before": b} if (b := inc.before(hist, it["primary"])) else {})})
+    return {"args": args, "logs": got["logs"], "issues": issues,
+            "recording_kinds": got.get("problems") or [],
+            "n_incidents": len(got["incidents"]), "n_events": got["n_events"],
+            "truncated": len(got["issues"]) > MAX_ISSUES}
+
+
+MAX_ISSUES = 10
+MOMENT_S = 3.0
+
+
+def moment(session_uid: str, at_s: float, span_s: float = MOMENT_S) -> dict[str, Any]:
+    """What every log of the recording read around one moment (seconds from the
+    recording's start, as `incidents` gives them): battery, current, CAN,
+    loop, comms, the hardest-working motors."""
+    args = {"session_uid": session_uid, "at_s": at_s, "span_s": span_s}
+    if _session_id(session_uid) is None:
+        return _missing(args)
+    from app.robot import incidents as inc
+    got = inc.moment(connection(), session_uid, float(at_s),
+                     max(0.5, min(float(span_s), 30.0)), match_phases)
+    return {"args": args, **got}
+
+
 def device_names() -> dict[str, Any]:
     rows = _rows("""SELECT device_type, can_id, label, subsystem FROM device
                     WHERE can_id >= 0 ORDER BY device_type, can_id""")
@@ -649,6 +704,22 @@ SPECS: list[dict] = [
           "Station state: seconds in each, the timeline, whether a field (FMS) was attached. "
           "never_enabled true means a pit or bench recording, not a match.",
           {"session_uid": _UID}, ["session_uid"]),
+    _spec("incidents",
+          "The moments this log's recording went wrong, as a CSA reads them: every log "
+          "recorded with it (AdvantageKit, each CAN bus's hoot, the Driver Station log) on "
+          "one clock, events (brownouts, comms drops, CAN errors, controller reboots, code "
+          "crashes and errors, config failures, stalls, watchdog) grouped into incidents, "
+          "and repeats grouped into issues, each with the readings at its worst moment "
+          "and `before`: how many of the robot's last recordings had the same issue "
+          "(in, of, streak in a row; new true when none did).",
+          {"session_uid": _UID}, ["session_uid"]),
+    _spec("moment",
+          "What every log of the recording read around one moment: battery voltage "
+          "(roboRIO, DS, lowest controller), total current, CAN utilization, loop time, "
+          "trip time and packet loss, the hardest-working motors. at_s is seconds from the "
+          "recording's start, as incidents gives it.",
+          {"session_uid": _UID, "at_s": {"type": "number"}, "span_s": {"type": "number"}},
+          ["session_uid", "at_s"]),
     _spec("device_names",
           "The team's CAN map: device_type, can_id, English label, subsystem (as named on "
           "the pits).", {}, []),
@@ -660,6 +731,7 @@ TOOLS = {
     "faults": faults, "subsystems": subsystems, "compare_sessions": compare_sessions,
     "match_context": match_context, "device_names": device_names,
     "match_phases": match_phases, "anomalies": anomalies, "wear": wear,
+    "incidents": incidents, "moment": moment,
 }
 
 

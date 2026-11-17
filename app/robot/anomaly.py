@@ -35,6 +35,20 @@ comparing pit logs with matches and an enabled-but-idle robot were the noise.
   speed, heating or faulting more than the other motors, more each log):
   `app/robot/wear.py`'s warnings, carried here so everything that reads the
   detector reads them too.
+* **partner_idle / partner_mismatch**: two motors that turn together (found
+  from their speeds, no labels needed) where one stopped sharing the work:
+  back-driven and drawing nothing (last year's half-running shooter), or out
+  of the pair's usual ratio. `app/robot/partners.py`.
+* **unusual**: any other health signal on any device beyond anything it
+  reached in comparable earlier logs (`app/robot/sweep.py`): the question
+  nobody asked. Warn, never must_cover.
+* **loop_overrun**: the robot code's loop overrunning and stalling past
+  motor safety's 100 ms while enabled, with the slow parts the console's
+  Tracer named and the logger's backlog (the "logging too much" watchdog).
+  `app/robot/loop_health.py`.
+
+Items marked `must_cover` must each be a finding whatever their severity
+(`checks.anomaly_coverage`), as wear is.
 
 "Earlier logs" are the same bus's (`bus_of`: the AdvantageKit logs, the Rio
 hoots, each CANivore's hoots), newest `HISTORY` of them. Thresholds are named
@@ -84,8 +98,8 @@ def bus_of(row) -> str:
     """Which bus a session recorded: AdvantageKit, the Rio, or one CANivore."""
     kind = row["source_kind"] or ""
     name = (row["source_name"] or "").lower()
-    if kind == "wpilog":
-        return "wpilog"
+    if kind in ("wpilog", "dslog"):
+        return kind
     return f"hoot:{row['device_serial'] or name.split('_', 1)[0]}"
 
 
@@ -233,6 +247,10 @@ def find(db, session_uid: str, phases_of) -> dict[str, Any]:
         else:
             out.extend(group)
 
+    # ── everything else, against its own past (sweep.py) ────────────────
+    from app.robot import sweep
+    out += sweep.find(db, me["id"], like)
+
     # ── configuration changed ───────────────────────────────────────────
     if len(hist_ids) >= MIN_HISTORY:
         for key, d in devices.items():
@@ -283,6 +301,16 @@ def find(db, session_uid: str, phases_of) -> dict[str, Any]:
     from app.robot import wear
     worn = wear.find(db, session_uid)
     out += worn.get("warnings") or []
+
+    # ── partners that stopped sharing the work ──────────────────────────
+    from app.robot import loop_health, partners
+    labels = {key: _label(d) for key, d in devices.items()}
+    out += partners.find(db, me["id"], hist_ids, labels)
+
+    # ── the robot code's loop (the AdvantageKit log) ────────────────────
+    if bus == "wpilog" and windows:
+        hist_windows = [(sid, _windows(db, sid, phases_of)) for sid in hist_ids]
+        out += loop_health.find(db, me["id"], windows, hist_windows)
 
     order = {"fault": 0, "warn": 1}
     out.sort(key=lambda a: (order.get(a["severity"], 2), a["kind"], a["device"]))
@@ -412,6 +440,19 @@ def _extreme(db, session_ids, device_id: int, signal: str, side: str) -> list[fl
 
 
 _ENABLED_CACHE: dict[str, float] = {}       # by uid: unique across databases
+_WINDOW_CACHE: dict[str, list] = {}
+
+
+def _windows(db, session_id: int, phases_of) -> list[tuple[float, float]]:
+    """A session's enabled stretches (auto, teleop, test) as (start_s, end_s)."""
+    uid = db.fetchone("SELECT uid FROM log_session WHERE id = ?", (session_id,))["uid"]
+    if not uid:
+        return []
+    if uid not in _WINDOW_CACHE:
+        ph = phases_of(uid)
+        _WINDOW_CACHE[uid] = [(p["start_s"], p["end_s"]) for p in (ph or {}).get("phases") or []
+                              if p.get("phase") in ("auto", "teleop", "test")]
+    return _WINDOW_CACHE[uid]
 
 
 def _enabled_s(db, session_id: int, phases_of) -> float:

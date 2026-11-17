@@ -676,8 +676,9 @@ class RobotLogPanel(QWidget):
     def _choose_file(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Choose a robot log", "",
-            "Robot logs (*.hoot *.wpilog);;"
-            "Phoenix hoot (*.hoot);;WPILib DataLog (*.wpilog)")
+            "Robot logs (*.hoot *.wpilog *.dslog);;"
+            "Phoenix hoot (*.hoot);;WPILib DataLog (*.wpilog);;"
+            "Driver Station log (*.dslog; its .dsevents is read from beside it)")
         if path:
             self.start_import(Path(path))
 

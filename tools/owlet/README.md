@@ -11,7 +11,22 @@ only reader for it.
 | `owlet-26.3.0-macosuniversal` | macOS, Intel + Apple Silicon |
 | `owlet-26.3.0-windowsx86-64.exe` | Windows x86-64 — **the pit machine** |
 
-Version 26.3.0. Both are redistributed as CTRE publishes them; do not modify.
+Version 26.3.0 (2026 hoots). Both are redistributed as CTRE publishes them; do not modify.
+
+## One owlet per season
+
+Each owlet reads only its own hoot format ("compliancy", the byte at 0x46 of
+the file): owlet 26.3.0 reads 2026's format 19 and refuses 2025's format 13
+with "Input file is an unsupported version: 0". `owlet.py` reads the byte and
+picks the bundled owlet for it (`OWLET_FOR`, from CTRE's index at
+`https://redist.ctr-electronics.com/index.json`). To import last season's
+hoots, add **owlet 25.4.1** beside 26.3.0 (CTRE's own downloads, SHA-1 in the
+index):
+
+    https://redist.ctr-electronics.com/tools/owlet/25.4.1/owlet-25.4.1-macosuniversal
+    https://redist.ctr-electronics.com/tools/owlet/25.4.1/owlet-25.4.1-windowsx86-64.exe
+
+Without it, a 2025 hoot is refused with a message naming the version and URL.
 
 ## How the app finds them
 

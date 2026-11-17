@@ -24,6 +24,8 @@ DEFAULT_MODEL = "qwen3:8b"
 DEFAULTS: dict[str, Any] = {
     # Analyse each newly imported log by itself.
     "auto_run": True,
+    # Learn playbook lessons from the crew's ratings when idle (curate.py).
+    "learn": True,
     # "auto": the built-in engine (runtime.py) when its model is downloaded,
     # else Ollama if it's running. "llama" / "ollama" force one.
     "engine": "auto",
@@ -50,6 +52,7 @@ def load() -> dict[str, Any]:
     if isinstance(stored, dict):
         values.update({k: stored[k] for k in DEFAULTS if k in stored})
     values["auto_run"] = bool(values["auto_run"])
+    values["learn"] = bool(values["learn"])
     if values["engine"] not in ("auto", "llama", "ollama"):
         values["engine"] = "auto"
     values["model"] = str(values["model"] or DEFAULT_MODEL)

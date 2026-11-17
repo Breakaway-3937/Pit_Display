@@ -332,6 +332,107 @@ def relay_section(a, b, url: str, home_token: str) -> None:
     a.sync(); b.sync()
 
 
+def orders_section(a, b, url: str, home_token: str) -> None:
+    """"Sync files now" on another machine (sync_order), and a forced sync
+    that keeps going until nothing is waiting."""
+    import hashlib
+    from datetime import datetime, timedelta
+    from app.db.sync import docs, engine as engine_mod, tables, transfer
+    print("\nSync files now, from another machine")
+    home = HubClient(url, home_token, "home", "home", "check")
+    now = datetime.now()
+    closed = {"enforce": True, "start": (now + timedelta(hours=2)).strftime("%H:%M"),
+              "end": (now + timedelta(hours=3)).strftime("%H:%M")}
+    for m in (a, b):
+        with m.env():
+            transfer.save(**closed)
+    song = a.dir / "my music" / "02 Order.mp3"
+    song.parent.mkdir(parents=True, exist_ok=True)
+    song.write_bytes(b"ID3" + os.urandom(200_000))
+    a.sql("INSERT INTO tracks (path, title, artist) VALUES (?, 'Order Song', 'Breakaway')",
+          (str(song),))
+    sha = hashlib.sha256(song.read_bytes()).hexdigest()
+    uid = f"music/{sha[:16]}_02 Order.mp3"
+    a.sync()
+    held = a.one("SELECT COUNT(*) FROM sync_outbox WHERE uid = ?", (uid,))
+
+    b.engine.ask_files_now("check-a", "a")
+    b.sync()
+    rows = [c for c in home.changes(0, 1000)["changes"] if c["tbl"] == tables.SYNC_ORDER]
+    check("B's order for A is at the hub, asked", held == 1 and rows
+          and rows[-1]["uid"].startswith("check-a:") and rows[-1]["data"]["state"] == "asked"
+          and rows[-1]["data"]["by"] == "check-b", str(rows[-1:]))
+    ra = a.sync()
+    check("A runs it in its next cycle: the held song goes up, window still closed",
+          ra.ok and a.one("SELECT COUNT(*) FROM sync_outbox WHERE uid = ?", (uid,)) == 0,
+          str(ra.errors))
+    rows = [c for c in home.changes(0, 1000)["changes"] if c["tbl"] == tables.SYNC_ORDER]
+    last = rows[-1]["data"] if rows else {}
+    check("…reports done on the same row, with what it moved, in the same cycle",
+          last.get("state") == "done" and last.get("up_bytes", 0) > 0
+          and last.get("finished_at") and not a.engine.force_files, str(last))
+    b.sync()
+    with b.env():
+        got = {}
+        for (v,) in b.db.execute("SELECT v FROM sync_meta WHERE k LIKE 'order:%'").fetchall():
+            o = json.loads(v)
+            got[o["target"]] = o
+    from app.widgets.network_panel import order_line
+    check("B sees it done, as one line", got.get("check-a", {}).get("state") == "done"
+          and "files synced at" in order_line(got["check-a"]), order_line(got.get("check-a")))
+    rb = b.sync()
+    check("B's own download still waits for its window (the order was A's)",
+          rb.held_downloads >= 1 and not b.engine.force_files, f"held {rb.held_downloads}")
+
+    # An order older than ORDER_TTL_S is history: a build catching up must not run it.
+    saved_ttl = engine_mod.ORDER_TTL_S
+    engine_mod.ORDER_TTL_S = -1
+    a.engine.ask_files_now("check-b", "b")
+    a.sync()
+    rb = b.sync()
+    engine_mod.ORDER_TTL_S = saved_ttl
+    check("an order past its time is kept but not run",
+          not b.engine.force_files and rb.held_downloads >= 1, f"held {rb.held_downloads}")
+
+    # A forced sync keeps going until nothing is waiting, not one cycle.
+    saved_budget = engine_mod.FILE_BUDGET_S
+    engine_mod.FILE_BUDGET_S = -1          # this cycle's download budget is spent at once
+    a.engine.ask_files_now("check-b", "b")
+    a.sync()
+    rb = b.sync()
+    engine_mod.FILE_BUDGET_S = saved_budget
+    check("forced: a cycle that couldn't finish stays forced", b.engine.force_files
+          and rb.forcing >= 1, f"forcing {rb.forcing}")
+    # The app closes mid-order: a new engine knows nothing of it.
+    order_uid = b.engine._order["uid"]
+    b.engine._order = None
+    b.engine.force_files = False
+    rb = b.sync()
+    with b.env():
+        landed = docs.root("music") / f"{sha[:16]}_02 Order.mp3"
+    state = json.loads(b.one("SELECT v FROM sync_meta WHERE k = ?", (f"order:{order_uid}",)))
+    check("…a restart mid-order carries it on: it lands and the override ends by itself",
+          rb.ok and landed.is_file() and not b.engine.force_files and rb.forcing == 0
+          and state.get("state") == "done", f"{rb.errors} {state.get('state')}")
+
+    # One left running past its time is reported stopped, never "running" forever.
+    stale = (datetime.now() - timedelta(days=2)).astimezone().isoformat(timespec="seconds")
+    a.sql("INSERT INTO sync_meta (k, v) VALUES (?, ?)", (
+        "order:check-a:old", json.dumps({"action": "files_now", "target": "check-a",
+                                         "asked_at": stale, "state": "running"})))
+    a.sync()
+    rows = [c for c in home.changes(0, 1000)["changes"] if c["uid"] == "check-a:old"]
+    last = rows[-1]["data"] if rows else {}
+    check("an order of ours left running past its time is reported stopped",
+          last.get("state") == "timed_out" and last.get("left") is None
+          and not a.engine.force_files
+          and order_line(last).endswith("before it finished"), str(last))
+    for m in (a, b):
+        with m.env():
+            transfer.save(enforce=False)
+    a.sync(); b.sync()
+
+
 def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
     a = Machine("a", tmp, url, pit_token)
     b = Machine("b", tmp, url, pit_token)
@@ -460,6 +561,7 @@ def run(tmp: Path, url: str, pit_token: str, home_token: str) -> None:
         check("a removed slide is removed", not (docs.root("judges_slides") / "01 Robot.png").exists())
 
     relay_section(a, b, url, home_token)
+    orders_section(a, b, url, home_token)
 
     print("\nRobot logs")
     log = ROOT / "TEST_LOGS" / "akit_26-08-17_02-59-21.wpilog"

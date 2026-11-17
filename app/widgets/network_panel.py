@@ -41,7 +41,7 @@ import time
 from datetime import datetime, timezone
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QHBoxLayout, QLineEdit, QMessageBox, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QMessageBox, QVBoxLayout, QWidget
 
 from app import brand, credentials
 from app.admin import admin
@@ -55,7 +55,7 @@ from app.nexus import settings as nexus_settings
 from app.webcast import lan_address, webcast
 from app.webcast import settings as webcast_settings
 from app.widgets.brand_widgets import RoundedButton, StatusDot, eyebrow
-from app.widgets.helpers import divider, label
+from app.widgets.helpers import clear_layout, divider, label
 from app.widgets.robot_panel import RobotLogPanel
 from app.widgets.toggle_switch import ToggleSwitch
 
@@ -63,7 +63,7 @@ from app.widgets.toggle_switch import ToggleSwitch
 _SYNC_SWITCHES = (
     ("enabled", "Sync on this machine"),
     ("pull_logs", "Download other pits' robot logs"),
-    ("sync_files", "Team files: judges slides, the CAD model (~300 MB)"),
+    ("sync_files", "Team files: judges slides, the CAD model (~150 MB)"),
     ("sync_music", "Team music: every scanned song, both ways"),
     ("upload_raw", "Also upload original log files (home Wi-Fi only)"),
 )
@@ -100,6 +100,48 @@ def _ago_ms(stamp_ms: int | float | None) -> str:
     if not stamp_ms:
         return "never"
     return _ago(time.time() - float(stamp_ms) / 1000) + " ago"
+
+
+def order_line(order: dict | None) -> str:
+    """A machine's last "Sync files now" order, in a few words."""
+    if not order:
+        return ""
+
+    def when(key: str) -> str:
+        try:
+            return datetime.fromisoformat(order[key]).astimezone().strftime("%H:%M")
+        except (KeyError, TypeError, ValueError):
+            return "?"
+
+    moved = ", ".join(f"{_bytes(int(order.get(k) or 0))} {d}"
+                      for k, d in (("down_bytes", "down"), ("up_bytes", "up"))
+                      if order.get(k))
+    state = order.get("state")
+    if state == "asked":
+        return f"files asked for at {when('asked_at')} by {order.get('by_name') or '?'}"
+    if state == "running":
+        return f"moving files since {when('started_at')}" + (f" ({moved})" if moved else "")
+    if state == "done":
+        return f"files synced at {when('finished_at')}" + (f" ({moved})" if moved else "")
+    if state == "timed_out":
+        if order.get("left") is None:
+            return f"stopped at {when('finished_at')} before it finished"
+        return (f"stopped at {when('finished_at')} with {order['left']} files "
+                "still waiting")
+    return str(state or "")
+
+
+class _OrderButton(RoundedButton):
+    """Orders one machine to sync its files: a bound method, never a lambda."""
+
+    def __init__(self, panel: "NetworkPanel", machine_id: str, name: str):
+        super().__init__("Sync files now", variant="secondary")
+        self.setMinimumHeight(46)
+        self._panel, self._id, self._name = panel, machine_id, name
+        self.clicked.connect(self._order)
+
+    def _order(self) -> None:
+        self._panel.order_files_now(self._id, self._name)
 
 
 def _bytes(count: int) -> str:
@@ -324,15 +366,30 @@ class NetworkPanel(QWidget):
         sb.addWidget(eyebrow("This machine"))
         sb.addSpacing(8)
         files_now = RoundedButton("Sync files now", variant="secondary")
+        files_now.setMinimumHeight(46)
         files_now.clicked.connect(self._sync_files_now)
         sb.addWidget(files_now, alignment=Qt.AlignmentFlag.AlignLeft)
         sb.addSpacing(4)
-        files_help = label(
-            "Moves CAD, slides and music this once, outside the night window: "
-            "for good venue or hotel Wi-Fi.", "stat_label")
-        files_help.setWordWrap(True)
-        sb.addWidget(files_help)
-        sb.addSpacing(12)
+        self._files_help = label("", "stat_label")
+        self._files_help.setWordWrap(True)
+        sb.addWidget(self._files_help)
+        sb.addSpacing(16)
+
+        sb.addWidget(eyebrow("Other machines"))
+        sb.addSpacing(6)
+        orders_help = label(
+            "Sync files now on another machine: it starts the next time it checks "
+            "in (within a minute while it's on) and reports back here. Machines on "
+            "a build older than this one ignore it.", "stat_label")
+        orders_help.setWordWrap(True)
+        sb.addWidget(orders_help)
+        sb.addSpacing(8)
+        self._orders_box = QVBoxLayout()
+        self._orders_box.setSpacing(10)
+        self._orders_sig: tuple | None = None
+        self._order_lines: dict[str, QLabel] = {}
+        sb.addLayout(self._orders_box)
+        sb.addSpacing(16)
 
         name_row = QHBoxLayout()
         name_row.setSpacing(8)
@@ -426,6 +483,64 @@ class NetworkPanel(QWidget):
 
     def _sync_files_now(self) -> None:
         sync.sync_files_now()
+        self._draw_orders()
+
+    def order_files_now(self, machine_id: str, name: str) -> None:
+        sync.order_files_now(machine_id, name)
+        self._draw_orders()
+
+    def _draw_orders(self) -> None:
+        """This machine's forced state, and a row per other machine with its
+        last order. Rebuilt only when what the rows say changed."""
+        rep = sync.last
+        if sync.files_forced:
+            left = rep.forcing if rep else 0
+            self._files_help.setText(
+                "Moving files now" + (f": {left} still to go" if left else "")
+                + ". It stops by itself when nothing is waiting.")
+        else:
+            self._files_help.setText(
+                "Moves CAD, slides and music now, outside the night window, until "
+                "nothing is waiting: for good venue or hotel Wi-Fi.")
+        me = sync.prefs["machine_id"]
+        machines = [m for m in (rep.machines if rep else [])
+                    if m.get("id") != me and m.get("role") == "pit"
+                    and str(m.get("version") or "")[:1].isdigit()]
+        orders = sync.orders()
+        texts = {}
+        for m in machines:
+            line = order_line(orders.get(m["id"]))
+            texts[m["id"]] = (f"{m.get('version') or '?'} · last seen "
+                              f"{_ago_ms(m.get('last_seen'))}" + (f" · {line}" if line else ""))
+        # Rebuilt only when the machines change; the words update in place.
+        sig = tuple((m["id"], m.get("name") or m["id"]) for m in machines)
+        if sig != self._orders_sig:
+            self._build_order_rows(sig)
+        for mid, text in texts.items():
+            self._order_lines[mid].setText(text)
+
+    def _build_order_rows(self, sig: tuple) -> None:
+        self._orders_sig = sig
+        self._order_lines = {}
+        clear_layout(self._orders_box)
+        if not sig:
+            self._orders_box.addWidget(label("No other machine has synced yet.", "stat_label"))
+            return
+        for mid, name in sig:
+            row = QHBoxLayout()
+            row.setSpacing(12)
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            head = label(name, "stat_value")
+            head.setStyleSheet("font-size: 15px;")
+            col.addWidget(head)
+            sub = label("", "stat_label")
+            sub.setWordWrap(True)
+            self._order_lines[mid] = sub
+            col.addWidget(sub)
+            row.addLayout(col, stretch=1)
+            row.addWidget(_OrderButton(self, mid, name), alignment=Qt.AlignmentFlag.AlignVCenter)
+            self._orders_box.addLayout(row)
 
     def _fill_sync_form(self) -> None:
         """Put the stored values in the text fields (only on build and after a
@@ -869,6 +984,7 @@ class NetworkPanel(QWidget):
         return out
 
     def _draw_sync(self) -> None:
+        self._draw_orders()
         state = sync.state()
         prefs = sync.prefs
         rep = sync.last

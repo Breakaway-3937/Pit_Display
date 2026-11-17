@@ -44,6 +44,8 @@ SETTING_DOCS: dict[str, tuple[str, tuple[str, ...]]] = {
     "wording": ("app.wording", ("texts",)),
     # The crew's robot brief for the analyst (app/ai/brief.py): one per team.
     "brief": ("app.ai.brief", ("text",)),
+    # What the analyst learned from the crew's ratings (app/ai/playbook.py).
+    "playbook": ("app.ai.playbook", ("lessons", "retired_seeds", "curated_at", "history")),
 }
 
 FILE_ROOTS: dict[str, tuple[str, ...]] = {

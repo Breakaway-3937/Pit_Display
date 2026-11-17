@@ -22,7 +22,11 @@ Without a model it proves the parts that make output trustworthy:
   mcp 2.2.0, 2025-06-18);
 * a scripted model through the whole pipeline publishes a board (namespaced
   uid, shapes filled, run logged), and a model that keeps inventing a number
-  is rejected and the rejection logged.
+  is rejected and the rejection logged;
+* the playbook (learning from the crew's verdicts): filler dropped by code,
+  lessons chosen by the log's data, the curator's checks refuse ungrounded
+  lessons, a lesson's record, enforcement of an ignored one, and the context
+  budget (an overflow is condensed and retried, not a failed run).
 
 With `--model` it also runs the real thing once and prints how long each
 stage took and what it cost in tokens. That run passing means the model
@@ -86,6 +90,8 @@ class Scripted:
         from app.ai.ollama import Reply
         self.calls += 1
         r = self.replies.pop(0)
+        if isinstance(r, Reply):         # as given (a reply cut off at its token cap)
+            return r
         if isinstance(r, list):          # tool calls
             calls = [{"name": n, "arguments": a} for n, a in r]
             return Reply(tool_calls=calls, message={"tool_calls": [
@@ -106,17 +112,18 @@ def honest_findings(uid: str) -> dict:
                            "value": 50},
                           {"tool": "faults", "args": {"session_uid": uid}, "value": 1}]},
             {"id": "battery_sag",
-             "claim": "Battery sagged to 11.25 V, well clear of the 6.8 V brownout floor.",
+             "claim": "Battery sagged to 11.25 V under load: charge or swap it before the "
+                      "next match.",
              "metric": {"name": "battery sag", "value": 11.25, "unit": "V"},
-             "severity": "ok", "subsystem": None,
+             "severity": "warn", "subsystem": None,
              "series": {"session_uid": uid, "device_type": "TalonFX", "can_id": 1,
                         "signal": "SupplyVoltage", "column": "v_min"},
              "evidence": [{"tool": "session_overview", "args": {"session_uid": uid},
                            "value": 11.25}]},
             {"id": "hottest_motor",
-             "claim": "The hottest motor reached 26 °C.",
+             "claim": "The hottest motor reached 26 °C: feel it after the next match.",
              "metric": {"name": "hottest motor", "value": 26.0, "unit": "°C"},
-             "severity": "idle", "subsystem": None, "series": None,
+             "severity": "warn", "subsystem": None, "series": None,
              "evidence": [{"tool": "series_stats",
                            "args": {"session_uid": uid, "signal": "DeviceTemp"},
                            "value": 26.0}]},
@@ -163,7 +170,7 @@ def tools_section(uid: str) -> None:
     for spec in tools.SPECS:
         name = spec["name"]
         args = {"session_uid": uid, "session_uids": [uid], "signal": "DeviceTemp",
-                "device_type": "TalonFX", "can_id": 1}
+                "device_type": "TalonFX", "can_id": 1, "at_s": 30.0}
         props = spec["input_schema"]["properties"]
         out = tools.call(name, {k: v for k, v in args.items() if k in props})
         check(f"{name} answers, echoing its args", "error" not in out and "args" in out,
@@ -366,6 +373,228 @@ def anomaly_section() -> None:
         delete_session(r["id"], db.path)
 
 
+def health_section() -> None:
+    """The robot's own health beyond faults (Brayden, 2026-11-03): two motors on
+    one shaft where one stops working, and the code's loop overrunning."""
+    import math
+    from app.ai import checks, playbook, tools
+    from app.ai import pipeline as _pl, schema as _schema
+    from app.db import db
+    from app.robot import delete_session, partners
+    print("\nPartners and the loop (what the robot never reports as a fault)")
+
+    def sig(c, dtype, name, kind="num"):
+        c.execute("INSERT OR IGNORE INTO signal (device_type, name, value_kind, signal_class) "
+                  "VALUES (?, ?, ?, 'telemetry')", (dtype, name, kind))
+        return c.execute("SELECT id FROM signal WHERE device_type=? AND name=?",
+                         (dtype, name)).fetchone()[0]
+
+    def dev(c, dtype, can):
+        c.execute("INSERT OR IGNORE INTO device (device_type, can_id) VALUES (?, ?)", (dtype, can))
+        return c.execute("SELECT id FROM device WHERE device_type=? AND can_id=?",
+                         (dtype, can)).fetchone()[0]
+
+    def per_second(c, sid, d, g, values, v_min=None, v_max=None):
+        c.execute("INSERT INTO series (session_id, device_id, signal_id, v_min, v_max) "
+                  "VALUES (?, ?, ?, ?, ?)", (sid, d, g, v_min, v_max))
+        se = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+        c.executemany("INSERT INTO samples.sample_1s (series_id, t_s, v_min, v_max, v_avg, n) "
+                      "VALUES (?, ?, ?, ?, ?, 1)", [(se, t, v, v, v) for t, v in values])
+        return se
+
+    def shaft(n, amps_b=20.0, rise_b=12.0, gear=1.0):
+        """Two motors on one shaft (TalonFX 30 and 31), 60 s of a changing speed."""
+        uid = f"twin-{n}"
+        with db.transaction() as c:
+            c.execute("INSERT INTO log_session (source_file, source_name, source_kind, "
+                      "device_serial, started_at, duration_s, uid) "
+                      "VALUES (?, ?, 'hoot', 'rig', ?, 80.0, ?)",
+                      (uid, f"rig_2026-11-0{n}.hoot", f"2026-11-0{n} 10:00:00", uid))
+            sid = c.execute("SELECT id FROM log_session WHERE uid=?", (uid,)).fetchone()[0]
+            ts = range(10, 70)
+            speed = {t: 40 + 30 * math.sin(t / 6) for t in ts}
+            for can, amps, rise, g in ((30, 20.0, 12.0, 1.0), (31, amps_b, rise_b, gear)):
+                d = dev(c, "TalonFX", can)
+                per_second(c, sid, d, sig(c, "TalonFX", "RotorVelocity"),
+                           [(t, speed[t] * g) for t in ts])
+                per_second(c, sid, d, sig(c, "TalonFX", "StatorCurrent"),
+                           [(t, amps * (0.8 + 0.4 * (t % 3) / 2)) for t in ts])
+                per_second(c, sid, d, sig(c, "TalonFX", "DeviceTemp"),
+                           [(t, 30 + rise * t / 70) for t in ts], 30.0, 30.0 + rise)
+        return uid
+
+    def flags(uid, kinds=("partner_idle", "partner_mismatch")):
+        got = tools.call("anomalies", {"session_uid": uid})
+        return [a for a in got.get("anomalies") or [] if a["kind"] in kinds], got
+
+    partners._CACHE.clear()
+    for n in range(1, 5):
+        shaft(n)
+    calm, _ = flags(shaft(5))
+    check("two healthy motors on one shaft: nothing flagged", not calm, str(calm)[:200])
+    pairs = partners.pairs(db, db.fetchone("SELECT id FROM log_session WHERE uid='twin-5'")["id"])
+    check("…and they're found as twins from their speeds alone (no labels)",
+          (("TalonFX", 30), ("TalonFX", 31)) in pairs, str(pairs)[:160])
+    dead, got_dead = flags(shaft(6, amps_b=0.4, rise_b=1.0))
+    d = dead[0] if dead else {}
+    check("last year's shooter: one motor turned by its partner, drawing nothing, is a fault",
+          d.get("kind") == "partner_idle" and d.get("severity") == "fault"
+          and d.get("device") == "TalonFX 31" and d.get("partner") == "TalonFX 30",
+          str(dead)[:200])
+    check("…and it says the temperatures don't match",
+          "warmed 1 °C against its partner's 12 °C" in d.get("detail", ""), d.get("detail", ""))
+    weak, _ = flags(shaft(7, amps_b=8.0))
+    check("a pair out of its usual ratio (a belt slipping, a motor failing) is a warning",
+          [a["kind"] for a in weak] == ["partner_mismatch"]
+          and weak[0]["severity"] == "warn" and weak[0]["normal"]["logs"] >= 3, str(weak)[:200])
+    for r in db.fetchall("SELECT id FROM log_session WHERE uid LIKE 'twin-%'"):
+        delete_session(r["id"], db.path)
+    partners._CACHE.clear()
+    for n in range(1, 5):
+        shaft(n, amps_b=10.0, gear=0.5)
+    geared, _ = flags(shaft(5, amps_b=10.0, gear=0.5))
+    check("a geared pair in its steady ratio (half the speed, half the current) isn't flagged",
+          not geared, str(geared)[:200])
+    for r in db.fetchall("SELECT id FROM log_session WHERE uid LIKE 'twin-%'"):
+        delete_session(r["id"], db.path)
+
+    # ── the loop ─────────────────────────────────────────────────────────
+    def akit(n, stalls=0, overruns=0, console=(), overrun_ms=45.0):
+        """An AdvantageKit log enabled 20-120 s, 50 Hz loop summarised per second."""
+        uid = f"loop-{n}"
+        with db.transaction() as c:
+            c.execute("INSERT INTO log_session (source_file, source_name, source_kind, "
+                      "started_at, duration_s, uid) VALUES (?, ?, 'wpilog', ?, 130.0, ?)",
+                      (uid, f"akit_2026-11-0{n}.wpilog", f"2026-11-0{n} 12:00:00", uid))
+            sid = c.execute("SELECT id FROM log_session WHERE uid=?", (uid,)).fetchone()[0]
+            robot = dev(c, "Robot", -1)
+            en = sig(c, "Robot", "DriverStation/Enabled")
+            c.execute("INSERT INTO series (session_id, device_id, signal_id) VALUES (?, ?, ?)",
+                      (sid, robot, en))
+            se = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+            c.executemany("INSERT INTO samples.sample VALUES (?, ?, 0, ?)",
+                          [(se, 0, 0), (se, 20000, 1), (se, 120000, 0)])
+            cyc = [(t, 150.0 if 40 <= t < 40 + stalls else overrun_ms if 60 <= t < 60 + overruns
+                    else 19.0) for t in range(0, 130)]
+            per_second(c, sid, robot, sig(c, "Robot", "RealOutputs/LoggedRobot/FullCycleMS"), cyc)
+            per_second(c, sid, robot, sig(c, "Robot", "RealOutputs/Logger/QueuedCycles"),
+                       [(t, 40.0 if stalls else 2.0) for t in range(0, 130)])
+            con = sig(c, "Robot", "RealOutputs/Console", "enum")
+            c.execute("INSERT INTO series (session_id, device_id, signal_id) VALUES (?, ?, ?)",
+                      (sid, robot, con))
+            se = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+            for i, text in enumerate(console):
+                row = c.execute("SELECT code FROM signal_enum WHERE signal_id=? AND label=?",
+                                (con, text)).fetchone()
+                if row is None:
+                    code = c.execute("SELECT COALESCE(MAX(code), 0) + 1 FROM signal_enum "
+                                     "WHERE signal_id=?", (con,)).fetchone()[0]
+                    c.execute("INSERT INTO signal_enum VALUES (?, ?, ?)", (con, code, text))
+                    row = (code,)
+                c.execute("INSERT INTO samples.sample VALUES (?, ?, 0, ?)",
+                          (se, 41000 + i * 10, row[0]))
+        return uid
+
+    tracer = ("Warning at edu.wpi.first.wpilibj.IterativeRobotBase.printLoopOverrunMessage"
+              "(IterativeRobotBase.java:436): Loop time of 0.02s overrun\n"
+              "\trobotPeriodic(): 0.031000s\n\tShooter.periodic(): 0.014000s\n"
+              "\tSmartDashboard.updateValues(): 0.009000s\n\tSwerve.periodic(): 0.001000s")
+    loops = lambda uid: flags(uid, ("loop_overrun",))[0]  # noqa: E731
+    check("a loop that keeps its 20 ms period: nothing flagged", not loops(akit(1)))
+    for n in (2, 3, 4):
+        akit(n, stalls=1)
+    bad = loops(akit(5, stalls=6, console=[tracer] * 5))
+    b = bad[0] if bad else {}
+    check("the 'logging too much' watchdog: stalls past 100 ms while enabled are a fault",
+          b.get("severity") == "fault" and b.get("stall_s") == 6 and b.get("must_cover"),
+          str(bad)[:200])
+    check("…naming the slow parts the console's Tracer listed, not its wrappers",
+          [p["part"] for p in b.get("slow_parts", [])] == ["Shooter.periodic",
+                                                           "SmartDashboard.updateValues"]
+          and "robotPeriodic" not in b.get("detail", ""), str(b.get("slow_parts")))
+    check("…with the logger's backlog and this robot's usual figure",
+          b.get("queued_max") == 40 and (b.get("normal") or {}).get("median") == 1,
+          str(b.get("normal")))
+    one = loops(akit(6, stalls=1))
+    check("one stall in a match is a warning", [a["severity"] for a in one] == ["warn"])
+    short = loops(akit(7, overruns=40))
+    check("overruns past 40 ms (no stall) in a third of the match are a warning",
+          [a["severity"] for a in short] == ["warn"], str(short)[:160])
+    check("…but brief 26 ms ones aren't (noise on a real log)",
+          not loops(akit(8, overruns=40, overrun_ms=26.0)))
+
+    # ── the board: each must be a finding, and no lesson may drop it ─────
+    led = checks.Ledger()
+    led.add("anomalies", {"args": {"session_uid": "loop-5"}, "anomalies": bad})
+    silent = {"findings": [{"id": "all_clear", "claim": "Nothing latched.",
+                            "metric": {"name": "faults", "value": 0}, "severity": "ok"}]}
+    gaps = checks.anomaly_coverage(silent, led)
+    check("findings that leave out the loop overrun are sent back", any("Robot loop" in g for g in gaps),
+          "; ".join(gaps)[:200])
+    added = _pl._detector_findings(led, silent)
+    fixed = {"schema": 1, "session_uids": ["loop-5"], "findings": added}
+    check("…and if the model never covers it, the detector's own finding goes on the board",
+          len(added) == 1 and added[0]["severity"] == "fault" and added[0]["metric"]["unit"] == "s"
+          and not _schema.validate(fixed, _schema.load("insight"))
+          and not checks.anomaly_coverage(fixed, led), str(added)[:200])
+    lesson = {"id": "learned_avoid_loop_time", "kind": "avoid", "rule": "skip loop readings",
+              "topic": ["looptime", "loop"], "enforce": True}
+    mine = {"findings": [{"id": "loop_overruns", "severity": "warn",
+                          "claim": "The robot loop stalled past 100 ms in 6 seconds.",
+                          "metric": {"name": "loop stalls", "value": 6}},
+                         {"id": "other", "severity": "warn", "claim": "Something else.",
+                          "metric": {"name": "x", "value": 1}}]}
+    playbook.enforce(mine, [lesson], protect=lambda f: _pl._carries_flag(f, led))
+    check("…and a learned lesson can never drop a finding that carries a detector flag",
+          "loop_overruns" in [f["id"] for f in mine["findings"]])
+    for r in db.fetchall("SELECT id FROM log_session WHERE uid LIKE 'loop-%'"):
+        delete_session(r["id"], db.path)
+
+
+def sweep_section() -> None:
+    """The general sweep (app/robot/sweep.py): any health signal beyond its own
+    past is flagged; commands, flags and first use aren't."""
+    from app.db import db
+    from app.robot import delete_session, sweep
+    print("\nThe sweep (every health signal against its own past)")
+    ids = []
+    with db.transaction() as c:
+        c.execute("INSERT OR IGNORE INTO device (device_type, can_id) VALUES ('Robot', -1)")
+        robot = c.execute("SELECT id FROM device WHERE device_type='Robot'").fetchone()[0]
+
+        def sig(name):
+            c.execute("INSERT OR IGNORE INTO signal (device_type, name, value_kind, signal_class)"
+                      " VALUES ('Robot', ?, 'num', 'telemetry')", (name,))
+            return c.execute("SELECT id FROM signal WHERE device_type='Robot' AND name=?",
+                             (name,)).fetchone()[0]
+
+        for n in range(10):
+            uid = f"sweep-{n}"
+            c.execute("INSERT INTO log_session (source_file, source_name, source_kind, started_at,"
+                      " duration_s, uid) VALUES (?, ?, 'wpilog', ?, 60, ?)",
+                      (uid, uid, f"2026-11-0{n % 9 + 1} 10:00:0{n}", uid))
+            sid = c.execute("SELECT id FROM log_session WHERE uid=?", (uid,)).fetchone()[0]
+            ids.append(sid)
+            last = n == 9
+            for name, lo, hi in (
+                    ("RealOutputs/Logger/ConduitSaveMS", 10.0, 160.0 if last else 20 + n * 2),
+                    ("RealOutputs/Turret Stator Motor Current", 0.0, 25.0 if last else 0.0),
+                    ("DriverStation/FMSAttached", 0.0, 1.0 if last else 0.0),
+                    ("RealOutputs/Arm Setpoint", 0.0, 90.0 if last else 10.0 + n)):
+                c.execute("INSERT INTO series (session_id, device_id, signal_id, v_min, v_max) "
+                          "VALUES (?, ?, ?, ?, ?)", (sid, robot, sig(name), lo, hi))
+    got = sweep.find(db, ids[-1], ids[:-1])
+    names = [a["signal"] for a in got]
+    check("a health signal far beyond its own past is flagged (the logger stalling)",
+          names == ["RealOutputs/Logger/ConduitSaveMS"] and got[0]["normal"]["logs"] == 9,
+          str(names))
+    check("…but not a mechanism's first use, a field flag, or a setpoint", len(names) == 1)
+    check("…and nothing until there are enough comparable logs",
+          not sweep.find(db, ids[-1], ids[:5]))
+    for sid in ids:
+        delete_session(sid, db.path)
+
+
 def phases_section() -> None:
     """match_phases on a made-up match: disabled, 15 s auto, teleop, disabled."""
     from app.ai import tools
@@ -482,7 +711,7 @@ def checks_section(uid: str) -> None:
           not schema.validate(board, schema.designer_schema()))
     probs = pipeline.assign_status(board, good)
     check("code colours each card from its finding, the headline from the worst",
-          not probs and [v["status"] for v in board["vitals"]] == ["fault", "ok", "idle"]
+          not probs and [v["status"] for v in board["vitals"]] == ["fault", "warn", "warn"]
           and board["headline"]["status"] == "fault", "; ".join(probs))
     dup = copy.deepcopy(honest_board(uid))
     dup["faults"] = [{"label": "Latched faults", "value": "50", "finding": "latched_faults"}]
@@ -667,6 +896,675 @@ def pipeline_section(uid: str) -> None:
     check("a board with one bad chart publishes without it (charts are optional)",
           res.status == "published" and "A chart the checks refuse" not in titles,
           f"{res.status} {res.reason[:120]}")
+
+
+def playbook_section(uid: str) -> None:
+    """The learning loop (app/ai/playbook.py, curate.py) and the context budget."""
+    import copy
+    from app.ai import curate, feedback, pipeline, playbook, service
+    from app.ai.local import LocalToolbox, SqliteSink
+    from app.ai.ollama import OllamaError
+    from app.db import db
+
+    print("\nThe playbook: learning from the crew's verdicts")
+    playbook.path().unlink(missing_ok=True)
+
+    # ── filler: "nothing to see" findings beside a real one ──────────────
+    ins = honest_findings(uid)
+    calm = copy.deepcopy(ins["findings"][1])
+    calm.update(id="battery_within_limits", severity="ok",
+                claim="Battery stayed within normal limits.")
+    ins["findings"].append(calm)
+    dropped = playbook.drop_filler(ins)
+    check("an ok finding beside a fault is dropped by code (94 of 94 such were rated "
+          "not useful)", dropped == ["battery_within_limits"]
+          and len(ins["findings"]) == 3, str(dropped))
+    clear = {"findings": [dict(calm, id="all_clear"), dict(calm, id="second_clear")]}
+    playbook.drop_filler(clear)
+    check("…a lone all-clear stays, a second one goes",
+          [f["id"] for f in clear["findings"]] == ["all_clear"])
+    one = {"findings": [dict(calm, id="only")]}
+    check("…and it never leaves a run with no findings",
+          not playbook.drop_filler(one) and len(one["findings"]) == 1)
+
+    # ── select: only what this log's data touches ────────────────────────
+    lessons = playbook.active()
+    picked = {x["id"] for x in playbook.select(lessons, '{"fault":"BootDuringEnable"}')}
+    check("the built-in lessons load", len(lessons) == len(playbook.SEEDS))
+    check("a lesson is given when its topic is in the log's data, not otherwise",
+          "seed_reboot_while_enabled" in picked and "seed_unlicensed_feature" not in picked,
+          str(sorted(picked)))
+    many = [dict(lessons[0], id=f"x{i}", topic=["bootduringenable"], seed=False,
+                 rule="r" * 200) for i in range(20)]
+    sel = playbook.select(many, "BootDuringEnable")
+    check("…never more than a handful, inside its character budget",
+          len(sel) <= playbook.SELECT_LIMIT
+          and sum(len(x["rule"]) for x in sel) <= playbook.SELECT_CHARS)
+
+    # ── enforce: drops only, never a fault, a detector's or the last ─────
+    rule = {"id": "learned_no_temp", "kind": "avoid", "rule": "skip temperatures",
+            "topic": ["hottest"], "enforce": True}
+    ins = honest_findings(uid)
+    gone = playbook.enforce(ins, [rule])
+    check("an enforced avoid lesson drops the finding it's about",
+          gone == [{"finding": "hottest_motor", "lesson": "learned_no_temp"}]
+          and "hottest_motor" not in [f["id"] for f in ins["findings"]])
+    rule_f = dict(rule, topic=["latched"])
+    ins = honest_findings(uid)
+    det = copy.deepcopy(ins["findings"][2])
+    det.update(id="detector_hottest", severity="warn")
+    ins["findings"].append(det)
+    playbook.enforce(ins, [rule_f, dict(rule, topic=["detectorhottest"])])
+    check("…never a fault, never a detector finding",
+          {"latched_faults", "detector_hottest"} <= {f["id"] for f in ins["findings"]})
+    solo = {"findings": [honest_findings(uid)["findings"][2]]}
+    check("…never the last finding", not playbook.enforce(solo, [rule]))
+    check("…and a lesson not enforced drops nothing",
+          not playbook.enforce(honest_findings(uid), [dict(rule, enforce=False)]))
+
+    # ── a run is given its lessons and records them ──────────────────────
+    sink = SqliteSink(machine_id="pit-aicheck")
+    noisy = honest_findings(uid)
+    noisy["findings"].append(calm)
+    llm = Scripted([[("faults", {"session_uid": uid}),
+                         ("series_stats", {"session_uid": uid, "signal": "DeviceTemp"})], "Done.", noisy, honest_board(uid)])
+    res = pipeline.analyse(LocalToolbox(), sink, llm, [uid], analyst="scripted",
+                           playbook_lessons=playbook.active())
+    check("a run records the lessons it was given and the filler code dropped",
+          res.status == "published" and res.stats.filler == ["battery_within_limits"]
+          and res.stats.playbook, f"{res.status} {res.reason[:100]} {res.stats.playbook}")
+    first = next(m for m in res.transcript["analyst"] if m["role"] == "user")["content"]
+    check("…and the lessons are in what the analyst read",
+          "This crew's playbook" in first)
+    check("asking again for a result it was given up front gets a line, not the result",
+          res.stats.repeats == 1 and '"already given' not in first, str(res.stats.repeats))
+
+    # ── the context budget ───────────────────────────────────────────────
+    big = {"args": {"session_uid": uid},
+           "anomalies": [{"device": f"TalonFX {i}", "detail": "x" * 200} for i in range(200)]}
+    lines = pipeline._fit_primer([("anomalies", big)], 6000)
+    check("an oversized up-front result is shrunk to fit, and says so",
+          len(lines[0]) <= 6400 and '"truncated":true' in lines[0] and "_shown_of" in lines[0])
+    msgs = [{"role": "system", "content": "s" * 2000}, {"role": "user", "content": "u" * 2000}]
+    msgs += [{"role": "tool", "content": json.dumps(big)} for _ in range(4)]
+    n = pipeline._fit(msgs, 4000)
+    check("a long conversation is condensed under the budget, oldest results first",
+          pipeline._size(msgs) <= 4000 and n >= 1
+          and json.loads(msgs[2]["content"]).get("condensed"), f"{pipeline._size(msgs)} {n}")
+
+    class Overflows(Scripted):
+        def __init__(self, replies):
+            super().__init__(replies)
+            self.raised = False
+
+        def chat(self, model, messages, **kw):
+            if not self.raised:
+                self.raised = True
+                raise OllamaError("llama-server: HTTP 400 request (17256 tokens) exceeds "
+                                  "the available context size (16384 tokens)")
+            return super().chat(model, messages, **kw)
+
+    llm = Overflows([[("series_stats", {"session_uid": uid, "signal": "DeviceTemp"})],
+                     "Done.", honest_findings(uid), honest_board(uid)])
+    res = pipeline.analyse(LocalToolbox(), sink, llm, [uid], analyst="scripted")
+    check("an engine that says the request was too long gets a condensed retry, not a "
+          "failed run", res.status == "published" and len(res.stats.recovered) == 1,
+          f"{res.status} {res.reason[:100]}")
+
+    # ── the curator: verdicts → lessons, refused unless grounded ─────────
+    run = db.fetchone("SELECT id FROM analysis_run WHERE status = 'published' "
+                      "ORDER BY id DESC LIMIT 1")["id"]
+    fids = [f["id"] for f in noisy["findings"]]
+    feedback.set_rating(run, "hottest_motor", "not_useful")
+    feedback.set_note(run, "hottest_motor", "Normal reading")
+    feedback.set_rating(run, "latched_faults", "useful")
+    verdicts = curate.pending()
+    refs = {v["finding"]["id"]: v["ref"] for v in reversed(verdicts)}
+    mine = next((i for i, v in enumerate(verdicts) if v["reason"] == "Normal reading"), None)
+    check("new verdicts are pending, reasoned ones before unreasoned useful ones",
+          mine is not None and all(v["rating"] != "useful" or v["reason"]
+                                   for v in verdicts[:mine]), str(fids))
+    doc = playbook.load()
+    good = {"op": "add", "id": "cool_motors", "kind": "avoid",
+            "rule": "A motor temperature well inside its range isn't worth a finding.",
+            "topic": ["hottest"], "from": [refs["hottest_motor"]]}
+
+    def refused(label: str, change: dict, needle: str) -> None:
+        ok, probs = curate.check_changes([change], verdicts, doc)
+        check(label, not ok and any(needle in p for p in probs), "; ".join(probs))
+
+    ok, probs = curate.check_changes([good], verdicts, doc)
+    check("a grounded lesson from a reasoned verdict passes", len(ok) == 1 and not probs,
+          "; ".join(probs))
+    refused("a lesson citing a verdict that isn't there is refused",
+            dict(good, **{"from": ["v99"]}), "no verdict")
+    refused("an avoid lesson standing on a useful verdict is refused",
+            dict(good, **{"from": [refs["latched_faults"]]}), "can't stand on")
+    refused("a topic word that matches everything is refused",
+            dict(good, topic=["motor"]), "almost")
+    refused("a topic not in the cited verdicts is refused",
+            dict(good, topic=["shooter"]), "isn't in the verdicts")
+    refused("a figure the crew never wrote is refused",
+            dict(good, rule="A motor under 60 °C is not worth a finding at all."), "60")
+    refused("an avoid lesson that would cover a finding the crew called useful is refused",
+            dict(good, topic=["match"]), "rated")
+    refused("a built-in lesson can't be changed by a model",
+            dict(good, op="update", id="seed_reboot_while_enabled"), "built-in")
+    ok, _p = curate.check_changes([dict(good, id="seed_cool_motors")], verdicts, doc)
+    check("…but a new lesson the model names like a seed is added, named by code",
+          [c["id"] for c in ok] == ["learned_cool_motors"], str(ok))
+
+    llm = Scripted([{"changes": [dict(good, topic=["shooter"])]}, {"changes": [good]}])
+    out = curate.curate(llm, "scripted")
+    saved = playbook.load()
+    check("a curation pass sends a refused change back once, then saves the fixed lesson",
+          out.status == "changed" and llm.calls == 2
+          and any(x["id"] == "learned_cool_motors" for x in saved["lessons"]),
+          f"{out.status} {out.refused} {out.error}")
+    check("…with where it came from, the history and the watermark moved",
+          saved["lessons"][0]["learned_from"] and saved["history"]
+          and saved["curated_at"] and not curate.pending())
+    check("…so the next pass has nothing to do",
+          curate.curate(Scripted([]), "scripted").status == "nothing")
+    ok, probs = curate.check_changes([dict(good, id="again")], verdicts, saved)
+    check("a lesson that restates one already there is refused",
+          not ok and any("already covers" in p for p in probs), "; ".join(probs))
+    check("the playbook syncs as a team setting",
+          "playbook" in __import__("app.db.sync.docs", fromlist=["x"]).SETTING_DOCS)
+
+    # ── measure, then enforce what the model ignores ─────────────────────
+    lesson = next(x for x in saved["lessons"] if x["id"] == "learned_cool_motors")
+    saved["lessons"][0]["learned_from"] = ["a", "b", "c"]
+    playbook.save(**saved)
+    for _ in range(3):
+        llm = Scripted([[("faults", {"session_uid": uid}),
+                         ("series_stats", {"session_uid": uid, "signal": "DeviceTemp"})], "Done.",
+                        honest_findings(uid), honest_board(uid)])
+        r = pipeline.analyse(LocalToolbox(), sink, llm, [uid], analyst="scripted",
+                             playbook_lessons=playbook.active())
+        feedback.set_rating(r.run_id, "hottest_motor", "not_useful")
+    rec = playbook.evaluate(lessons=playbook.active())[lesson["id"]]
+    check("a lesson's record counts the verdicts on its topic after it was given",
+          rec.given >= 3 and rec.after["not_useful"] >= 3 and rec.ignored, str(rec))
+    on = playbook.auto_enforce()
+    check("an avoid lesson the model keeps ignoring is enforced by code, and recorded",
+          on == [lesson["id"]] and "enforced by code" in playbook.load()["history"][-1]["what"],
+          str(on))
+    llm = Scripted([[("faults", {"session_uid": uid}),
+                         ("series_stats", {"session_uid": uid, "signal": "DeviceTemp"})], "Done.",
+                    honest_findings(uid), _board_without(honest_board(uid), "hottest_motor")])
+    r = pipeline.analyse(LocalToolbox(), sink, llm, [uid], analyst="scripted",
+                         playbook_lessons=playbook.active())
+    check("…and the next run leaves that finding out, the rest publish",
+          r.status == "published" and r.stats.enforced == [
+              {"finding": "hottest_motor", "lesson": lesson["id"]}], f"{r.status} {r.reason[:90]}")
+    playbook.set_flag("seed_unlicensed_feature", retired=True)
+    check("an admin can retire a built-in lesson",
+          "seed_unlicensed_feature" not in {x["id"] for x in playbook.active()})
+
+    # ── a run a crash left "running" ─────────────────────────────────────
+    with db.transaction() as conn:
+        conn.execute("INSERT INTO analysis_run (session_uids, analyst, status, started_at) "
+                     "VALUES ('[]', 'old', 'running', datetime('now', '-5 hours'))")
+        conn.execute("INSERT INTO analysis_run (session_uids, analyst, status) "
+                     "VALUES ('[]', 'new', 'running')")
+    service._close_stale_runs()
+    rows = {r["analyst"]: r["status"] for r in db.fetchall(
+        "SELECT analyst, status FROM analysis_run WHERE analyst IN ('old', 'new')")}
+    check("a run a quit left 'running' is marked failed at startup; a fresh one isn't",
+          rows == {"old": "failed", "new": "running"}, str(rows))
+    with db.transaction() as conn:
+        conn.execute("DELETE FROM analysis_run WHERE analyst IN ('old', 'new')")
+
+    # ── the panel ────────────────────────────────────────────────────────
+    from app.widgets.analysis_panel import AnalysisPanel
+    from app.widgets.brand_widgets import SelectableChip
+    app = _QAPP
+    newest = db.fetchone("SELECT id FROM analysis_run WHERE status = 'published' "
+                         "ORDER BY id DESC LIMIT 1")["id"]
+    feedback.set_rating(newest, "battery_sag", "not_useful")
+    feedback.set_note(newest, "battery_sag", "Normal reading")
+    panel = AnalysisPanel()
+    panel._selected = newest
+    panel._reload()
+    app.processEvents()
+    why = [c for c in panel.findChildren(SelectableChip) if c.property("reason")]
+    check("a Not useful verdict offers one-tap reasons, the chosen one marked",
+          any(c.property("reason") == "Normal reading" and c._active for c in why),
+          f"{len(why)} reason chips")
+    rows = panel._playbook._rows.count()
+    check("the playbook shows every lesson in force", rows == len(playbook.active()),
+          f"{rows} rows")
+    panel.deleteLater()
+    app.processEvents()
+
+
+def csa_section(uid: str) -> None:
+    """The stationary CSA (Brayden, 2026-11-03): the Driver Station's log in,
+    every log of a recording on one clock, incidents, the knowledge base, the
+    model's diagnosis and the checks that keep it honest."""
+    import tempfile
+    from datetime import datetime
+    from app.ai import checks, csa, diagnose, feedback, pipeline as _pl, tools
+    from app.ai.local import LocalToolbox, SqliteSink
+    from app.db import db
+    from app.robot import delete_session, dslog, events, import_log, incidents
+    print("\nThe CSA: Driver Station logs, incidents, diagnosis")
+
+    # ── a Driver Station log, through the real importer ──────────────────
+    from datetime import UTC
+    # UTC: the roboRIO and AdvantageKit name their logs in UTC, and so must the DS's.
+    start = datetime(2026, 11, 5, 9, 58, 0, tzinfo=UTC).timestamp()
+    recs = []
+    for i in range(int(200 / 0.02)):                     # 200 s at 50 Hz
+        t = i * 0.02
+        en = 125 <= t < 185
+        dip = 150 <= t < 150.4
+        gone = 160 <= t < 162
+        recs.append(dslog.Record(
+            trip_ms=4.0, packet_loss=0.0, battery_v=None if gone else (6.2 if dip else 12.4),
+            cpu=0.4, can=0.6, wifi_db=40.0, wifi_mb=1.5, brownout=dip, watchdog=False,
+            ds_teleop=en and t >= 140, ds_disabled=not en, robot_teleop=en and t >= 140,
+            robot_auto=en and t < 140, robot_disabled=not en, pd_type=dslog.PD_REV,
+            currents=[2.0] * 24))
+    tmp = Path(tempfile.mkdtemp(prefix="dslog-check-"))
+    path = tmp / "2026_11_05 09_58_00 Thu.dslog"
+    dslog.write(path, start, recs, [
+        (1.0, "<TagVersion>1 <time> 01.000 <Code> 44004 <details> FRC: The Driver Station "
+              "has lost communication with the robot."),
+        (110.0, "<TagVersion>1 <message> FMS Connected:   Qualification - 14:1, Field Time: "
+                "26/11/5 9:59:50"),
+        (115.0, "<TagVersion>1 <Code> 44007 <details> FRC: Time since robot boot. "
+                "<location> 1803.2"),
+        (162.5, "<TagVersion>1 <Code> 44007 <details> FRC: Time since robot boot. "
+                "<location> 3.682")])
+    back = list(dslog.records(path.read_bytes()))
+    check("a .dslog reads back exactly as written (trip time, battery, flags, PDH currents)",
+          len(back) == len(recs) and back[7510].brownout
+          and abs(back[7510].battery_v - 6.2) < 1 / 256
+          and back[8050].battery_v is None and back[100].currents[:2] == [2.0, 2.0])
+    from app.robot import batch
+    copy = tmp / "copied" / path.name
+    copy.parent.mkdir()
+    copy.write_bytes(path.read_bytes())
+    batch.copy_companions(path, copy)
+    ok_copy = copy.with_suffix(".dsevents").is_file()
+    batch.remove_with_companions(copy)
+    check("a folder import copies the .dsevents with its .dslog, and removes it with it",
+          ok_copy and not copy.with_suffix(".dsevents").exists()
+          and batch.describe_header(path.read_bytes()[:512], ".dslog")[1])
+    r = import_log(path, db.path)
+    row = db.fetchone("SELECT uid, source_kind, started_at, match_key FROM log_session "
+                      "WHERE id = ?", (r.session_id,))
+    ds_uid = row["uid"]
+    check("it imports as a session: its start from its own header, its match from the FMS",
+          row["source_kind"] == "dslog" and row["started_at"] == "2026-11-05 09:58:00"
+          and row["match_key"] == "qm14", str(dict(row)))
+    ph = tools.match_phases(ds_uid)
+    check("match phases read the DS's own command (auto 125-140 s, then teleop)",
+          ph.get("auto_s") == 15.0 and ph.get("teleop_s") == 45.0, str(ph)[:200])
+    kinds = {e["kind"] for e in events.find(db, r.session_id, [(125, 185)])}
+    check("the DS log's brownout, comms loss and the roboRIO's reboot become events",
+          {"brownout", "comms_lost", "roborio_reboot"} <= kinds, str(sorted(kinds)))
+
+    # ── what the team's real DS logs taught it (USB drive, 2026-11-05) ────
+    real = []
+    for i in range(int(300 / 0.02)):                     # a 300 s DS log
+        t = i * 0.02
+        en = 100 <= t < 120 or 123 <= t < 263           # 20 s auto, the 3 s gap, 140 s teleop
+        off = 20 <= t < 40 or 200 <= t < 258             # robot off in the queue; a reboot
+        blip = en and 150 <= t < 150.3                   # a brownout's instant of disable
+        real.append(dslog.Record(
+            trip_ms=4.0, packet_loss=0.0, battery_v=None if off else (6.6 if blip else 12.3),
+            cpu=0.5, can=0.45, wifi_db=40.0, wifi_mb=1.5, brownout=blip, watchdog=False,
+            ds_teleop=en and t >= 123 and not blip, ds_disabled=(not en) or blip,
+            robot_teleop=False, robot_auto=False, robot_disabled=not en,
+            # Varying, as a real robot's draw always does: storage keeps the
+            # 1 s rows of a value that changes.
+            pd_type=dslog.PD_REV, currents=[1.0] * 23 + [1.0 + (i % 2)]))
+    msgs = [(5.0, "<TagVersion>1 <message> FMS Connected:   None - 0:0, Field Time: 0"),
+            (6.0, "<TagVersion>1 <message> Info roboRIO: Disk Free 14299 MB, Memory Free 12 MB."
+                  " DS Laptop: CPU 40% Batt 80%."),
+            (17.0, "<TagVersion>1 <message> Info roboRIO: Disk Free 14299 MB, Memory Free 13 "
+                   "MB. DS Laptop: CPU 40% Batt 80%."),
+            (60.0, "<TagVersion>1 <Code> 44021 <details> Radio Version: VH-109_2.0.1-02062026"
+                   "FRC: Please update Radio firmware."),
+            (201.0, "<TagVersion>1 <Code> 44002 <details> Ping Results: link-bad, DS "
+                    "radio(.4)-GOOD, robot radio(.1)-bad, roboRIO(.2)-bad, FMS-GOOD"),
+            (258.5, "<TagVersion>1 <message> ********** Robot program starting **********")]
+    msgs += [(100.0 + k * 0.1, "<TagVersion>1 <message> Indexer setState called with: FIRE")
+             for k in range(300)]
+    rpath = tmp / "2026_11_05 10_30_00 Thu.dslog"
+    dslog.write(rpath, start + 1800, real, msgs)
+    rr = import_log(rpath, db.path)
+    rrow = db.fetchone("SELECT uid, started_at, match_key FROM log_session WHERE id = ?",
+                       (rr.session_id,))
+    rph = tools.match_phases(rrow["uid"])
+    check("a brownout's instant of disable doesn't end the match: 20 s auto, 140 s teleop",
+          rph.get("auto_s") == 20.0 and abs((rph.get("teleop_s") or 0) - 140.0) < 0.5,
+          str({k: rph.get(k) for k in ("auto_s", "teleop_s")}))
+    check("…\"None - 0:0\" off the field is no match, and the start is UTC",
+          rrow["match_key"] is None and rrow["started_at"] == "2026-11-05 10:28:00",
+          str(dict(rrow)))
+    rev = events.find(db, rr.session_id, incidents._windows(rph))
+    by = {}
+    for e in rev:
+        by.setdefault(e["kind"], []).append(e)
+    queue = [e for e in by.get("comms_lost", []) if e["t_s"] < 50]
+    check("…the robot switched off in the queue is no comms fault; the reboot mid-match is",
+          queue and all(e["severity"] == "info" for e in queue)
+          and any(e["severity"] == "fault" for e in by.get("comms_lost", []) if e["t_s"] > 190)
+          and by.get("roborio_reboot") and by["roborio_reboot"][0]["value"] >= 50,
+          str({k: [(round(e["t_s"]), e["severity"]) for e in v] for k, v in by.items()})[:300])
+    check("…which hop the ping lost is evidence: the robot's radio, so not the Ethernet",
+          "ping_radio_bad" in by, str(sorted(by)))
+    spam = (by.get("console_spam") or [{}])[0]
+    check("…a line printed 300 times is counted though storage keeps it once",
+          spam.get("value") == 300 and "Indexer setState" in spam.get("detail", ""),
+          str(spam)[:160])
+    mom = incidents.moment(db, rrow["uid"], 150.0, 3.0, tools.match_phases)
+    check("…the DS's PDH channels summed are the robot's total current, for the diagnosis",
+          (mom.get("readings") or {}).get("total_current_a") == 25.0,
+          str(mom)[:300])
+    lost = events._lost_time([(100.0, 120.0), (123.0, 140.0), (153.0, 263.0)])
+    check("…on the field, a disable past the 3 s auto-teleop gap is match time lost",
+          len(lost) == 1 and lost[0]["value"] == 13.0 and lost[0]["kind"] == "disabled_mid_match",
+          str(lost)[:160])
+    check("…and the roboRIO's low memory and the radio's firmware note are found",
+          (by.get("low_memory") or [{}])[0].get("value") == 12 and "radio_firmware" in by,
+          str(sorted(by)))
+
+    # ── what else was on the team's drive (2026-11-05) ───────────────────
+    from app.robot import batch as _batch, owlet as _owlet
+    page = b"<!DOCTYPE html>\r\n<html><head><title>Not Found</title></head><body>Access Error: 404"
+    check("a 404 page saved under a log's name is called a failed copy, not a bad log",
+          "copy from the robot failed" in _batch.describe_header(page, ".hoot")[2]
+          and "404" in _batch.describe_header(page, ".wpilog")[2])
+    old = tmp / "rio_2025-10-04_08-24-57.hoot"
+    old.write_bytes(b"roboRIO Native CAN Bus".ljust(0x46, b"\0") + bytes([13, 0]) + b"\0" * 64)
+    err = ""
+    try:
+        _owlet.convert(old, tmp / "old.mcap")
+    except _owlet.OwletError as e:
+        err = str(e)
+    check("last season's hoot (format 13) names the owlet that reads it, from CTRE's index",
+          _owlet.hoot_compliancy(old) == 13 and "2025 hoot" in err and "25.4.1" in err
+          and "redist.ctr-electronics.com" in err, err[:160])
+    check("…and this season's test hoot is format 19, the bundled owlet's",
+          _owlet.hoot_compliancy(ROOT / "TEST_LOGS" / "rio_2026-08-17_03-42-54.hoot") == 19
+          and _owlet.COMPLIANCY_OF.get(_owlet._version(_owlet.find_owlet(19))) == 19)
+
+    # ── a robot log recorded with it (AdvantageKit), on one clock ────────
+    with db.transaction() as c:
+        c.execute("INSERT INTO log_session (source_file, source_name, source_kind, "
+                  "started_at, duration_s, uid) VALUES ('csa-akit', 'akit_26-11-05_10-00-00.wpilog', "
+                  "'wpilog', '2026-11-05 10:00:00', 80.0, 'csa-akit')")
+        sid = c.execute("SELECT id FROM log_session WHERE uid='csa-akit'").fetchone()[0]
+        c.execute("INSERT OR IGNORE INTO device (device_type, can_id) VALUES ('Robot', -1)")
+        c.execute("INSERT OR IGNORE INTO device (device_type, can_id) VALUES ('TalonFX', 40)")
+        robot = c.execute("SELECT id FROM device WHERE device_type='Robot'").fetchone()[0]
+        motor = c.execute("SELECT id FROM device WHERE device_type='TalonFX' AND can_id=40"
+                          ).fetchone()[0]
+
+        def put(dev, dtype, name, points=(), seconds=()):
+            c.execute("INSERT OR IGNORE INTO signal (device_type, name, value_kind, signal_class) "
+                      "VALUES (?, ?, 'num', 'telemetry')", (dtype, name))
+            g = c.execute("SELECT id FROM signal WHERE device_type=? AND name=?",
+                          (dtype, name)).fetchone()[0]
+            c.execute("INSERT INTO series (session_id, device_id, signal_id) VALUES (?, ?, ?)",
+                      (sid, dev, g))
+            se = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+            c.executemany("INSERT INTO samples.sample VALUES (?, ?, 0, ?)",
+                          [(se, t, v) for t, v in points])
+            c.executemany("INSERT INTO samples.sample_1s (series_id, t_s, v_min, v_max, v_avg, n)"
+                          " VALUES (?, ?, ?, ?, ?, 1)", [(se, t, v, v, v) for t, v in seconds])
+
+        # Enabled 6 s in by its own clock (the DS: 10:00:05, so 1 s off), the
+        # brownout at 30 s (10:00:30 on the DS: 150 s after 09:58:00).
+        put(robot, "Robot", "DriverStation/Enabled", [(0, 0), (6000, 1), (66000, 0)])
+        put(robot, "Robot", "SystemStats/BrownedOut", [(0, 0), (31000, 1), (31400, 0)])
+        put(robot, "Robot", "SystemStats/BatteryVoltage", [(0, 12.4)],
+            [(t, 6.2 if t == 31 else 12.4) for t in range(0, 80)])
+        put(robot, "Robot", "PowerDistribution/TotalCurrent", [(0, 40.0)],
+            [(t, 60.0) for t in range(0, 80)])
+        put(motor, "TalonFX", "ResetCount", [(0, 0), (31200, 1)])
+    rec = incidents.recording(db, "csa-akit")
+    check("a recording takes in the DS log whose span covers the robot's log",
+          {r["uid"] for r in rec} == {"csa-akit", ds_uid}, str([r["source_name"] for r in rec]))
+    got = incidents.build(db, "csa-akit", tools.match_phases)
+    offs = {lg["kind"]: lg["offset_s"] for lg in got["logs"]}
+    check("the logs are put on one clock, nudged so their first enables line up",
+          offs.get("dslog") == 0.0 and offs.get("wpilog") == 119.0, str(offs))
+    worst = got["incidents"][0] if got["incidents"] else {}
+    check("what happened at the same moment in different logs is one incident",
+          {"brownout", "device_reset"} <= set(worst.get("kinds") or [])
+          and len(worst.get("logs") or []) == 2, str(worst.get("kinds")))
+    issue = next((i for i in tools.incidents("csa-akit")["issues"]
+                  if i["primary"] == "brownout"), None)
+    check("…and its readings at that moment come with it (battery, total current)",
+          issue is not None and issue["readings"].get("battery_v") == 6.2
+          and issue["readings"].get("total_current_a") == 60.0, str(issue and issue["readings"]))
+    cands = csa.match(issue, {"readings": issue["readings"]}) if issue else []
+    check("the knowledge base puts a loose main connection first: a controller rebooted, "
+          "the current was low", bool(cands) and cands[0]["id"] == "brownout.loose_main_power"
+          and any("device_reset" in f for f in cands[0]["for"]),
+          str([(c["id"], c["score"]) for c in cands]))
+    check("the DS log's comms loss with a fresh boot is a roboRIO reboot issue",
+          any(i["primary"] == "roborio_reboot" for i in got["issues"]))
+    check("the console's words are read by meaning",
+          events.classify("Talon ID 5 failed config with error TxFailed") == "config_failed"
+          and events.classify("Error at java.io.FileInputStream.open(Native Method): "
+                              "/home/lvuser/deploy/pathplanner/autos/Left.auto") == "missing_file"
+          and events.classify("HAL: CAN Receive has Timed Out") == "can_timeout"
+          and events.classify("error: no devices/emulators found") is None)
+
+    # ── the diagnosis: the model reasons, code checks ────────────────────
+    led = checks.Ledger()
+    led.add("incidents", tools.incidents("csa-akit"))
+    good = {"cause": "brownout.loose_main_power", "confidence": "high",
+            "why": "A controller rebooted with the brownout while the robot drew only 60 A.",
+            "check": "Wiggle-test the battery leads and the main breaker.", "ruled_out": []}
+
+    def run(*answers):
+        llm = Scripted(["Looking at the evidence."] + list(answers))
+        return diagnose.diagnose(LocalToolbox(), llm, "scripted", "csa-akit", issue, led), llm
+
+    d, _ = run(good)
+    check("a diagnosis that follows the facts passes", d.by == "model"
+          and d.cause == "brownout.loose_main_power" and not d.problems, str(d.problems))
+    d, llm = run(dict(good, cause="brownout.made_up"), good)
+    check("a cause that isn't a candidate is sent back", d.by == "model" and llm.calls == 3
+          and any("isn't a candidate" in p for p in d.problems), str(d.problems))
+    d, _ = run(dict(good, why="The battery fell to 5.1 V."), good)
+    check("a figure the evidence doesn't hold is sent back", any("5.1" in p for p in d.problems))
+    low = next(c for c in cands if c["score"] < cands[0]["score"])
+    d, _ = run(dict(good, cause=low["id"], confidence="medium"), good)
+    check("a cause the facts score lower, picked without looking closer, is sent back",
+          any("favour" in p for p in d.problems), str(d.problems))
+    weak = dict(good, cause="brownout.weak_battery")
+    d, _ = run(dict(weak, confidence="high"), dict(weak, confidence="high"))
+    check("two wrong answers: code answers from the facts, low confidence, marked",
+          d.by == "code" and d.confidence == "low" and d.cause == "brownout.loose_main_power",
+          f"{d.by} {d.cause} {d.confidence}")
+    f = diagnose.to_finding(issue, d, "csa-akit")
+    check("a diagnosis is a finding the contract takes, its figure from the incidents tool",
+          not __import__("app.ai.schema", fromlist=["x"]).validate(
+              {"schema": 1, "session_uids": ["csa-akit"], "findings": [f]},
+              __import__("app.ai.schema", fromlist=["x"]).load("insight"))
+          and f["metric"]["value"] == 6.2 and len(f["claim"]) <= 200, str(f)[:200])
+
+    # ── in the pipeline: diagnosed first, on the board even if the analyst fails ──
+    liar = {"schema": 1, "session_uids": ["csa-akit"], "question": "q", "findings": [
+        {"id": "made_up", "claim": "The battery fell to 2 V.", "severity": "warn",
+         "metric": {"name": "battery", "value": 2.0, "unit": "V"},
+         "evidence": [{"tool": "session_overview", "args": {"session_uid": "csa-akit"},
+                       "value": 2.0}]}]}
+    n_issues = len([i for i in tools.incidents("csa-akit")["issues"]
+                    if i["severity"] in ("fault", "warn")][:_pl.MAX_DIAGNOSE])
+    script = []
+    for _ in range(n_issues):
+        script += ["Thinking.", {"cause": "unexplained", "confidence": "low",
+                                 "why": "Not enough to tell.", "check": "Look at the logs."}]
+    board = {"title": "CSA", "headline": {"title": "Brownout", "sentence": "Check the power."},
+             "vitals": [], "faults": [], "charts": [],
+             "footer": {"left": "csa", "right": "check"}}
+    script += ["Done.", liar, liar, liar, board]
+    llm = Scripted(script)
+    res = _pl.analyse(LocalToolbox(), SqliteSink(machine_id="pit-aicheck"), llm, ["csa-akit"],
+                      analyst="scripted", diagnose_issues=True)
+    ids = [x["id"] for x in (res.insights or {}).get("findings") or []]
+    check("the CSA's diagnoses go on the board even when the analyst's findings don't pass",
+          res.status == "published" and any(i.startswith("csa_") for i in ids)
+          and "made_up" not in ids and len(res.stats.incidents) == n_issues,
+          f"{res.status} {res.reason[:120]} {ids}")
+
+    # ── the first look: the CSA's board up early, laid out by code ───────
+    from app.ai import checks as _ck, layout
+    from app.ai.ollama import Reply
+    bad_board = dict(board, headline={"title": "Brownout", "sentence": "It fell to 99 V."})
+    script = []
+    for _ in range(n_issues):
+        script += ["Thinking.", {"cause": "unexplained", "confidence": "low",
+                                 "why": "Not enough to tell.", "check": "Look at the logs."}]
+    script += ["Done.", Reply(content='{"schema": 1, "findings": [{"id": "a", "claim": "a a a',
+                              truncated=True), liar, liar, bad_board, bad_board, bad_board]
+    published: list[str] = []
+    boards_seen: list[dict] = []
+
+    def on_board(uid: str) -> None:
+        published.append(uid)
+        row = db.fetchone("SELECT spec FROM analysis_board WHERE uid = ?", (uid,))
+        boards_seen.append(json.loads(row["spec"]) if row else {})
+
+    res = _pl.analyse(LocalToolbox(), SqliteSink(machine_id="pit-aicheck"), Scripted(script),
+                      ["csa-akit"], analyst="scripted", diagnose_issues=True,
+                      publish_early=True, on_board=on_board)
+    first = boards_seen[0] if boards_seen else {}
+    check("the CSA's diagnoses go up first, laid out by code, before the analyst is done",
+          len(published) == 2 and published[0] == published[1] == res.board_uid
+          and (first.get("footer") or {}).get("left", "").startswith("First look")
+          and all(c.get("finding", "").startswith(("csa_", "detector_"))
+                  for c in (first.get("vitals") or []) + (first.get("faults") or []))
+          and res.stats.early_s is not None,
+          f"{published} {first.get('footer')} {res.stats.recovered} {res.stats.early_s}")
+    check("…an answer cut off at its token cap goes back saying so, not as bad JSON",
+          res.stats.truncated == 1 and any("cut off" in str(m.get("content"))
+                                           for m in res.transcript["analyst"]
+                                           if m["role"] == "user"), str(res.stats.truncated))
+    check("…a designer board rejected twice is laid out by code, not thrown away",
+          res.status == "published" and res.board["models"]["designer"] == layout.DESIGNER
+          and not [p for p in _ck.check_board(res.board, res.insights, [])
+                   if not p.startswith("title")]
+          and any("laid out by code" in r for r in res.stats.recovered),
+          f"{res.status} {res.reason[:120]} {res.board['models']} {res.stats.recovered}")
+    d0 = layout.draft({"findings": [
+        {"id": "x", "severity": "warn", "claim": "Battery sagged to 11.25 V under load: swap it",
+         "metric": {"name": "battery", "value": 11.25, "unit": "V"}}]})
+    check("…the code's board cuts whole words, its figure only from the finding",
+          d0["vitals"][0]["value"] == "11.25" and d0["headline"]["title"] == "Battery sagged "
+          "to 11.25 V under load", str(d0)[:200])
+
+    # ── many detector items: grouped, and written by code ────────────────
+    led = _ck.Ledger()
+    led.add("anomalies", {"args": {"session_uid": "csa-akit"}, "anomalies": [
+        {"kind": "missing", "severity": "fault", "device": f"TalonFX {n}", "device_type":
+         "TalonFX", "can_id": n, "present_in": 5, "detail": "on this bus before, not now",
+         "must_cover": True} for n in (12, 13, 14, 15, 16)]})
+    pre = _pl._detector_findings(led, {"findings": []})
+    check("five controllers missing from one bus are one finding naming all five, not five",
+          len(pre) == 1 and all(f"TalonFX {n}" in pre[0]["claim"] for n in (12, 13, 14, 15, 16))
+          and not _ck.anomaly_coverage({"findings": pre}, led) and len(pre[0]["claim"]) <= 200,
+          str([f["claim"] for f in pre])[:200])
+    tail = _pl._code_wrote(pre)
+    check("…and past a few items the model is told they're on the board, not to restate them",
+          "ALREADY ON THE BOARD" in tail and pre[0]["claim"] in tail, tail[:120])
+
+    d1 = {"vitals": [{"value": "6.425 V"}, {"value": "3 A", "unit": "V"}]}
+    _pl._split_units(d1)
+    check("a card value written with its unit gets the unit moved out, a clash left to the check",
+          d1["vitals"][0] == {"value": "6.425", "unit": "V"}
+          and d1["vitals"][1]["value"] == "3 A", str(d1))
+
+    # ── diagnosable: the motor, the bus, and the reach kept apart ────────
+    bo = {"id": "brownout", "primary": "brownout", "severity": "fault", "count": 4,
+          "at": ["8:44"], "phases": ["teleop"], "kinds": ["brownout"], "devices": [],
+          "worst": {"at": "8:44", "events": []}, "figures": {"V": 6.6},
+          "readings": {"total_current_a": 250.0, "most_supply_current": [
+              {"device": "TalonFX 15", "supply_a_max": 66.0, "bus": "roboRIO CAN",
+               "session_uid": "csa-akit", "device_type": "TalonFX", "can_id": 15},
+              {"device": "TalonFX 16", "supply_a_max": 62.0, "bus": "roboRIO CAN"}]}}
+    fb = diagnose.to_finding(bo, diagnose.Diagnosis(issue="brownout"), "csa-akit")
+    check("a brownout names the motors that drew the most, and its card draws the first",
+          "TalonFX 15 66 A, TalonFX 16 62 A (roboRIO CAN)" in fb["claim"]
+          and (fb["series"] or {}).get("can_id") == 15
+          and any("whole robot 250 A" in m for m in diagnose.measured(bo)), fb["claim"])
+    rs = dict(bo, id="rs", primary="device_fault:RemoteSensorDataInvalid", readings={},
+              buses={"CANivore": ["TalonFX 10", "TalonFX 18", "TalonFX 8"]})
+    fr2 = diagnose.to_finding(rs, diagnose.Diagnosis(issue="rs"), "csa-akit")
+    check("…encoders dropping out name their bus and the controllers",
+          "CANivore: TalonFX 10, 18, 8" in fr2["claim"]
+          and "all 3 on one bus (CANivore)" in diagnose.measured(rs), fr2["claim"])
+    reach = dict(good, hunch="Maybe a swerve module is binding; feel each one turn by hand.")
+    loose = dict(good, hunch="It fell to 3.3 V once.")
+    check("…a hunch is allowed and kept; a figure in it still has to be in the evidence",
+          not [p for p in diagnose.check(reach, cands, diagnose._pool(
+              _ck.Ledger(), issue, cands)) if "hunch" in p]
+          and any("hunch" in p for p in diagnose.check(loose, cands, diagnose._pool(
+              _ck.Ledger(), issue, cands))))
+
+    # ── new or recurring: the robot's earlier recordings ─────────────────
+    from app.ai import csa as _csa
+    seen_before = dict(issue, before={"in": 5, "of": 10, "streak": 3, "last": "2026-09-21"})
+    once = dict(issue, before={"in": 0, "of": 10, "new": True})
+    ok_r, fact = _csa._test({"recurring_gte": 3}, seen_before, {})
+    no_r, _ = _csa._test({"recurring_gte": 3}, once, {})
+    few, _ = _csa._test({"recurring_gte": 3}, dict(issue, before={"in": 1, "of": 2}), {})
+    check("an issue in 5 of the last 10 recordings counts as recurring; too few to say is no fact",
+          ok_r is True and no_r is False and few is None and "5 of the last 10" in fact, fact)
+    wb = lambda it: next(c for c in _csa.match(it, {"readings": it.get("readings") or {}})  # noqa: E731
+                         if c["id"] == "brownout.weak_battery")
+    check("…a brownout every match argues against one weak battery",
+          wb(seen_before)["score"] < wb(once)["score"],
+          f"{wb(seen_before)['score']} vs {wb(once)['score']}")
+    fr = diagnose.to_finding(seen_before, d, "csa-akit")
+    fn = diagnose.to_finding(once, d, "csa-akit")
+    from app.robot import incidents as _inc
+    newest = db.fetchone("SELECT uid FROM log_session WHERE started_at IS NOT NULL "
+                         "ORDER BY started_at DESC LIMIT 1")["uid"]
+    hist = _inc.history(tools.connection(), newest, tools.match_phases)
+    check("…the history reads every earlier recording, match keys and all", hist["of"] >= 1
+          and all("in" in h for h in hist["issues"].values()), str(hist)[:160])
+    check("…and the finding says new or recurring first",
+          "also in 5 of the last 10 recordings" in fr["claim"]
+          and "new, not in the last 10 recordings" in fn["claim"], fr["claim"])
+
+    # ── the crew says what it really was ─────────────────────────────────
+    from app.widgets.analysis_panel import AnalysisPanel
+    from app.widgets.brand_widgets import SelectableChip
+    app = _QAPP
+    panel = AnalysisPanel()
+    panel._selected = res.run_id
+    panel._reload()
+    app.processEvents()
+    chips = [c for c in panel.findChildren(SelectableChip)
+             if str(c.property("reason") or "").startswith(feedback.CONFIRMED)]
+    check("each diagnosis offers 'what was it really?', one chip per candidate", bool(chips),
+          f"{len(chips)} chips")
+    if chips:
+        chips[0].click()
+        app.processEvents()
+        key = str(chips[0].property("reason"))[len(feedback.CONFIRMED):]
+        check("…a tap records it, rates the finding useful, and the next diagnosis sees it",
+              feedback.confirmations().get(key) == 1
+              and feedback.verdicts(res.run_id)[str(chips[0].property("finding"))]["rating"]
+              == "useful", str(feedback.confirmations()))
+    panel.deleteLater()
+    app.processEvents()
+    for u in ("csa-akit", ds_uid):
+        for r in db.fetchall("SELECT id FROM log_session WHERE uid = ?", (u,)):
+            delete_session(r["id"], db.path)
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _board_without(board: dict, finding_id: str) -> dict:
@@ -1091,8 +1989,8 @@ def mcp_section(uid: str) -> None:
               init["result"]["protocolVersion"] == "2025-06-18"
               and "tools" in init["result"]["capabilities"])
         names = [t["name"] for t in rpc(2, "tools/list")["result"]["tools"]]
-        check("it lists the thirteen tools and the two analysis ones",
-              len(names) == 15 and "anomalies" in names and "wear" in names
+        check("it lists the fifteen tools and the two analysis ones",
+              len(names) == 17 and "anomalies" in names and "wear" in names
               and "analysis_scoreboard" in names
               and "match_context" in names and "match_phases" in names, ", ".join(names))
         got = rpc(3, "tools/call", {"name": "faults", "arguments": {"session_uid": uid}})
@@ -1228,10 +2126,14 @@ def main() -> int:
     checks_section(uid)
     phases_section()
     anomaly_section()
+    health_section()
+    sweep_section()
     pipeline_section(uid)
     app_section(uid)
     ask_section(uid)
     wear_section(uid)
+    playbook_section(uid)
+    csa_section(uid)
     mcp_section(uid)
     if opts.model or opts.engine == "llama":
         from app.ai.pipeline import DEFAULT_QUESTION

@@ -640,8 +640,8 @@ so no EQ. **libVLC is the engine because it's the only one with an EQ.**
 
 ## Robot logs (`app/robot/`)
 
-`.hoot` (owlet → **`.mcap`** in scratch space → `mcap.py` + `flatbuf.py`)
-and `.wpilog` are each a `_Source` yielding `(t_ms, device_type, can_id, signal, num, label)`;
+`.hoot` (owlet → **`.mcap`** in scratch space → `mcap.py` + `flatbuf.py`),
+`.wpilog` and the Driver Station's `.dslog` (`dslog.py`) are each a `_Source` yielding `(t_ms, device_type, can_id, signal, num, label)`;
 storage can't tell them apart. **Add a format by writing a `_Source`.**
 **There is no text stage and no `.txt` input**, by decision: logs go from
 `.hoot`/`.wpilog` straight to the database. Don't add one back. Schema,
@@ -658,6 +658,14 @@ DATABASE.md; read them before writing a query.
 - Scratch goes to `$PIT_LOG_SCRATCH` → temp → beside the source, never a log
   archive. **The duplicate check runs before owlet.**
 - `owlet.describe()` names OS, CPU and binary; `_PATTERNS` picks by platform.
+  **Each owlet reads one hoot format** (the byte at 0x46: 2025 is 13, 2026
+  is 19; 26.3.0 refuses 13 as "unsupported version: 0"), so `find_owlet()`
+  picks by `hoot_compliancy()` among the bundled ones and a missing season's
+  owlet is an error naming it and CTRE's URL (`OWLET_FOR`, from
+  `redist.ctr-electronics.com/index.json`). Only 26.3.0 is bundled.
+- **A failed copy is said as one** (`batch.describe_header`): the roboRIO's
+  web file browser saves its "404 -- Not Found" page under the log's name, and
+  208 of 373 "logs" on the team's drive were those (2026-11-05).
 - **Never read a hoot through owlet's `.wpilog`.** owlet 26.3.0's wpilog writer
   cut the end off 11 of 15 conversions of the same hoot while printing 100%
   and exiting 0, and wrote some samples twice (2026-10-02; ruled out: reading
@@ -795,8 +803,8 @@ never blue or red.
 
 ## Robot-log analysis (`app/ai/`)
 
-A local model reads a session through **thirteen read-only tools** (the home MCP
-server's nine plus `match_context`, `match_phases`, `anomalies` and `wear`) and a board comes out: analyst (tool calls → findings, `insight.schema.json`) →
+A local model reads a session through **fifteen read-only tools** (the home MCP
+server's nine plus `match_context`, `match_phases`, `anomalies`, `wear`, `incidents` and `moment`) and a board comes out: analyst (tool calls → findings, `insight.schema.json`) →
 check → designer (board, `board.schema.json`) → check → publish into
 `analysis_board`. The same `pipeline.analyse()` runs at home with a different
 toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
@@ -929,6 +937,154 @@ toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
   Never red. Tuned on `.validation/team_pull`: no warnings on healthy logs;
   `ai_check`'s planted wear (9 synthetic logs) is caught, a robot-wide
   hotter session isn't, a recovered motor clears. Home: R17.
+- **Partners and the loop: what the robot never reports as a fault**
+  (`app/robot/partners.py`, `loop_health.py`, kinds in `anomalies`,
+  PROMPT_VERSION 8; Brayden 2026-11-03: a backup eye on the bot).
+  **Partners:** motors whose |RotorVelocity| correlates (r ≥ 0.97, ≥ 20 s
+  moving) turn together; labels aren't needed (every subsystem label was
+  empty). A dead one is back-driven: same speed, no current, no heat, so
+  `missing` and `not_driven` can't see it. `partner_idle` (fault): the
+  stronger ≥ 8 A, the weaker ≤ 20% of it (last year's half shooter);
+  `partner_mismatch` (warn): out of the pair's own ratio across ≥ 3 earlier
+  logs (a geared pair's steady 0.5 is normal). On the team's logs it finds
+  15~16 (the shooter), 7~13~14 (geared) and the drives, and flags none of
+  104 healthy logs. **Loop:** `FullCycleMS` per enabled second (first second
+  of each stretch left out: a mode change): stall seconds ≥ 100 ms (motor
+  safety's timeout; the watchdog) and overrun seconds; the console's Tracer
+  epochs name the slow parts (wrappers left out; `SmartDashboard.updateValues`
+  is dashboard publishing); AdvantageKit's `QueuedCycles` backlog. Fault ≥ 5
+  stall s, warn ≥ 1, or overruns in a quarter of enabled seconds with a cycle
+  past 40 ms. The average loop time, all the analysis saw before, stayed
+  under 20 ms on every log; every enabled log stalled. Both are
+  **`must_cover`**: a finding whatever the severity, and it must say what
+  was found (the slow parts, both motors: `checks._missing_specifics`), or
+  the detector's own finding replaces it (`_short_claim`), the model's
+  duplicate with the same figure dropped. No lesson may drop a finding
+  carrying a detector flag (`_carries_flag`). The tool loop ends after
+  `MAX_REPEATS` asks for data already given (a real six-log run: 11 of 12).
+- **The stationary CSA** (Brayden 2026-11-03: "a totally fluent CSA going
+  through each log", PROMPT_VERSION 9). A CSA finds the moment, looks at
+  everything then, and diagnoses from experience; so does this:
+  **Driver Station logs** (`app/robot/dslog.py`, a `_DslogSource`): `.dslog`
+  (50 Hz: trip time, packet loss, battery, CPU, CAN, Wi-Fi, the brownout and
+  watchdog flags, DS/robot modes, PDH/PDP currents) and its `.dsevents`
+  beside it (codes 44002-44009), decoded as AdvantageScope does (version 4,
+  big-endian, LabVIEW time), `DS/…` signals on `Robot`; the folder import
+  carries the `.dsevents` (`batch.COMPANIONS`); match phases read
+  `DS/Enabled`; the match key comes from the FMS message. **Checked against
+  the team's real DS logs (USB, 70 `.dslog`, 2026-11-05):** battery within
+  5 mV median of the roboRIO's own reading through a whole match, the PDH
+  total within 0.8 A of AdvantageKit's (ratio 0.999, 348 A peak in both),
+  20 s auto + 140 s teleop on every full match. What they taught: the start
+  is **UTC** (`Reader.started`; the roboRIO and AdvantageKit name logs in
+  UTC, and local time put every DS log hours from its match); "None - 0:0"
+  is no match; a sub-1 V sample is a glitch, not a battery; **the DS's
+  disabled bit blinks for the instant of every brownout** (40-odd times in
+  qm17), so `DS/Enabled` rides through disables under `BLIP_S` (the 3 s
+  auto-teleop gap stays), or phases ended 100 s early; a console line
+  printed over and over is stored once (storage keeps changes), so the
+  reader writes a `[repeated N times over S s]` line (`dslog.repeats`).
+  **`uv run tools/dslog_compare.py --data <a copy>`** checks every DS log
+  against itself (length vs the gap to the next, brownout flags vs the
+  battery, 20 + 140 s per full match) and against every robot log that
+  overlaps (clock fitted on the loaded seconds; battery, total current,
+  enabled). All 70 of the team's: battery 8 mV from AdvantageKit's, current
+  0.998-1.000, enabled 99.1-100%, the DS clock on the hoots' names (±1 s)
+  and AdvantageKit's names 6 s late; 12 brownout flags at 8-12 V are all
+  power-offs (disabled, comms gone within 5 s); TalonFX supply currents
+  sum to 1.14-1.17× the PDH's. In an FMS match a disable past the field's
+  3 s auto-teleop gap is `disabled_mid_match` (`events._lost_time`: qm4
+  lost 13 s of auto with comms up). **Events** (`events.py`): every log's
+  timed moments (brownouts, CAN bus-off/errors/timeouts, comms drops, radio
+  loss, controller reboots, `config_failed`, `missing_file`, exceptions,
+  code restarts, mid-match disables, stalls, rail faults, the DS's watchdog,
+  packet loss and messages), repeats collapsed. From the DS's messages
+  too: `low_memory` (roboRIO "Memory Free" < 20 MB; usual 150-220),
+  `console_spam` (one line ≥ 200 times at ≥ 20/min: "Indexer setState called
+  with: FIRE", 1,165 times in qm17), `radio_firmware`, `fms_lost`,
+  `ds_overloaded` ("not keeping up with protocol rates"), `joystick_missing`
+  (a button read on an empty port), CAN codes 1000-1154 with the device
+  named, the console through `classify`, and the ping results by which hop
+  failed (`ping_radio_bad` / `ping_rio_bad` / `ping_ds_radio_bad`, evidence
+  for the comms diagnosis). A comms loss, a DS brownout flag, "no robot
+  code" and CAN messages count only while enabled (or ≤ `COMMS_GRACE_S`
+  after): a robot switched off in the queue loses comms and "browns out" as
+  its battery is pulled (47 of 90 recordings before the rule). A comms gap
+  spans its length, so "Robot program starting" at its end, after ≥ 20 s, is
+  a **`roborio_reboot`** (the team's DS never logs 44007; qm2 rebooted
+  twice); without a gap, in a match, `code_restart`. **Incidents**
+  (`incidents.py`): a recording's logs on one clock (file-name seconds,
+  nudged so first enables line up), events within `GAP_S` grouped, repeats
+  of a kind grouped into **issues** (related ones folded: a dip into its
+  brownout), and `moment()`: every log's readings around one time. **The
+  knowledge** (`app/ai/csa.py`, data with sources: WPILib, the FMS
+  whitepaper, CTRE, Chief Delphi): per kind, candidate causes with tests
+  for/against that code scores on measured facts; an issue's own kind is
+  never its own evidence. **Diagnosis** (`diagnose.py`): one issue per call,
+  worst first (`MAX_DIAGNOSE`), the model weighs the candidates, may look
+  closer (`moment`, `series_1s`…, ≤ 3 calls) and picks a cause or
+  "unexplained"; code refuses a non-candidate, a figure not in the
+  evidence, "high" without two facts for and none against, a lower-scored
+  cause picked without looking closer, a pick when nothing has a fact for
+  it; one retry, then code answers from the facts (low, `by: code`). Each
+  becomes a `csa_…` finding (contract shape; reasoning, candidates and what
+  was ruled out in `stats.incidents`); they publish even when the analyst's
+  findings don't. The panel shows the reasoning and **"What was it really?"**
+  (note `Confirmed: <cause id>`, rates it useful; `feedback.confirmations()`
+  feeds the next diagnosis). Tools `incidents` and `moment` (fifteen now).
+  On the team's 104 logs it names config failures (`Talon ID # failed
+  config with error TxFailed`), missing PathPlanner autos, PDH reads timing
+  out on CAN, comms disables, a mid-match disable, the shared-bus
+  `RemoteSensorDataInvalid`; about 12-25 s per issue on qwen3:8b. Tune with
+  `uv run tools/csa_report.py --data <a copy>`.
+  **New or recurring** (PROMPT_VERSION 10): each issue's `before` is how many
+  of the robot's last 10 recordings had it (`incidents.history`, ~0.3 s a
+  run); the knowledge base scores it (`recurring_gte`: a brownout every
+  match argues against one weak battery) and the claim says it first.
+- **Diagnosable, and the reach labelled** (PROMPT_VERSION 11; Brayden
+  2026-11-05: "provide the relevant motor that spiked so we don't have to go
+  digging… diagnosable tools and noted extrapolation"). `diagnose.measured()`
+  writes what the logs show, by code: at a power problem the motors with the
+  most **supply** current and their bus (`incidents.moment`'s
+  `most_supply_current`, `bus_of()`), the DS's busiest PDH channels; at a
+  device or CAN problem the controllers showing that fault, by bus
+  (`issues()`' `buses`, only events of the issue's own kind). `focus()`
+  puts where to look in the claim, before the cause (the 200-character cut
+  takes the tail); a power finding's card draws that motor's
+  `SupplyCurrent`. The model must give a **`hunch`** (or "none"): a cause
+  past the candidates or a link to `other_problems`, its figures checked
+  like the rest; the panel shows Measured / Inferred / A reach apart.
+  `devices_gte`/`lte` count only the controllers showing the fault.
+- **The board is code's when the model's wording isn't worth waiting for**
+  (`app/ai/layout.py`). Every figure, colour and card already comes from the
+  findings, so code lays a board out (cards from claims, cut at whole words;
+  the first chart option per finding) and the usual board checks run on it:
+  **early**, right after the CSA step (`publish_early`, the service passes it:
+  the diagnoses on screen ~1 min into a run, footer "First look", one strip
+  flash per run; the full board replaces it under the same uid), and **as the
+  fallback** when the designer's board is rejected twice (`models.designer`
+  `"code"`, `stats.recovered` says so), where the run used to be rejected
+  with sound findings.
+- **What code does better, code does** (a real six-log run, 2026-11-03,
+  most of its 677 s the analyst failing three times to restate fifteen
+  detector items, then code adding them anyway). Past `CODE_WRITES_OVER`
+  (3) detector items, `_detector_findings` writes them up front and the model
+  is told they're on the board (`_code_wrote`), adding 1-4 it doesn't
+  cover (a shared cause); `stats.code_wrote`. `GROUP_MISSING` (3) or more
+  controllers missing from one bus are **one** finding naming every one
+  ("11 controllers gone from this bus: its power or its CAN chain"), not
+  eleven red cards. A card value written with its unit ("6.425 V") has the
+  unit moved to `unit` (`_split_units`): every real designer run lost a
+  retry to it. Neither changes a figure.
+- **Every model call has a token cap** (`max_tokens` / `num_predict`:
+  findings `OUTPUT_TOKENS`, tool turns 1024, designer 2048, a diagnosis 700,
+  Ask 900, the curator 1500). Uncapped, a looping reply ran until the context
+  was full (a 280-line findings JSON, a "token repeat limit"): minutes on a
+  pit iGPU, then rejected as bad JSON. A capped reply is `Reply.truncated`
+  and goes back as "cut off, shorter", with a presence penalty on the retry
+  (`stats.truncated`). Both clients send Qwen3's own non-thinking sampling
+  (`ollama.SAMPLING`: top_k 20, top_p 0.8, min_p 0); temperatures stay the
+  callers'.
 - **Ask the Pit** (`ask.py`, `ask_panel.py`, the service's `ask()`): a crew
   question, answered in a few sentences through the same tools on the same
   engine (one at a time: a question waits for a run, then goes before queued
@@ -944,6 +1100,45 @@ toolbox (its MCP) and sink (`analysis.run`, `sync.push_queue`). No Qt in
   (never synced) for judging the prompt; bump `ASK_VERSION` with a prompt
   or check change. Known weak spot (v4, qwen3:8b): fault answers stay
   generic about brownouts the fault guide calls low priority.
+- **The playbook: a learning loop on the crew's verdicts** (`playbook.py`,
+  `curate.py`, PROMPT_VERSION 7; Brayden 2026-11-03, "hermes-esque", after
+  Nous Research's Hermes agent: do → reflect → write the lesson → load it →
+  keep what works). **Learn:** when the engine is idle and enough verdicts
+  are new (`curate.due()`), the model turns a batch, **in rating order**,
+  into ≤ 4 lesson changes; `check_changes` refuses one that cites no
+  verdicts (two, or one wrong / with a reason), stands on the wrong side,
+  has a topic not in what it cites or that matches everything, writes a
+  figure the crew didn't, covers a topic the crew rated useful **on the
+  whole record** (real trial: "avoid UnlicensedFeatureInUse" from 2 verdicts
+  against 29/31 useful), contradicts a `keep`, or restates one. **Load:**
+  `select()` gives a run only the lessons its data touches (≤ 8, ≤ 1600
+  chars). **Measure:** `evaluate()` derives each lesson's record from synced
+  rows (`stats.playbook` + verdicts), the same on every machine.
+  **Enforce:** an `avoid` lesson still rated not useful after it was given
+  (≥ 3, ≥ 75%) is applied by code; drops only, never a fault, a
+  `detector_` finding, one a `keep` covers, or the last. Seeds (`SEEDS`) are
+  code, hand-distilled from the 420 verdicts with counts verified; the team
+  doc `playbook` syncs. Reasons are one tap (`feedback.REASONS` →
+  `analysis_feedback.note`) and reach `lessons()` too. **Filler is code**
+  (`drop_filler`): ≤ 1 ok/idle finding, none beside a warn or fault: it
+  drops 94 rated findings, all 94 not useful (v5: 49% → 62% useful).
+  **Judge a change with `uv run tools/ai_replay.py --data`** (every rated run
+  through today's code rules: the useful share before/after, and any useful
+  finding a rule would drop, which must stay 0).
+- **The context budget** (`pipeline._fit`, `_fit_primer`, `_chat`): two runs
+  overflowed 16k (six logs recorded together, a 28.5k-char primer). Up-front
+  data is shrunk together to ≤ 45% of the budget (longest list halved,
+  `truncated`/`shown_of` said); before each request old tool results are
+  condensed (scalars and args kept; the ledger keeps them whole, so checks
+  are unchanged), **in one cut to `CONDENSE_TO` (70%) of the budget, never
+  just under it**: each edit to an earlier message discards the engine's
+  cached prompt from there, and trimming a little every turn re-read the
+  whole 14k-token prompt each turn (condensed 13 times, 948 s, 2026-11-03); a "too long"/"repeat limit" error is retried once,
+  condensed harder (`stats.recovered`). Estimated at 2.5 chars/token
+  (measured 2.8–3.1 with the specs). An empty up-front result is stated, and
+  a repeated call gets one line (`stats.repeats`): 13 repeat `faults` calls
+  in 62 runs came from leaving empties out. A run a quit left `running` is
+  failed at startup after 3 h (`service._close_stale_runs`).
 - **Not built:** syncing the scoreboard's prompt text (only its version),
   multi-session (match-to-match) runs, `breakdown_json` from TBA.
 
@@ -970,7 +1165,10 @@ is not in this repo and is built from `home/HANDOFF.md`.
 - **R2 is a relay, not a store** (`home/REQUESTS.md` R8, DATABASE.md Sync
   rules 8–12). Team-file bytes (CAD, slides, every scanned song) move only in
   the night window (`transfer.py`, enforced by default; a file row goes with
-  its bytes); a pit asks home (`blob_request`) for evicted bytes; a nightly
+  its bytes); **"Sync files now" opens it until nothing is waiting (≤ 3 h),
+  here or on another machine by a `sync_order` row** (Telemetry → Other
+  machines, DATABASE.md rule 14; Brayden 2026-10-18: a pit with no music
+  can't wait for night); a pit asks home (`blob_request`) for evicted bytes; a nightly
   `machine_manifest` gets home's `sync_verdict` back. Songs are deleted only
   as an admin's mark; home approves the real delete. **A new pulled table goes
   in `tables.APPLIED`**, and the catch-up fetches it after an upgrade.
