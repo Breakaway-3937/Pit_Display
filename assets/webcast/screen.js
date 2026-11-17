@@ -40,6 +40,10 @@
   };
 
   var state = null;
+  // What the stage shows now, for the Slides' quiet transitions: the same
+  // content leaves the stage alone; the same slot (a Description of one
+  // section, or one kind of Detail) dissolves in place (app/deck.py).
+  var shownKey = null, shownSlot = null;
   var clockSkew = 0;        // serverNow - clientNow, in ms
   var backoff = 500;
 
@@ -401,6 +405,33 @@
     cardShown = c ? JSON.stringify(c) : null;
     if (!c) return notOnYet("FUN FACTS",
       "Breakaway's records and facts appear here once they arrive from home and an adult has turned them on.");
+    // A Slide's Detail (app/deck.py): a few figures, or the fact itself
+    // without the Trace (the Description opposite carries it).
+    if (c.kind === "figures") {
+      var figs = h("div", "face card-figures");
+      figs.appendChild(h("div", "eyebrow", (c.eyebrow || "").toUpperCase()));
+      var grid = h("div", "figs n" + Math.min(4, c.figures.length));
+      var longest = 0;
+      c.figures.slice(0, 4).forEach(function (f) { longest = Math.max(longest, String(f.value).length); });
+      var four = c.figures.length >= 4;
+      var px = Math.round(Math.min(four ? 180 : 240, (four ? 820 : 1640 / Math.min(3, c.figures.length)) / (0.62 * Math.max(1, longest))));
+      c.figures.slice(0, 4).forEach(function (f) {
+        var cell = h("div", "fig");
+        var v = h("div", "fig-value", f.value);
+        v.style.fontSize = "calc(" + Math.max(72, px) + " * var(--u))";
+        cell.appendChild(v);
+        cell.appendChild(h("div", "fig-label", f.label));
+        grid.appendChild(cell);
+      });
+      figs.appendChild(grid);
+      return figs;
+    }
+    if (c.kind === "fact" && c.plain) {
+      var fact = h("div", "face card-plain");
+      fact.appendChild(h("div", "eyebrow", (c.eyebrow || "").toUpperCase()));
+      fact.appendChild(h("div", "plain-text", c.text));
+      return fact;
+    }
     if (c.kind === "record") {
       var box = h("div", "face card-record");
       box.appendChild(h("div", "eyebrow", "BREAKAWAY'S RECORDS"));
@@ -712,8 +743,53 @@
     }
 
     el.ledgerRight.textContent = s.ledger_right || "";
-    clear(el.stage);
+    var key = null, slot = null;
+    if (s.face === "rotation" && s.rotation) {
+      var rf = s.rotation.face, sl = s.rotation.slide || {};
+      key = JSON.stringify(rf ? [rf, s.rotation[rf]] : sl);
+      slot = rf ? "face:" + rf : "slide:" + (sl.kind || "") + ":" + (sl.eyebrow || "");
+    }
+    if (key !== null && key === shownKey && el.stage.firstChild) {
+      // The next Slide of a section with the same Description: nothing moves.
+    } else if (slot !== null && slot === shownSlot && el.stage.firstChild) {
+      dissolve(node);
+    } else {
+      clear(el.stage);
+      el.stage.appendChild(node);
+    }
+    shownKey = key;
+    shownSlot = slot;
+  }
+
+  // Old and new added together (plus-lighter inside the isolated stage): a
+  // true dissolve, so what the two share never dims. The resting state is
+  // the new face, visible, whether or not transitions run.
+  var DISSOLVE_MS = 650;
+  function dissolve(node) {
+    Array.prototype.slice.call(el.stage.querySelectorAll(".leaving"))
+      .forEach(function (n) { n.remove(); });
+    var old = el.stage.firstChild;
+    var box = { top: old.offsetTop, left: old.offsetLeft,
+                width: old.offsetWidth, height: old.offsetHeight };
+    old.classList.add("leaving");
+    old.style.top = box.top + "px";
+    old.style.left = box.left + "px";
+    old.style.width = box.width + "px";
+    old.style.height = box.height + "px";
+    node.classList.add("arriving");
+    node.style.opacity = "0";
     el.stage.appendChild(node);
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        old.style.opacity = "0";
+        node.style.opacity = "1";
+      });
+    });
+    setTimeout(function () {
+      if (old.parentNode) old.parentNode.removeChild(old);
+      node.classList.remove("arriving");
+      node.style.opacity = "";
+    }, DISSOLVE_MS + 80);
   }
 
   // ── The dwell rail, animated here rather than sent ─────────────────────

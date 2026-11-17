@@ -1,0 +1,850 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="3960px" height="1080px" viewBox="0 0 3960 1080" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:i="http://ns.adobe.com/AdobeIllustrator/10.0/" version="1.2" baseProfile="tiny">
+<title>Pit Display overhead:robot</title>
+<desc>design.py target=overhead:robot theme=dark mode=standard size=3960x1080</desc>
+<g id="Screen_A" data-name="Screen A" i:layer="yes">
+<g id="DiagnosticsOverlay" data-name="DiagnosticsOverlay">
+<g id="Reference_the_frame_a_picture_edit_it_in_overhead_master_svg" data-name="Reference: the frame (a picture; edit it in overhead-master.svg)">
+<image x="0" y="0" width="1920" height="1080" xlink:href="refs/overhead-robot.frame-a.png"/>
+</g>
+<g id="Stage" data-name="Stage">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+<g id="Shape_BA141A" fill="#ba141a" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,278 C64,268.059 72.0589,260 82,260 L196,260 C205.941,260 214,268.059 214,278 L214,392 C214,401.941 205.941,410 196,410 L82,410 C72.0589,410 64,401.941 64,392 L64,278 Z "/>
+</g>
+
+<g id="Text_1" fill="#ba141a" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="78" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="124.109" y="361.672" font-family="Chakra Petch" font-size="78" font-weight="700" font-style="normal" 
+ >1</text>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="254" y="340.531" font-family="Chakra Petch" font-size="108" font-weight="700" font-style="normal" 
+ >Bridge Brownout</text>
+</g>
+
+<g id="Text_Bridge_Brownout_latched_on_8_motors_Ta" fill="#ba141a" fill-opacity="1" stroke="#cfcbc9" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="78" font-weight="700" font-style="normal" 
+>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="254" y="421.469" font-family="Roboto" font-size="32" font-weight="400" font-style="normal" 
+ >Bridge Brownout latched on 8 motors — TalonFX 2. 13 other warnings latched on this log.</text>
+</g>
+
+<g id="Shape_1E1B1E" fill="#1e1b1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="78" font-weight="700" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,468 C64,460.268 70.268,454 78,454 L634,454 C641.732,454 648,460.268 648,468 L648,898 C648,905.732 641.732,912 634,912 L78,912 C70.268,912 64,905.732 64,898 L64,468 Z "/>
+</g>
+
+<g id="Shape_332F32" fill="none" stroke="#332f32" stroke-opacity="1" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="78" font-weight="700" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,468 C64,460.268 70.268,454 78,454 L634,454 C641.732,454 648,460.268 648,468 L648,898 C648,905.732 641.732,912 634,912 L78,912 C70.268,912 64,905.732 64,898 L64,468 Z "/>
+</g>
+
+<g id="Text_BATTERY_SAG" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="22" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="94" y="502" font-family="Chakra Petch" font-size="22" font-weight="600" font-style="normal" 
+ >BATTERY SAG</text>
+</g>
+
+<g id="Shape_2E8B7F" fill="#2e8b7f" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="22" font-weight="600" font-style="normal" 
+>
+<circle cx="610" cy="491" r="8"/>
+</g>
+
+<g id="Text_11_25" fill="#2e8b7f" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="92" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="94" y="616" font-family="Chakra Petch" font-size="92" font-weight="700" font-style="normal" 
+ >11.25</text>
+</g>
+
+<g id="Text_V" fill="#2e8b7f" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="32" font-weight="500" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="303" y="616" font-family="JetBrains Mono" font-size="32" font-weight="500" font-style="normal" 
+ >V</text>
+</g>
+
+<g id="Text_rest_12_78_V_brownout_at_6_8_V" fill="#2e8b7f" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="94" y="671" font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+ >rest 12.78 V · brownout at 6.8 V</text>
+</g>
+
+
+
+<g id="Shape_443F3D" fill="none" stroke="#443f3d" stroke-opacity="1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,800 L75.451,800 L86.902,912 L98.3529,800 L109.804,800 L121.255,800 L132.706,688 L144.157,800 L155.608,688 L167.059,800 L178.51,800 L189.961,688 L201.412,800 L212.863,688 L224.314,688 L235.765,688 L247.216,688 L258.667,688 L270.118,800 L281.569,800 L293.02,800 L304.471,688 L315.922,688 L327.373,688 L338.824,688 L350.275,688 L361.725,688 L373.176,688 L384.627,688 L396.078,688 L407.529,688 L418.98,800 L430.431,688 L441.882,688 L453.333,688 L464.784,688 L476.235,800 L487.686,688 L499.137,688 L510.588,800 L522.039,688 L533.49,800 L544.941,800 L556.392,688 L567.843,688 L579.294,800 L590.745,688 L602.196,800 L613.647,688 L625.098,800 L636.549,800 L648,688 "/>
+</g>
+
+
+
+<g id="Shape_1E1B1E_2" fill="#1e1b1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M668,468 C668,460.268 674.268,454 682,454 L1238,454 C1245.73,454 1252,460.268 1252,468 L1252,898 C1252,905.732 1245.73,912 1238,912 L682,912 C674.268,912 668,905.732 668,898 L668,468 Z "/>
+</g>
+
+<g id="Shape_332F32_2" fill="none" stroke="#332f32" stroke-opacity="1" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M668,468 C668,460.268 674.268,454 682,454 L1238,454 C1245.73,454 1252,460.268 1252,468 L1252,898 C1252,905.732 1245.73,912 1238,912 L682,912 C674.268,912 668,905.732 668,898 L668,468 Z "/>
+</g>
+
+<g id="Text_PEAK_MOTOR_CURRENT" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="22" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="698" y="502" font-family="Chakra Petch" font-size="22" font-weight="600" font-style="normal" 
+ >PEAK MOTOR CURRENT</text>
+</g>
+
+<g id="Shape_A6A19E" fill="#a6a19e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="22" font-weight="600" font-style="normal" 
+>
+<circle cx="1214" cy="491" r="8"/>
+</g>
+
+<g id="Text_97" fill="#a6a19e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="92" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="698" y="616" font-family="Chakra Petch" font-size="92" font-weight="700" font-style="normal" 
+ >97</text>
+</g>
+
+<g id="Text_A" fill="#a6a19e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="32" font-weight="500" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="814" y="616" font-family="JetBrains Mono" font-size="32" font-weight="500" font-style="normal" 
+ >A</text>
+</g>
+
+<g id="Text_highest_stator_current_on_any_one_motor" fill="#a6a19e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="698" y="671" font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+ >highest stator current on any one motor</text>
+</g>
+
+
+
+<g id="Shape_443F3D_2" fill="none" stroke="#443f3d" stroke-opacity="1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M668,912 L679.451,912 L690.902,912 L702.353,912 L713.804,912 L725.255,912 L736.706,912 L748.157,912 L759.608,912 L771.059,912 L782.51,912 L793.961,912 L805.412,912 L816.863,912 L828.314,912 L839.765,912 L851.216,912 L862.667,912 L874.118,688 L885.569,912 L897.02,912 L908.471,912 L919.922,912 L931.373,912 L942.824,912 L954.275,912 L965.725,912 L977.176,912 L988.627,912 L1000.08,912 L1011.53,912 L1022.98,912 L1034.43,912 L1045.88,912 L1057.33,912 L1068.78,912 L1080.24,912 L1091.69,912 L1103.14,912 L1114.59,912 L1126.04,912 L1137.49,912 L1148.94,912 L1160.39,912 L1171.84,912 L1183.29,912 L1194.75,912 L1206.2,912 L1217.65,912 L1229.1,912 L1240.55,912 L1252,912 "/>
+</g>
+
+
+
+<g id="Shape_1E1B1E_3" fill="#1e1b1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M1272,468 C1272,460.268 1278.27,454 1286,454 L1842,454 C1849.73,454 1856,460.268 1856,468 L1856,898 C1856,905.732 1849.73,912 1842,912 L1286,912 C1278.27,912 1272,905.732 1272,898 L1272,468 Z "/>
+</g>
+
+<g id="Shape_332F32_3" fill="none" stroke="#332f32" stroke-opacity="1" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M1272,468 C1272,460.268 1278.27,454 1286,454 L1842,454 C1849.73,454 1856,460.268 1856,468 L1856,898 C1856,905.732 1849.73,912 1842,912 L1286,912 C1278.27,912 1272,905.732 1272,898 L1272,468 Z "/>
+</g>
+
+<g id="Text_HOTTEST_MOTOR" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="22" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="1302" y="502" font-family="Chakra Petch" font-size="22" font-weight="600" font-style="normal" 
+ >HOTTEST MOTOR</text>
+</g>
+
+<g id="Shape_A6A19E_2" fill="#a6a19e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="22" font-weight="600" font-style="normal" 
+>
+<circle cx="1818" cy="491" r="8"/>
+</g>
+
+<g id="Text_26" fill="#a6a19e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="92" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="1302" y="616" font-family="Chakra Petch" font-size="92" font-weight="700" font-style="normal" 
+ >26</text>
+</g>
+
+<g id="Text_C" fill="#a6a19e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="32" font-weight="500" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="1422" y="616" font-family="JetBrains Mono" font-size="32" font-weight="500" font-style="normal" 
+ >°C</text>
+</g>
+
+<g id="Text_79_F" fill="#a6a19e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="1302" y="671" font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+ >79 °F</text>
+</g>
+
+
+
+<g id="Shape_443F3D_3" fill="none" stroke="#443f3d" stroke-opacity="1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M1272,912 L1283.45,912 L1294.9,912 L1306.35,912 L1317.8,912 L1329.25,912 L1340.71,912 L1352.16,912 L1363.61,912 L1375.06,912 L1386.51,912 L1397.96,912 L1409.41,912 L1420.86,912 L1432.31,912 L1443.76,912 L1455.22,912 L1466.67,912 L1478.12,688 L1489.57,688 L1501.02,688 L1512.47,688 L1523.92,688 L1535.37,688 L1546.82,688 L1558.27,688 L1569.73,688 L1581.18,688 L1592.63,688 L1604.08,688 L1615.53,688 L1626.98,688 L1638.43,688 L1649.88,688 L1661.33,688 L1672.78,688 L1684.24,688 L1695.69,688 L1707.14,688 L1718.59,688 L1730.04,688 L1741.49,688 L1752.94,688 L1764.39,688 L1775.84,688 L1787.29,688 L1798.75,688 L1810.2,688 L1821.65,688 L1833.1,688 L1844.55,688 L1856,688 "/>
+</g>
+
+
+</g>
+</g>
+</g>
+</g>
+<g id="Screen_B" data-name="Screen B" i:layer="yes" transform="translate(2040,0)">
+<g id="RobotInfoOverlay" data-name="RobotInfoOverlay">
+<g id="Reference_the_frame_a_picture_edit_it_in_overhead_master_svg_2" data-name="Reference: the frame (a picture; edit it in overhead-master.svg)">
+<image x="0" y="0" width="1920" height="1080" xlink:href="refs/overhead-robot.frame-b.png"/>
+</g>
+<g id="Stage_2" data-name="Stage">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+<g id="Text_WHAT_TRIPPED" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="24" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="64" y="240" font-family="Chakra Petch" font-size="24" font-weight="600" font-style="normal" 
+ >WHAT TRIPPED</text>
+</g>
+
+<g id="Text_Bridge_Brownout" fill="none" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="84" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="64" y="337" font-family="Chakra Petch" font-size="84" font-weight="700" font-style="normal" 
+ >Bridge Brownout</text>
+</g>
+
+<g id="Shape_BA141A_2" fill="#ba141a" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="84" font-weight="700" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M1772,268 C1772,260.268 1778.27,254 1786,254 L1842,254 C1849.73,254 1856,260.268 1856,268 L1856,324 C1856,331.732 1849.73,338 1842,338 L1786,338 C1778.27,338 1772,331.732 1772,324 L1772,268 Z "/>
+</g>
+
+<g id="Text_1_2" fill="#ba141a" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="46" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="1805.22" y="311.734" font-family="Chakra Petch" font-size="46" font-weight="700" font-style="normal" 
+ >1</text>
+</g>
+
+<g id="Text_LATCHED_FAULTS" fill="#ba141a" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="22" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="64" y="422" font-family="Chakra Petch" font-size="22" font-weight="600" font-style="normal" 
+ >LATCHED FAULTS</text>
+</g>
+
+<g id="Text_14" fill="#ba141a" fill-opacity="1" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="20" font-weight="500" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="735.594" y="422" font-family="JetBrains Mono" font-size="20" font-weight="500" font-style="normal" 
+ >14</text>
+</g>
+
+<g id="Shape_BA141A_3" fill="#ba141a" fill-opacity="1" stroke="#332f32" stroke-opacity="1" stroke-width="2" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="20" font-weight="500" font-style="normal" 
+>
+<polyline fill="none" vector-effect="none" points="64,443 761.6,443 " />
+</g>
+
+<g id="Shape_1E1B1E_4" fill="#1e1b1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="20" font-weight="500" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,477 C64,469.268 70.268,463 78,463 L747.6,463 C755.332,463 761.6,469.268 761.6,477 L761.6,512.167 C761.6,519.899 755.332,526.167 747.6,526.167 L78,526.167 C70.268,526.167 64,519.899 64,512.167 L64,477 Z "/>
+</g>
+
+<g id="Shape_5A1418" fill="none" stroke="#5a1418" stroke-opacity="1" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="20" font-weight="500" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,477 C64,469.268 70.268,463 78,463 L747.6,463 C755.332,463 761.6,469.268 761.6,477 L761.6,512.167 C761.6,519.899 755.332,526.167 747.6,526.167 L78,526.167 C70.268,526.167 64,519.899 64,512.167 L64,477 Z "/>
+</g>
+
+<g id="Shape_BA141A_4" fill="#ba141a" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="20" font-weight="500" font-style="normal" 
+>
+<circle cx="96" cy="484.477" r="8"/>
+</g>
+
+<g id="Text_8_motors" fill="#ba141a" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="621.594" y="491.977" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ >8 motors</text>
+</g>
+
+<g id="Text_Bridge_Brownout_2" fill="#ba141a" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="34" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="118" y="496.477" font-family="Chakra Petch" font-size="34" font-weight="700" font-style="normal" 
+ >Bridge Brownout</text>
+</g>
+
+<g id="Text_TalonFX_2_TalonFX_9_TalonFX_11_Front" fill="#ba141a" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="118" y="518.587" font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+ >TalonFX 2, TalonFX 9, TalonFX 11, Front-Left Drive Motor Long N…</text>
+</g>
+
+<g id="Shape_1E1B1E_5" fill="#1e1b1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,554.167 C64,546.435 70.268,540.167 78,540.167 L747.6,540.167 C755.332,540.167 761.6,546.435 761.6,554.167 L761.6,589.333 C761.6,597.065 755.332,603.333 747.6,603.333 L78,603.333 C70.268,603.333 64,597.065 64,589.333 L64,554.167 Z "/>
+</g>
+
+<g id="Shape_332F32_4" fill="none" stroke="#332f32" stroke-opacity="1" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,554.167 C64,546.435 70.268,540.167 78,540.167 L747.6,540.167 C755.332,540.167 761.6,546.435 761.6,554.167 L761.6,589.333 C761.6,597.065 755.332,603.333 747.6,603.333 L78,603.333 C70.268,603.333 64,597.065 64,589.333 L64,554.167 Z "/>
+</g>
+
+<g id="Shape_E08A1E" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<circle cx="96" cy="561.643" r="8"/>
+</g>
+
+<g id="Text_8_motors_2" fill="#e08a1e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="621.594" y="569.143" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ >8 motors</text>
+</g>
+
+<g id="Text_Stator_Curr_Limit" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="34" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="118" y="573.643" font-family="Chakra Petch" font-size="34" font-weight="700" font-style="normal" 
+ >Stator Curr Limit</text>
+</g>
+
+<g id="Text_TalonFX_2_TalonFX_9_TalonFX_11_Front_2" fill="#e08a1e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="118" y="595.753" font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+ >TalonFX 2, TalonFX 9, TalonFX 11, Front-Left Drive Motor Long N…</text>
+</g>
+
+<g id="Shape_1E1B1E_6" fill="#1e1b1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,631.333 C64,623.601 70.268,617.333 78,617.333 L747.6,617.333 C755.332,617.333 761.6,623.601 761.6,631.333 L761.6,666.5 C761.6,674.232 755.332,680.5 747.6,680.5 L78,680.5 C70.268,680.5 64,674.232 64,666.5 L64,631.333 Z "/>
+</g>
+
+<g id="Shape_332F32_5" fill="none" stroke="#332f32" stroke-opacity="1" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,631.333 C64,623.601 70.268,617.333 78,617.333 L747.6,617.333 C755.332,617.333 761.6,623.601 761.6,631.333 L761.6,666.5 C761.6,674.232 755.332,680.5 747.6,680.5 L78,680.5 C70.268,680.5 64,674.232 64,666.5 L64,631.333 Z "/>
+</g>
+
+<g id="Shape_E08A1E_2" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<circle cx="96" cy="638.81" r="8"/>
+</g>
+
+<g id="Text_8_motors_3" fill="#e08a1e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="621.594" y="646.31" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ >8 motors</text>
+</g>
+
+<g id="Text_Supply_Curr_Limit" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="34" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="118" y="650.81" font-family="Chakra Petch" font-size="34" font-weight="700" font-style="normal" 
+ >Supply Curr Limit</text>
+</g>
+
+<g id="Text_TalonFX_2_TalonFX_9_TalonFX_11_Front_3" fill="#e08a1e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="118" y="672.92" font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+ >TalonFX 2, TalonFX 9, TalonFX 11, Front-Left Drive Motor Long N…</text>
+</g>
+
+<g id="Shape_1E1B1E_7" fill="#1e1b1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,708.5 C64,700.768 70.268,694.5 78,694.5 L747.6,694.5 C755.332,694.5 761.6,700.768 761.6,708.5 L761.6,743.667 C761.6,751.399 755.332,757.667 747.6,757.667 L78,757.667 C70.268,757.667 64,751.399 64,743.667 L64,708.5 Z "/>
+</g>
+
+<g id="Shape_332F32_6" fill="none" stroke="#332f32" stroke-opacity="1" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,708.5 C64,700.768 70.268,694.5 78,694.5 L747.6,694.5 C755.332,694.5 761.6,700.768 761.6,708.5 L761.6,743.667 C761.6,751.399 755.332,757.667 747.6,757.667 L78,757.667 C70.268,757.667 64,751.399 64,743.667 L64,708.5 Z "/>
+</g>
+
+<g id="Shape_E08A1E_3" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<circle cx="96" cy="715.977" r="8"/>
+</g>
+
+<g id="Text_1_motor" fill="#e08a1e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="635.594" y="723.477" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ >1 motor</text>
+</g>
+
+<g id="Text_Boot_During_Enable" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="34" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="118" y="727.977" font-family="Chakra Petch" font-size="34" font-weight="700" font-style="normal" 
+ >Boot During Enable</text>
+</g>
+
+<g id="Text_TalonFX_9" fill="#e08a1e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="118" y="750.087" font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+ >TalonFX 9</text>
+</g>
+
+<g id="Shape_1E1B1E_8" fill="#1e1b1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,785.667 C64,777.935 70.268,771.667 78,771.667 L747.6,771.667 C755.332,771.667 761.6,777.935 761.6,785.667 L761.6,820.833 C761.6,828.565 755.332,834.833 747.6,834.833 L78,834.833 C70.268,834.833 64,828.565 64,820.833 L64,785.667 Z "/>
+</g>
+
+<g id="Shape_332F32_7" fill="none" stroke="#332f32" stroke-opacity="1" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,785.667 C64,777.935 70.268,771.667 78,771.667 L747.6,771.667 C755.332,771.667 761.6,777.935 761.6,785.667 L761.6,820.833 C761.6,828.565 755.332,834.833 747.6,834.833 L78,834.833 C70.268,834.833 64,828.565 64,820.833 L64,785.667 Z "/>
+</g>
+
+<g id="Shape_E08A1E_4" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<circle cx="96" cy="793.143" r="8"/>
+</g>
+
+<g id="Text_1_motor_2" fill="#e08a1e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="635.594" y="800.643" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ >1 motor</text>
+</g>
+
+<g id="Text_Fused_Sensor_Out_Of_Sync" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="34" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="118" y="805.143" font-family="Chakra Petch" font-size="34" font-weight="700" font-style="normal" 
+ >Fused Sensor Out Of Sync</text>
+</g>
+
+<g id="Text_TalonFX_18" fill="#e08a1e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="118" y="827.253" font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+ >TalonFX 18</text>
+</g>
+
+<g id="Shape_1E1B1E_9" fill="#1e1b1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,862.833 C64,855.101 70.268,848.833 78,848.833 L747.6,848.833 C755.332,848.833 761.6,855.101 761.6,862.833 L761.6,898 C761.6,905.732 755.332,912 747.6,912 L78,912 C70.268,912 64,905.732 64,898 L64,862.833 Z "/>
+</g>
+
+<g id="Shape_332F32_8" fill="none" stroke="#332f32" stroke-opacity="1" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M64,862.833 C64,855.101 70.268,848.833 78,848.833 L747.6,848.833 C755.332,848.833 761.6,855.101 761.6,862.833 L761.6,898 C761.6,905.732 755.332,912 747.6,912 L78,912 C70.268,912 64,905.732 64,898 L64,862.833 Z "/>
+</g>
+
+<g id="Shape_E08A1E_5" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<circle cx="96" cy="870.31" r="8"/>
+</g>
+
+<g id="Text_4_motors" fill="#e08a1e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="621.594" y="877.81" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ >4 motors</text>
+</g>
+
+<g id="Text_Remote_Sensor_Data_Invalid" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="34" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="118" y="882.31" font-family="Chakra Petch" font-size="34" font-weight="700" font-style="normal" 
+ >Remote Sensor Data Invalid</text>
+</g>
+
+<g id="Text_Front_Left_Drive_Motor_Long_Name_TalonF" fill="#e08a1e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="118" y="904.42" font-family="Roboto" font-size="21" font-weight="400" font-style="normal" 
+ >Front-Left Drive Motor Long Name, TalonFX 18, TalonFX 8, Talon…</text>
+</g>
+
+<g id="Text_MOTORS" fill="#e08a1e" fill-opacity="1" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="22" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="809.594" y="422" font-family="Chakra Petch" font-size="22" font-weight="600" font-style="normal" 
+ >MOTORS</text>
+</g>
+
+<g id="Text_13_ON_THE_BUS" fill="#e08a1e" fill-opacity="1" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="20" font-weight="500" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="1685" y="422" font-family="JetBrains Mono" font-size="20" font-weight="500" font-style="normal" 
+ >13 ON THE BUS</text>
+</g>
+
+<g id="Shape_E08A1E_6" fill="#e08a1e" fill-opacity="1" stroke="#332f32" stroke-opacity="1" stroke-width="2" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="20" font-weight="500" font-style="normal" 
+>
+<polyline fill="none" vector-effect="none" points="809.6,443 1856,443 " />
+</g>
+
+<g id="Text_MOTOR" fill="#e08a1e" fill-opacity="1" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="20" font-weight="600" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="825.594" y="493" font-family="Chakra Petch" font-size="20" font-weight="600" font-style="normal" 
+ >MOTOR</text>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="1779.59" y="492.828" font-family="Chakra Petch" font-size="20" font-weight="600" font-style="normal" 
+ >MIN V</text>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="1612.25" y="492.828" font-family="Chakra Petch" font-size="20" font-weight="600" font-style="normal" 
+ >PEAK A</text>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="1480.64" y="492.828" font-family="Chakra Petch" font-size="20" font-weight="600" font-style="normal" 
+ >TEMP</text>
+</g>
+
+<g id="Shape_E08A1E_7" fill="#e08a1e" fill-opacity="1" stroke="#332f32" stroke-opacity="1" stroke-width="2" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="20" font-weight="600" font-style="normal" 
+>
+<polyline fill="none" vector-effect="none" points="809.6,509 1856,509 " />
+</g>
+
+<g id="Shape_E08A1E_8" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="20" font-weight="600" font-style="normal" 
+>
+<circle cx="832.6" cy="531.389" r="7"/>
+</g>
+
+<g id="Text_1_3" fill="#e08a1e" fill-opacity="1" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="853.594" y="538.889" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ > 1</text>
+</g>
+
+<g id="Text_Front_Left_Drive_Motor_Long_Name" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="895.594" y="540.889" font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+ >Front-Left Drive Motor Long Name</text>
+</g>
+
+<g id="Text_11_40" fill="#e08a1e" fill-opacity="1" stroke="#cfcbc9" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1762.03" y="540.734" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >11.40</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1658.81" y="540.734" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >33</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1477.63" y="540.734" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >26°C</text>
+</g>
+
+<g id="Shape_1E1B1E_10" fill="#1e1b1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M809.6,561.778 C809.6,557.359 813.182,553.778 817.6,553.778 L1848,553.778 C1852.42,553.778 1856,557.359 1856,561.778 L1856,590.556 C1856,594.974 1852.42,598.556 1848,598.556 L817.6,598.556 C813.182,598.556 809.6,594.974 809.6,590.556 L809.6,561.778 Z "/>
+</g>
+
+<g id="Shape_E08A1E_9" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<circle cx="832.6" cy="576.167" r="7"/>
+</g>
+
+<g id="Text_8" fill="#e08a1e" fill-opacity="1" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="853.594" y="583.667" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ > 8</text>
+</g>
+
+<g id="Text_TalonFX_8" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="895.594" y="585.667" font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+ >TalonFX 8</text>
+</g>
+
+<g id="Text_11_40_2" fill="#e08a1e" fill-opacity="1" stroke="#cfcbc9" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1762.03" y="585.516" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >11.40</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1658.81" y="585.516" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >34</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1477.63" y="585.516" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >26°C</text>
+</g>
+
+<g id="Shape_E08A1E_10" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<circle cx="832.6" cy="620.944" r="7"/>
+</g>
+
+<g id="Text_18" fill="#e08a1e" fill-opacity="1" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="853.594" y="628.444" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ >18</text>
+</g>
+
+<g id="Text_TalonFX_18_2" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="895.594" y="630.444" font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+ >TalonFX 18</text>
+</g>
+
+<g id="Text_11_38" fill="#e08a1e" fill-opacity="1" stroke="#cfcbc9" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1762.03" y="630.297" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >11.38</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1658.81" y="630.297" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >24</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1477.63" y="630.297" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >26°C</text>
+</g>
+
+<g id="Shape_1E1B1E_11" fill="#1e1b1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M809.6,651.333 C809.6,646.915 813.182,643.333 817.6,643.333 L1848,643.333 C1852.42,643.333 1856,646.915 1856,651.333 L1856,680.111 C1856,684.529 1852.42,688.111 1848,688.111 L817.6,688.111 C813.182,688.111 809.6,684.529 809.6,680.111 L809.6,651.333 Z "/>
+</g>
+
+<g id="Shape_E08A1E_11" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<circle cx="832.6" cy="665.722" r="7"/>
+</g>
+
+<g id="Text_2" fill="#e08a1e" fill-opacity="1" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="853.594" y="673.222" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ > 2</text>
+</g>
+
+<g id="Text_TalonFX_2" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="895.594" y="675.222" font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+ >TalonFX 2</text>
+</g>
+
+<g id="Text_11_50" fill="#e08a1e" fill-opacity="1" stroke="#cfcbc9" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1762.03" y="675.078" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >11.50</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1658.81" y="675.078" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >72</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1477.63" y="675.078" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >25°C</text>
+</g>
+
+<g id="Shape_E08A1E_12" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<circle cx="832.6" cy="710.5" r="7"/>
+</g>
+
+<g id="Text_9" fill="#e08a1e" fill-opacity="1" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="853.594" y="718" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ > 9</text>
+</g>
+
+<g id="Text_TalonFX_9_2" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="895.594" y="720" font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+ >TalonFX 9</text>
+</g>
+
+<g id="Text_11_45" fill="#e08a1e" fill-opacity="1" stroke="#cfcbc9" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1762.03" y="719.859" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >11.45</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1658.81" y="719.859" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >71</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1477.63" y="719.859" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >25°C</text>
+</g>
+
+<g id="Shape_1E1B1E_12" fill="#1e1b1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M809.6,740.889 C809.6,736.471 813.182,732.889 817.6,732.889 L1848,732.889 C1852.42,732.889 1856,736.471 1856,740.889 L1856,769.667 C1856,774.085 1852.42,777.667 1848,777.667 L817.6,777.667 C813.182,777.667 809.6,774.085 809.6,769.667 L809.6,740.889 Z "/>
+</g>
+
+<g id="Shape_E08A1E_13" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<circle cx="832.6" cy="755.278" r="7"/>
+</g>
+
+<g id="Text_10" fill="#e08a1e" fill-opacity="1" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="853.594" y="762.778" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ >10</text>
+</g>
+
+<g id="Text_TalonFX_10" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="895.594" y="764.778" font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+ >TalonFX 10</text>
+</g>
+
+<g id="Text_11_35" fill="#e08a1e" fill-opacity="1" stroke="#cfcbc9" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1762.03" y="764.625" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >11.35</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1658.81" y="764.625" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >25</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1477.63" y="764.625" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >25°C</text>
+</g>
+
+<g id="Shape_E08A1E_14" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<circle cx="832.6" cy="800.056" r="7"/>
+</g>
+
+<g id="Text_11" fill="#e08a1e" fill-opacity="1" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="853.594" y="807.556" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ >11</text>
+</g>
+
+<g id="Text_TalonFX_11" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="895.594" y="809.556" font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+ >TalonFX 11</text>
+</g>
+
+<g id="Text_11_35_2" fill="#e08a1e" fill-opacity="1" stroke="#cfcbc9" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1762.03" y="809.406" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >11.35</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1658.81" y="809.406" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >63</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1477.63" y="809.406" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >25°C</text>
+</g>
+
+<g id="Shape_1E1B1E_13" fill="#1e1b1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M809.6,830.444 C809.6,826.026 813.182,822.444 817.6,822.444 L1848,822.444 C1852.42,822.444 1856,826.026 1856,830.444 L1856,859.222 C1856,863.641 1852.42,867.222 1848,867.222 L817.6,867.222 C813.182,867.222 809.6,863.641 809.6,859.222 L809.6,830.444 Z "/>
+</g>
+
+<g id="Shape_E08A1E_15" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<circle cx="832.6" cy="844.833" r="7"/>
+</g>
+
+<g id="Text_19" fill="#e08a1e" fill-opacity="1" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="853.594" y="852.333" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ >19</text>
+</g>
+
+<g id="Text_TalonFX_19" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="895.594" y="854.333" font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+ >TalonFX 19</text>
+</g>
+
+<g id="Text_11_53" fill="#e08a1e" fill-opacity="1" stroke="#cfcbc9" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1762.03" y="854.188" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >11.53</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1658.81" y="854.188" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >97</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1477.63" y="854.188" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >25°C</text>
+</g>
+
+<g id="Shape_E08A1E_16" fill="#e08a1e" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<circle cx="832.6" cy="889.611" r="7"/>
+</g>
+
+<g id="Text_25" fill="#e08a1e" fill-opacity="1" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="853.594" y="897.111" font-family="JetBrains Mono" font-size="22" font-weight="500" font-style="normal" 
+ >25</text>
+</g>
+
+<g id="Text_Pigeon2_25" fill="#e08a1e" fill-opacity="1" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="895.594" y="899.111" font-family="Roboto" font-size="28" font-weight="500" font-style="normal" 
+ >Pigeon2 25</text>
+</g>
+
+<g id="Text_11_61" fill="#e08a1e" fill-opacity="1" stroke="#cfcbc9" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1762.03" y="898.969" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >11.61</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1674.41" y="898.969" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >—</text>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="1524.41" y="898.969" font-family="JetBrains Mono" font-size="26" font-weight="500" font-style="normal" 
+ >—</text>
+</g>
+</g>
+</g>
+</g>
+</g>
+</svg>

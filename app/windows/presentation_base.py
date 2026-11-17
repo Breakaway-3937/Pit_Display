@@ -44,8 +44,8 @@ Subclasses provide `SCREEN_ID` and `SLIDES` (authored slides; `app/program.py` p
 boards is this screen's own.
 """
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QMainWindow, QStackedWidget
+from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, Qt
+from PyQt6.QtWidgets import QGraphicsOpacityEffect, QLabel, QMainWindow, QStackedWidget
 
 from app.cad_assets import cad_assets
 from app.checklist import checklist
@@ -69,6 +69,35 @@ from app.widgets.next_match_overlay import NextMatchOverlay
 from app.widgets.judges_overlay import JudgesOverlay
 from app.widgets.queue_banner import QueueBanner
 from app.widgets.slide_panel import SlidePanel
+
+
+# A Slide's Detail changing in place, or one page giving way to another,
+# dissolves rather than cuts: the last picture fades out over the new one.
+# An opaque picture over the new stage is an exact crossfade: what the two
+# share (the frame, a repeated layout) never changes at all.
+_DISSOLVE_MS = 650
+
+
+class _Dissolve(QLabel):
+    """The outgoing picture, fading away over the stage, then gone."""
+
+    def __init__(self, parent, picture, geometry):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setScaledContents(True)
+        self.setPixmap(picture)
+        self.setGeometry(geometry)
+        effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(effect)
+        self._anim = QPropertyAnimation(effect, b"opacity", self)
+        self._anim.setDuration(_DISSOLVE_MS)
+        self._anim.setStartValue(1.0)
+        self._anim.setEndValue(0.0)
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._anim.finished.connect(self.deleteLater)
+        self.show()
+        self.raise_()
+        self._anim.start()
 
 
 class PresentationScreen(QMainWindow):
@@ -176,13 +205,21 @@ class PresentationScreen(QMainWindow):
         """
         new = SlidePanel(self.rotation_slides(), self.SCREEN_ID)
         old = self._slides
+        # **Put the new page on screen before the old one leaves.** Removing
+        # the current page makes QStackedWidget show whatever then sits at its
+        # index, which is Lunch: every rebuild (a sync, a wording edit, a log)
+        # flashed "We'll be right back", and the Detail dissolve faded it out.
+        was_current = self._stack.currentWidget() is old
         self._stack.insertWidget(self._PAGE_NORMAL, new)
+        new.apply_team(config.active_team)
+        # Already on its stop, settled: a rebuild is invisible, not a replay.
+        new.settle_on(int(config.get(self.SCREEN_ID, "slide_index", 0) or 0))
+        if was_current:
+            self._stack.setCurrentWidget(new)
         self._stack.removeWidget(old)
         old.deleteLater()
         self._slides = new
         new.slide_changed.connect(self._on_slide_changed)
-        new.apply_team(config.active_team)
-        new.set_slide(int(config.get(self.SCREEN_ID, "slide_index", 0) or 0))
         if config.mode == "standard" and self._standard_page() == self._PAGE_NORMAL:
             self._sync_page()
 
@@ -279,8 +316,23 @@ class PresentationScreen(QMainWindow):
         stop names (`Slide.face`) on its own page."""
         entry = self._slides.current_slide
         face = entry.face if entry is not None else ""
-        self._stack.setCurrentIndex(self._CONTENT_PAGES.get(face, self._PAGE_NORMAL)
-                                    if face else self._PAGE_NORMAL)
+        item = entry.item if entry is not None else ""
+        page = self._CONTENT_PAGES.get(face, self._PAGE_NORMAL) if face else self._PAGE_NORMAL
+        old_page = self._stack.currentIndex()
+        changed = page != old_page or (page != self._PAGE_NORMAL
+                                       and item != getattr(self, "_shown_item", None))
+        # Slide to slide on the slide page is the slide panel's own transition.
+        picture = (self._stack.grab() if changed and self.isVisible()
+                   and not (page == old_page == self._PAGE_NORMAL) else None)
+        # A Slide's Detail (app/deck.py) names the one item its face shows.
+        widget = self._stack.widget(page)
+        if hasattr(widget, "show_item"):
+            widget.show_item(item)
+        self._shown_item = item
+        self._stack.setCurrentIndex(page)
+        if picture is not None:
+            _Dissolve(self, picture, self._stack.geometry())
+            self._banner.raise_()
 
     def _on_mode_changed(self, mode: str):
         if mode == "lunch":
@@ -301,7 +353,14 @@ class PresentationScreen(QMainWindow):
             if page == self._PAGE_NORMAL:
                 self._sync_page()
             else:
-                self._stack.setCurrentIndex(page)
+                self._show_pinned(page)
+
+    def _show_pinned(self, page: int) -> None:
+        """A pinned face shows what it would on its own, not a Slide's item."""
+        widget = self._stack.widget(page)
+        if hasattr(widget, "show_item"):
+            widget.show_item("")
+        self._stack.setCurrentIndex(page)
 
     def _on_cad_active_changed(self, active: bool):
         if config.mode != "judges":
@@ -354,7 +413,7 @@ class PresentationScreen(QMainWindow):
                 if page == self._PAGE_NORMAL:
                     self._sync_page()
                 else:
-                    self._stack.setCurrentIndex(page)
+                    self._show_pinned(page)
             return
         if key == "checklist_id":
             self._checklist.set_list(self._configured_list_id())

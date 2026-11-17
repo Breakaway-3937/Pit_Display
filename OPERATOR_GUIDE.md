@@ -420,16 +420,29 @@ admin) hides it on every machine. The file stays until the deletion is
 approved at home.
 
 **The two overhead screens are one set.** Each screen's settings have a
-"Both screens show" box: pick Next match, and one screen shows the queue while
-the other shows the event's schedule with our matches marked (and our record
-once results arrive); pick Robot diagnostics, and one shows diagnostics, the
-other robot info. On Checklists, choose a list for each screen. Power, theme
-and which monitor stay separate for each screen.
+"Both screens show" box: pick **Slides**, and the pair turns through
+everything we tell visitors; pick Next match, and one screen shows the queue
+while the other shows the event's schedule with our matches marked (and our
+record once results arrive); pick Robot diagnostics, and one shows
+diagnostics, the other robot info. On Checklists, choose a list for each
+screen. Power, theme and which monitor stay separate for each screen.
 
-**"Did you know?"** is one of the things an overhead screen can show (pick it
-in that screen's content list): Breakaway's award history and records from
-across the league, sent from home. It turns to the next facts every 12 seconds
-when there are more than fit.
+**Slides** are everything the overhead screens tell visitors: our reach, the
+Quality Award leaderboard, our season-by-season record, Breakaway's records,
+"Did you know?" facts, home's datasets, what the robot's logs hold. **One
+Slide fills both screens**: one screen says what it's about (a bold headline
+and one line), the other shows the information itself. Slides come in
+sections (our team, team stats, records, facts about Breakaway, facts across
+Arkansas, each dataset); the two screens swap roles every Slide,
+except while the headline stays the same (a run of facts under one "Did you
+know?" header): then the headline holds still and only the information
+changes, quietly. The control screen lists the Slides by section and
+says, for each, whether that screen shows its headline (Description) or its
+information (Detail). A Slide appears once its data does
+(home's datasets once an adult turns them on under Home Datasets; the robot's
+once a log is imported). **Change a Slide's words** under Pit Systems →
+Screen Wording → "Slides · …" (admin): its eyebrow, headline, catch line, and
+which screen its headline goes on (A, B, or auto).
 
 **Every morning home checks each machine** against the master copy:
 Telemetry → Team sync says "In sync with home" or lists what's missing.

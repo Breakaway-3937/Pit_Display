@@ -91,3 +91,9 @@ assets/cad/*
 
 # tools/cad_optimize.py installs its pinned Node packages here
 tools/cad_optimize/node_modules/
+
+# Design files: renders and diffs are made again on demand (design/README.md)
+design/out/
+# The app's own renders regenerate on export; the frame pictures are linked from the SVGs
+design/screens/refs/*
+!design/screens/refs/*.frame-*.png

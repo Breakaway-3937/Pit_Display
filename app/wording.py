@@ -63,8 +63,11 @@ def _load_screens() -> None:
     """Import the modules that register fields, so the editor sees them all
     even when no screen has been built."""
     import app.widgets.interactive_board  # noqa: F401
-    import app.windows.presentation_a  # noqa: F401
-    import app.windows.presentation_b  # noqa: F401
+    try:                     # the Slides register their words as they're built
+        from app import deck
+        deck.items()
+    except Exception:
+        pass
 
 
 def path():

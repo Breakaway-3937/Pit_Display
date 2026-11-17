@@ -111,13 +111,10 @@ class RotationManager(QObject):
         n = len(program.keys())
         nxt = (self.index + 1) % max(1, n)
         if nxt == 0:
-            # A pass is done: the next pass shows the next facts.
-            program.next_facts()
+            # A pass is done: pick up any Slides whose data arrived meanwhile.
             self.index = 0
             self.refresh()
-            self._set(0)
-        else:
-            self._set(nxt)
+        self._set(nxt)
         self.advance.emit()
 
     def _set(self, index: int) -> None:

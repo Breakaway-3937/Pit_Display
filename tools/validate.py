@@ -61,6 +61,7 @@ CHECKS: list[tuple[str, list[str], bool, str]] = [
     ("diag_check", ["tools/diag_check.py"], False, ""),
     ("webcast_check", ["tools/webcast_check.py"], False, ""),
     ("program_check", ["tools/program_check.py"], False, ""),
+    ("design_check", ["tools/design.py", "check"], False, ""),
     ("ai_check", ["tools/ai_check.py"], False, ""),
     ("import_check", ["tools/import_check.py"], False, ""),
     ("batch_check", ["tools/batch_check.py"], False, ""),

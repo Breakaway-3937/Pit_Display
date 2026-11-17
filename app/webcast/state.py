@@ -105,8 +105,17 @@ def _rotation_face(screen_id: str) -> dict[str, Any]:
     # data under its usual key, and the page draws that face for it.
     face: dict[str, Any] = {"index": index, "count": count, "face": entry.face}
     if entry.face:
-        face[entry.face] = (dataset_state(screen_id) if entry.face == "dataset"
-                            else _face_data(entry.face))
+        # A Slide's Detail (app/deck.py) names the one item its face shows:
+        # sent as a one-item deck, so the page's own pickers land on it.
+        item = getattr(entry, "item", "")
+        if entry.face == "dataset":
+            face["dataset"] = dataset_state(screen_id, only=item)
+        elif entry.face == "fact_card":
+            face["fact_card"] = fact_card_state(screen_id, only=item)
+        else:
+            face[entry.face] = _face_data(entry.face)
+        if entry.credit:
+            face["credit"] = entry.credit
     else:
         face["slide"] = _slide(entry)
     return face
@@ -265,7 +274,8 @@ def screen_state(screen_id: str, on: bool = True) -> dict[str, Any]:
     try:
         if face == "rotation":
             state["rotation"] = rot = _rotation_face(screen_id)
-            credit = _credit(rot.get("face", "")) or (rot.get("slide") or {}).get("credit", "")
+            credit = (_credit(rot.get("face", "")) or rot.get("credit", "")
+                      or (rot.get("slide") or {}).get("credit", ""))
             if credit:
                 state["ledger_right"] = credit.upper()
         elif face == "checklist":
@@ -389,7 +399,7 @@ def seasons_state() -> dict[str, Any]:
     return {"empty": not ss, "title": d.title if d else "", "seasons": ss}
 
 
-def dataset_state(screen_id: str) -> dict[str, Any]:
+def dataset_state(screen_id: str, only: str = "") -> dict[str, Any]:
     """Every cleared generic dataset, as display text, ours flagged; the page
     picks this screen's one by the server-synced clock, exactly as the native
     face does (`dataset_overlay.side_dataset`: pairs turning every
@@ -398,8 +408,9 @@ def dataset_state(screen_id: str) -> dict[str, Any]:
     from app import datasets
     from app.widgets.dataset_overlay import PERIOD_S
     sets = []
-    for d in datasets.generic():
-        if not d.columns:
+    found = [datasets.get(only)] if only else datasets.generic()
+    for d in found:
+        if d is None or not d.columns:
             continue
         cols = datasets.visible_columns(d)
         sets.append({"key": d.key, "title": d.title, "description": d.description,
@@ -411,11 +422,15 @@ def dataset_state(screen_id: str) -> dict[str, Any]:
             "side": "b" if screen_id.endswith("_b") else "a", "sets": sets}
 
 
-def fact_card_state(screen_id: str) -> dict[str, Any]:
+def fact_card_state(screen_id: str, only: str = "") -> dict[str, Any]:
     """This screen's whole fun-fact deck and the period; the page picks the
     card by the server-synced clock, exactly as the native face does
     (`datasets.card`), so A, B and both renderers turn together."""
     from app import datasets
+    if only:                      # a Slide's Detail: that one card (app/deck.py)
+        from app import deck as slides
+        c = slides.card(only)
+        return {"empty": c is None, "period_s": datasets.CARD_PERIOD_S, "deck": [c] if c else []}
     if screen_id.endswith("_b"):
         deck = [{"kind": "fact", "category": c, "text": t} for _k, c, t in datasets.fun_facts()]
     else:

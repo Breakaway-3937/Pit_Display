@@ -1,6 +1,6 @@
 """Presentation Screen A — welcome / team-intro slide rotation."""
 
-from app.slides import Slide, register_words
+from app.slides import Slide
 from app.windows.presentation_base import PresentationScreen
 
 
@@ -41,5 +41,3 @@ class PresentationScreenA(PresentationScreen):
         ),
     ]
 
-
-register_words(PresentationScreenA.SLIDES, "Screen A")

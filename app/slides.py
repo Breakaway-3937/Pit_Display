@@ -60,6 +60,15 @@ class Slide:
     # A stable name for an authored slide (app/wording.py keys its editable
     # words by it; app/program.py pairs by it). Titles can be edited; keys can't.
     key: str = ""
+    # A Detail stop (app/deck.py): which item its face shows (a dataset key, a
+    # card ref). Empty: the face shows what it would pinned.
+    item: str = ""
+    # The section of the Slides it belongs to (app/deck.py): one layout per
+    # section, and the control screen's list is grouped by it.
+    section: str = ""
+    # What this Slide is about, for the control screen's list (the fact itself,
+    # a record's value): two Slides of one section can share every word shown.
+    summary: str = ""
 
     @classmethod
     def of(cls, value) -> "Slide":

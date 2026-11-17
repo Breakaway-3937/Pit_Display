@@ -33,11 +33,21 @@ class FactCardOverlay(Chassis):
     def __init__(self, screen_id: str = "", parent=None):
         super().__init__(screen_id=screen_id, parent=parent)
         self._shown = None
+        self._item = ""          # a Slide's Detail: the card to show (app/deck.py)
         self._tick = QTimer(self)
         self._tick.setInterval(1000)
         self._tick.timeout.connect(self._maybe_turn)
 
+    def show_item(self, ref: str) -> None:
+        """Show card `ref` (a Slide's Detail), or turn by the clock ("")."""
+        if ref != self._item:
+            self._item = ref
+            self.update()
+
     def _card(self) -> dict | None:
+        if self._item:
+            from app import deck
+            return deck.card(self._item)
         return datasets.card(self.screen_id, time.time())
 
     def _maybe_turn(self) -> None:
@@ -57,9 +67,15 @@ class FactCardOverlay(Chassis):
     def header_right(self) -> list[tuple]:
         side = "A" if self.screen_id.endswith("_a") else "B"
         what = "OUR RECORDS" if side == "A" else "DID YOU KNOW"
+        c = self._card() if self._item else None
+        if c and c.get("eyebrow"):
+            what = c["eyebrow"].upper()
         return [("mono", f"SCREEN {side}  /  {what}")]
 
     def footer_items(self) -> tuple[str, str]:
+        c = self._card() if self._item else None
+        if c:
+            return c.get("eyebrow", "").upper(), c.get("credit", "").upper()
         side_a = self.screen_id.endswith("_a")
         return ("BREAKAWAY'S RECORDS" if side_a else "DID YOU KNOW"), TBA_TEXT.upper()
 
@@ -70,6 +86,10 @@ class FactCardOverlay(Chassis):
             self._paint_empty(p, rect)
         elif c["kind"] == "record":
             self._paint_record(p, rect, c)
+        elif c["kind"] == "figures":
+            self._paint_figures(p, rect, c)
+        elif c.get("plain"):
+            self._paint_plain_fact(p, rect, c)
         else:
             self._paint_fact(p, rect, c)
 
@@ -113,6 +133,54 @@ class FactCardOverlay(Chassis):
             px -= 8
         self.draw_wrapped(p, x, y, width, c["text"], self.display(px, 700, -0.018),
                           self.ink, 1.02)
+
+    def _paint_figures(self, p: QPainter, rect: QRectF, c: dict) -> None:
+        """A few of the Slide's numbers, side by side: numeral over its label.
+        Zero red: the Description opposite carries this Slide's one red."""
+        figs = c["figures"][:4]
+        x, y, w = rect.x(), rect.y(), rect.width()
+        p.setFont(self.display(24, 600, 0.16))
+        p.setPen(QColor(self.muted))
+        p.drawText(QPointF(x, y + p.fontMetrics().ascent()), c.get("eyebrow", "").upper())
+        cols = 2 if len(figs) == 4 else len(figs)
+        rows = 2 if len(figs) == 4 else 1
+        gap = self.s(56)
+        top = y + self.s(96)
+        cell_w = (w - gap * (cols - 1)) / max(1, cols)
+        cell_h = (rect.bottom() - top - gap * (rows - 1)) / rows
+        longest = max(len(f["value"]) for f in figs)
+        px = 240 if rows == 1 else 180
+        while px > 72:
+            p.setFont(self.display(px, 700, -0.03))
+            if p.fontMetrics().horizontalAdvance("8" * longest) <= cell_w * 0.92 and \
+                    p.fontMetrics().ascent() * 0.86 + self.s(110) <= cell_h:
+                break
+            px -= 8
+        for i, f in enumerate(figs):
+            cx = x + (i % cols) * (cell_w + gap)
+            cy = top + (i // cols) * (cell_h + gap)
+            p.setFont(self.display(px, 700, -0.03))
+            fm = p.fontMetrics()
+            p.setPen(QColor(self.ink))
+            p.drawText(QPointF(cx - self.s(4), cy + fm.ascent() * 0.86), f["value"])
+            self.draw_wrapped(p, cx, cy + fm.ascent() * 0.86 + self.s(28), cell_w, f["label"],
+                              self.display(40, 600, -0.005), self.body_ink, 1.1)
+
+    def _paint_plain_fact(self, p: QPainter, rect: QRectF, c: dict) -> None:
+        """A fact as a Slide's Detail: the sentence itself, large, no Trace
+        (the Description opposite has it)."""
+        x, y, w = rect.x(), rect.y(), rect.width()
+        p.setFont(self.display(24, 600, 0.16))
+        p.setPen(QColor(self.muted))
+        p.drawText(QPointF(x, y + p.fontMetrics().ascent()), c.get("eyebrow", "").upper())
+        y += self.s(96)
+        width = min(self.s(1560), w)
+        px = 104
+        while px > 56 and self.draw_wrapped(p, x, y, width, c["text"],
+                                            self.body(px, 500), self.ink,
+                                            1.16, measure_only=True) > rect.bottom():
+            px -= 6
+        self.draw_wrapped(p, x, y, width, c["text"], self.body(px, 500), self.ink, 1.16)
 
     def _paint_empty(self, p: QPainter, rect: QRectF):
         y = rect.y() + rect.height() * 0.18

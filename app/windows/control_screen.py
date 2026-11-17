@@ -570,28 +570,32 @@ class _DwellRail(QWidget):
         p.end()
 
 
+# What a Detail shows, for the list's second line (app/deck.py's faces).
+_DETAIL_LINE = {"quality": "Detail · the leaderboard", "bk_seasons": "Detail · the season chart",
+                "dataset": "Detail · the table", "fact_card": "Detail · the card"}
+
+
 class _StandardSlideRow(QFrame):
-    """One row in the standard-slide list: number, title, and a preview line."""
+    """One Slide in this screen's list: number, headline, a second line, and
+    whether this screen shows its Description or its Detail."""
 
     clicked = pyqtSignal(int)
 
     _HEIGHT = 58
+    _PILL_H = 22
 
-    def __init__(self, index: int, title: str, body: str, is_fact: bool,
-                 kind: str = ""):
+    def __init__(self, index: int, title: str, body: str, role: str = ""):
         super().__init__()
         self.index = index
         self._active = False
         self._down = False
-        self._is_fact = is_fact
-        self._kind = kind
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         # QLabel subclasses QFrame, so a bare `QFrame { border-left: … }` rule
         # paints that border on every child label too. Scope it by object name.
         self.setObjectName("slide_row")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         # A fixed row is what makes the list scan as a list. The body line is
-        # elided rather than wrapped for the same reason: a two-line row and a
-        # one-line row next to each other read as two different kinds of thing.
+        # elided rather than wrapped for the same reason.
         self.setFixedHeight(self._HEIGHT)
 
         row = QHBoxLayout(self)
@@ -600,56 +604,57 @@ class _StandardSlideRow(QFrame):
 
         self._bar = QFrame()
         self._bar.setObjectName("slide_row_bar")
-        self._bar.setFixedWidth(3)
-        row.addWidget(self._bar)
+        self._bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._bar.setFixedSize(3, 34)
+        row.addWidget(self._bar, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._num = label(f"{index + 1:02d}", "stat_label")
         self._num.setFont(mono_font(14))
-        self._num.setFixedWidth(24)
-        row.addWidget(self._num)
+        self._num.setFixedWidth(26)
+        row.addWidget(self._num, 0, Qt.AlignmentFlag.AlignVCenter)
 
         text = QVBoxLayout()
         text.setContentsMargins(0, 0, 0, 0)
-        text.setSpacing(5)
+        text.setSpacing(3)
+        text.addStretch()
         self._title = label(title, "stat_value")
-        self._title.setStyleSheet("font-size: 15px;")
         self._title_text = title
         text.addWidget(self._title)
         self._body = label(body, "stat_label")
-        self._body.setStyleSheet("font-size: 12px;")
         self._body_text = body
+        # No second line: the headline sits in the middle of the row, not on
+        # top of an empty gap.
+        self._body.setVisible(bool(body))
         text.addWidget(self._body)
+        text.addStretch()
         # A single-line QLabel asks the layout for its whole text width, so a
-        # long slide body made the settings column wider than the window and
-        # pushed the judges deck off the right edge — the exact failure the
-        # CLAUDE.md "helpers.label() does not word-wrap" note describes. These
+        # long line would push the settings column past the window. These
         # elide instead, so the layout must be told not to ask.
         for lbl in (self._title, self._body):
-            lbl.setSizePolicy(QSizePolicy.Policy.Ignored,
-                              QSizePolicy.Policy.Preferred)
+            lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
             lbl.setMinimumWidth(0)
         row.addLayout(text, stretch=1)
 
-        # Three kinds of entry, and the operator needs to tell them apart:
-        # authored slides are edited in code, fact slides regenerate from the
-        # log, and the board is a live widget rather than a slide at all.
-        tag_text, tag_color = "", ""
-        if kind == "board":
-            tag_text, tag_color = "LIVE BOARD", brand.STATUS_ONLINE
-        elif is_fact:
-            tag_text, tag_color = "FROM LOG", brand.STATUS_PENDING
-        if tag_text:
-            tag = label(tag_text, "stat_label")
-            tag.setFont(mono_font(10))
-            tag.setStyleSheet(
-                f"color: {tag_color}; background: transparent;"
-                f" border: 1.5px solid {brand.N600};"
-                f" border-radius: 13px; padding: 4px 12px;")
-            row.addWidget(tag)
+        # What this screen shows for the Slide: its Description or its Detail.
+        # A small fixed pill, centred: it never takes the row's height.
+        self._pill = None
+        if role:
+            pill = label(role.upper(), "stat_label")
+            pill.setFont(mono_font(10))
+            pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            pill.setFixedHeight(self._PILL_H)
+            pill.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            pill.setStyleSheet(
+                f"color: {brand.N400}; background: transparent;"
+                f" border: 1px solid {brand.N600};"
+                f" border-radius: {self._PILL_H // 2}px; padding: 0 10px;")
+            pill.setFixedWidth(pill.sizeHint().width() + 4)
+            self._pill = pill
+            row.addWidget(pill, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._rail = _DwellRail()
         self._rail.setVisible(False)
-        row.addWidget(self._rail)
+        row.addWidget(self._rail, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._apply_style()
 
@@ -675,30 +680,25 @@ class _StandardSlideRow(QFrame):
     def _apply_style(self):
         # The live row is marked in **white**, not the team accent: red on this
         # panel means "the installation is in an exceptional state", and the
-        # rotation running normally is the opposite of that.
-        if self._active:
-            self.setStyleSheet(
-                f"QFrame#slide_row {{ background-color: {brand.RAISED_DARK};"
-                f" border-radius: {brand.R_BTN}px; }}"
-                f"QFrame#slide_row_bar {{ background-color: {brand.WHITE};"
-                f" border-radius: 2px; }}")
-            self._num.setStyleSheet(
-                f"color: {brand.N400}; background: transparent;")
-            self._title.setStyleSheet(
-                f"font-size: 15px; color: {brand.WHITE};")
-            self._body.setStyleSheet(
-                f"font-size: 12px; color: {brand.N500};")
-        else:
-            self.setStyleSheet(
-                "QFrame#slide_row { background-color: transparent;"
-                f" border-radius: {brand.R_BTN}px; }}"
-                "QFrame#slide_row_bar { background-color: transparent; }")
-            self._num.setStyleSheet(
-                f"color: {brand.GRAPHITE}; background: transparent;")
-            self._title.setStyleSheet(
-                f"font-size: 15px; color: {brand.N300};")
-            self._body.setStyleSheet(
-                f"font-size: 12px; color: {brand.GRAPHITE};")
+        # rotation running normally is the opposite of that. Every rule is
+        # scoped by object name: an unscoped one reaches the child labels
+        # (each a QFrame) and draws boxes inside the row.
+        bg = brand.RAISED_DARK if self._active else "transparent"
+        bar = brand.WHITE if self._active else "transparent"
+        self.setStyleSheet(
+            f"QFrame#slide_row {{ background-color: {bg}; border: none;"
+            f" border-radius: {brand.R_BTN}px; }}"
+            f"QFrame#slide_row_bar {{ background-color: {bar}; border: none;"
+            f" border-radius: 1px; }}")
+        lift = self._active
+        self._num.setStyleSheet(
+            f"color: {brand.N400 if lift else brand.GRAPHITE}; background: transparent; border: none;")
+        self._title.setStyleSheet(
+            f"font-size: 15px; color: {brand.WHITE if lift else brand.N300};"
+            " background: transparent; border: none;")
+        self._body.setStyleSheet(
+            f"font-size: 12px; color: {brand.N500 if lift else brand.GRAPHITE};"
+            " background: transparent; border: none;")
 
     # Release-inside, for the same reason as _Thumbnail above: this row lives in
     # a scroll list that the operator drags with a finger.
@@ -754,18 +754,14 @@ class _StandardSlidePicker(QWidget):
         head.addWidget(self._mode_hint)
         outer.addLayout(head)
 
+        # No scroll area of its own: the control screen's body scrolls as one,
+        # and a list scrolling inside it clipped its last row under the
+        # buttons and fought the page for the finger.
         self._list_host = QWidget()
         self._list = QVBoxLayout(self._list_host)
         self._list.setContentsMargins(0, 0, 0, 0)
-        self._list.setSpacing(0)
-
-        scroll = QScrollArea()
-        scroll.setWidget(self._list_host)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setMinimumHeight(260)
-        outer.addWidget(scroll)
+        self._list.setSpacing(2)
+        outer.addWidget(self._list_host)
 
         nav = QHBoxLayout()
         nav.setSpacing(8)
@@ -813,22 +809,34 @@ class _StandardSlidePicker(QWidget):
         clear_layout(self._list)
         self._rows.clear()
         slides = self._slides()
+        section = None
+        sections = 0
         for i, slide in enumerate(slides):
-            # A stop's own fields say what it is: a whole face, generated words
-            # (a log figure or a fact from home), or an authored slide.
-            row = _StandardSlideRow(
-                i, slide.title, slide.body,
-                is_fact=bool(slide.kind == "figure" or slide.credit),
-                kind="board" if slide.face else "")
+            if slide.section and slide.section != section:
+                # One header per section of the Slides: a section keeps one
+                # layout on the overhead screens (app/deck.py).
+                section = slide.section
+                sections += 1
+                head = label(section.upper(), "stat_label")
+                head.setFont(mono_font(10))
+                head.setStyleSheet(f"color: {brand.N500}; background: transparent; border: none;"
+                                   " padding: 0 0 0 52px;")
+                head.setFixedHeight(30)
+                head.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
+                self._list.addWidget(head)
+            if slide.face:
+                role, line = "Detail", slide.summary or _DETAIL_LINE.get(slide.face, "Detail")
+            else:
+                role, line = ("Description" if slide.section else ""), slide.summary or slide.body
+            row = _StandardSlideRow(i, slide.title, line, role)
             row.clicked.connect(self._jump)
             self._rows.append(row)
             self._list.addWidget(row)
-        self._list.addStretch()
 
-        faces = sum(1 for sl in slides if sl.face)
         self._count_lbl.setText(
-            f"{len(slides)} stops, paired with the other screen"
-            + (f" · {faces} live face{'s' if faces != 1 else ''}" if faces else ""))
+            f"{len(slides)} Slide{'s' if len(slides) != 1 else ''}"
+            + (f" in {sections} section{'s' if sections != 1 else ''}" if sections else "")
+            + ", paired with the other screen")
         self._refresh_active()
         self._refresh_enabled()
 
@@ -1138,10 +1146,10 @@ class ScreenSettingsPanel(QWidget):
             outer.addSpacing(12)
 
             outer.addWidget(section(
-                "Standard Slides",
-                "Everything in this screen's Standard rotation. Click one to "
-                "put it on screen now; the 45-second timer carries on from "
-                "there."))
+                "Slides",
+                "Everything the overhead screens show visitors, one Slide at a "
+                "time: this screen's half of each. Click one to put it on both "
+                "screens now; the 45-second timer carries on from there."))
             outer.addSpacing(8)
             outer.addWidget(_StandardSlidePicker(screen_id))
             outer.addSpacing(16)

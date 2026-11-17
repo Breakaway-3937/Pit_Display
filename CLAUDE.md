@@ -36,7 +36,8 @@ The individual checks, each exit 0/1:
 `tools/diag_check.py` (diagnostics: spool, crash harvest, checks, panel, engine),
 `tools/ai_check.py` (analysis pipeline, panel, face, `--mcp`; `--engine llama`
 for a real run on the bundled engine, `--model <tag>` on Ollama),
-`tools/led_diag.py` (real LED controller). Run
+`tools/led_diag.py` (real LED controller), `tools/design.py check` (every
+screen draws and exports as a layered SVG). Run
 the one that covers what you touched.
 
 | Doc | Owns |
@@ -50,6 +51,7 @@ the one that covers what you touched.
 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | Build, release, install, update, the `--self-check` table |
 | [`OPERATOR_GUIDE.md`](OPERATOR_GUIDE.md) | What the crew does. Operator-facing detail goes there, not here |
 | [`IDEAS.md`](IDEAS.md) | Features worth building, not scheduled. Park an idea there, not in a request |
+| [`design/README.md`](design/README.md) | **Design files Brayden edits in Illustrator**: every screen as a layered SVG (`tools/design.py`), and how his edits come back as a change list |
 
 ## Packaging rules that constrain code
 
@@ -128,36 +130,59 @@ A screen is rebuilt from scratch each time it's powered on.
 follows the chassis), `lunch` (`LunchOverlay`, one auto-fitted line, the Trace
 is its red). **The overhead screens are a matched set at all times** (`app/overhead.py`,
 Brayden 2026-10-02): **one content choice for the pair**, each screen its half
-(Next match: A the Nexus queue | B the event's schedule, ours marked, our
-record; Robot: Diagnostics | Robot Info; Checklists: a list each, chosen per
-screen; Did you know: Breakaway's | Arkansas's; Analysis: board | Robot Info).
+(Slides: each Slide's Description | its Detail; Next match: A the Nexus queue |
+B the event's schedule, ours marked, our record; Robot: Diagnostics | Robot
+Info; Checklists: a list each, chosen per screen; Analysis: board | Robot Info).
 The control screen's box sets both; `rotation.py` mirrors any per-screen
 `content` write onto the partner, so no path leaves them mismatched. **Power,
 theme, monitor, network publishing and the checklist stay per screen.**
 Results and our record are TBA's (`tba_match`, `app/event_schedule.py`), the
 schedule is Nexus's; "played" is play order, never the clock.
 
-**The slide rotation is to be revised in its entirety (Brayden, 2026-10-02):
-it'll be totally revamped.** `app/program.py` keeps only a few example stops
-to prove the machinery works; don't extend it, redesign it.
+**The Slides** (`app/deck.py`, Brayden 2026-11-17): **everything the
+overhead screens tell visitors is a Slide**, whatever its source (home's TBA
+datasets and facts, Breakaway's records, the robot's logs, the team's own
+numbers), and **one Slide fills both screens**: its **Description** (the
+statement archetype: eyebrow, the Trace, a bold headline, one catch line)
+on one, its **Detail** (the information on its face: `quality` ranked bars,
+`bk_seasons` chart, `dataset` table, `fact_card` figures / record / fact) on
+the other. **The screens swap every Slide, except under an unchanged
+Description** (a run of facts under one "Did you know? · Breakaway" header
+holds its layout; records, each with its own headline, swap); an admin can
+pin one Slide (`deck/<key>/side`). **A held Description doesn't move** and
+its Detail dissolves from its last picture (`presentation_base._Dissolve`);
+a same-section Description that changes in place dissolves too
+(`SlidePanel`, `_SOFT_MS`); the pit-network page
+does the same (`render`'s key/slot, `plus-lighter`). Words: code ships a default built from the
+Slide's own data, the team edits it in Screen Wording (`deck/<key>/…`,
+"Slides · <group>"); every number is the data's. A Slide appears only with its
+data. The control screen lists them by section, each row saying whether
+this screen shows its Description or its Detail. **Not Slides**: Robot diagnostics, Next
+match, Checklists, Analysis: the crew's screens, chosen on the control
+screen. The old facts / team stats / fun facts / datasets sets are Slides
+now. A new kind of outward information is a source in `deck.py`, never a
+set of its own.
 
 **The overhead program** (`app/program.py`, driven by `app/rotation.py`):
-**the two overhead screens move as one unit.** A stop names what A and B show
-together (Diagnostics | Robot Info, Next match | Our schedule, a fact | a fact,
-authored pairs), and the rotation timer sets **one** `slide_index` on both;
-**a screen never advances itself** (two self-advancing lists drifted). A stop
-whose data is missing (no log, no event, no facts) leaves both screens. A
-picker jump on either screen moves both; a pinned screen keeps following the
-position and rejoins in step. Stop sides are `Slide`s; `Slide.face` makes a
-stop show a whole face, `Slide.credit` replaces "ROTATION A" with a data
-credit. `STORY` and `_fact_pairs()` are **drafts** (pairings to be worked
-through with Brayden). `tools/program_check.py` walks every stop.
+**the program is the Slides, and the two overhead screens move as one unit.**
+A stop names what A and B show together, and the rotation timer sets **one**
+`slide_index` on both; **a screen never advances itself** (two
+self-advancing lists drifted). A picker jump on either screen moves both; a
+pinned screen keeps following the position and rejoins in step. Stop sides
+are `Slide`s; the Detail's is `Slide.face` + `Slide.item` (which one item
+the face shows: `show_item()` natively, a one-item payload on the pit
+network), `Slide.credit` replaces "ROTATION A" with a data credit.
+`tools/program_check.py` walks every stop. **A slide-page rebuild must be
+invisible** (`reload_slides`, on every sync, wording edit or log): the new
+page goes current before the old one is removed (removing the current page
+shows the next in the stack, Lunch: "We'll be right back" flashed at random,
+2026-11-17) and arrives settled (`SlidePanel.settle_on`, no entrance).
 
 **Per-screen content** in standard mode
-(`config.get(screen, "content")`): `rotation`, `next_match`, `checklist`,
-`diagnostics`, `robot_info`, `analysis`, `facts` ("Did you know?": home's
-`tba_fact` sentences, `facts_overlay.py` + the webcast's `faceFacts`; pinned only,
-pages a column that overflows, credits The Blue Alliance in the ledger).
+(`config.get(screen, "content")`): `rotation` (the Slides), `next_match`,
+`checklist`, `diagnostics`, `robot_info`, `analysis`; the Detail faces
+(`quality`, `bk_seasons`, `dataset`, `fact_card`, `facts`) still answer a
+pinned `content` and show their own paging there.
 
 **`config`'s per-screen settings are memory-only and reset every launch**
 (theme, content, slide index, `checklist_id`). Anything that must survive a
@@ -369,12 +394,34 @@ title and body in the app (Pit Systems → Screen Wording). **Every such text
 is a `wording.field(key, default, …)`, registered by the module that shows
 it**; the code's text is the default forever, an edit (team setting
 `wording`, synced) overrides it, and an empty edit falls back. **Keys are
-fixed once shipped**: board cards carry an `id`, slides a `Slide.key`, and
-`program.STORY` pairs slides by key, never by (editable) title. The board
+fixed once shipped**: board cards carry an `id`, Slides an `Item.key`
+(`deck/<key>/…`), never their (editable) title. The board
 updates labels in place on `config.wording_changed` (never rebuild it: it
 holds the CAD viewer); slides rebuild. Each field has a `max_len` that keeps
 it inside its layout. New visitor-facing text on these surfaces should be a
 field.
+
+## Design files (`design/`, `tools/design.py`)
+
+Brayden designs in Illustrator on the app's real screens (2026-11-17: "you
+and I could work off of the same files"). `export` paints a screen into a
+**layered** SVG (each widget alone, nested as built, every group named; a
+chassis split into Ground / Lightfall / Header / Stage / Footer, its cached
+ground repainted as shapes); he saves over it; `diff` paints the code again
+and lists what changed (text exactly, colours, boxed pixel regions, a brand
+check) into `design/out/<name>.changes.md`. **Build from that list**, then
+`export <target> --force` once the diff says the code matches.
+
+- **The overhead screens are files only as matched sets** (A | B on one
+  artboard). **The frame lives once**, in `overhead-master.svg`; every face
+  file holds only its own content over a linked frame picture
+  (`refs/*.frame-*.png`). **The Slides aren't files**: one for the
+  Description layout, one per Detail layout, the other half of each a picture.
+- **Never write over his edit**: `export` refuses a file whose hash moved
+  since export (`screens/.exports.json`) unless `--force`.
+- It boots a scratch install with test data, never `data/`. A new screen or
+  panel appears through `all_targets()`; a new chassis child that belongs to
+  the frame goes in `_is_frame()`.
 
 ## Theming and the red budget
 

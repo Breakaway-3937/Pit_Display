@@ -55,12 +55,22 @@ class DatasetOverlay(Chassis):
     def __init__(self, screen_id: str = "", parent=None):
         super().__init__(screen_id=screen_id, parent=parent)
         self._key = ""
+        self._item = ""          # a Slide's Detail: the one dataset to show (app/deck.py)
         self._tick = QTimer(self)
         self._tick.setInterval(1000)
         self._tick.timeout.connect(self._maybe_turn)
 
+    def show_item(self, key: str) -> None:
+        """Show dataset `key` (a Slide's Detail), or page by the clock ("")."""
+        if key != self._item:
+            self._item = key
+            self.update()
+
+    def _current(self) -> datasets.Dataset | None:
+        return datasets.get(self._item) if self._item else side_dataset(self.screen_id)
+
     def _maybe_turn(self) -> None:
-        d = side_dataset(self.screen_id)
+        d = self._current()
         key = d.key if d is not None else ""
         if key != self._key:
             self._key = key
@@ -79,11 +89,11 @@ class DatasetOverlay(Chassis):
         return [("mono", f"SCREEN {side}  /  DATASETS")]
 
     def footer_items(self) -> tuple[str, str]:
-        d = side_dataset(self.screen_id)
+        d = self._current()
         return (d.title.upper() if d else "DATASETS"), TBA_TEXT.upper()
 
     def paint_stage(self, p: QPainter, rect: QRectF):
-        d = side_dataset(self.screen_id)
+        d = self._current()
         self._key = d.key if d is not None else ""
         if d is None or not d.columns:
             self._paint_empty(p, rect)

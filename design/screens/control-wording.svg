@@ -1,0 +1,2426 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="1600px" height="1060px" viewBox="0 0 1600 1060" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:i="http://ns.adobe.com/AdobeIllustrator/10.0/" version="1.2" baseProfile="tiny">
+<title>Pit Display control:wording</title>
+<desc>design.py target=control:wording theme=dark mode=standard size=1600x1060</desc>
+<g i:layer="yes" id="ControlScreen" data-name="ControlScreen">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1600" height="1060"/>
+</g>
+
+
+
+<g id="Shape_121013_2" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1600" height="1060"/>
+</g>
+
+
+
+
+</g>
+<g id="QWidget_4" data-name="QWidget">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013_3" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1600" height="1060"/>
+</g>
+
+
+
+<g id="Shape_121013_4" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1600" height="1060"/>
+</g>
+
+
+</g>
+<g id="top_bar" data-name="top_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_1A171A" fill="#1a171a" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1600" height="76"/>
+</g>
+
+
+
+<g id="Shape_1A171A_2" fill="#1a171a" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1600" height="76"/>
+</g>
+
+
+
+<g id="Shape_332F32" fill="#332f32" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,0)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="74" width="1600" height="2"/>
+</g>
+
+
+
+
+
+
+</g>
+<g id="RoundedFrame" data-name="RoundedFrame">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013_5" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,24,6)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="58" height="44"/>
+</g>
+
+
+
+<g id="Shape_121013_6" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,24,6)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="58" height="44"/>
+</g>
+
+
+
+<g id="Shape_FAF9F8" fill="#faf9f8" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,24,6)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M0,10 C0,4.47715 4.47715,0 10,0 L48,0 C53.5228,0 58,4.47715 58,10 L58,34 C58,39.5228 53.5228,44 48,44 L10,44 C4.47715,44 0,39.5228 0,34 L0,10 Z "/>
+</g>
+
+
+</g>
+<g id="QLabel_3937" data-name="QLabel · 3937">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,24,6)"
+font-family="Chakra Petch" font-size="20" font-weight="700" font-style="normal" 
+>
+<rect x="0" y="0" width="58" height="44"/>
+</g>
+
+
+
+<g id="Shape_000000_2" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,24,6)"
+font-family="Chakra Petch" font-size="20" font-weight="700" font-style="normal" 
+>
+<rect x="0" y="0" width="58" height="44"/>
+</g>
+
+
+
+<g id="Text_3937" fill="none" stroke="#181416" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,24,6)"
+font-family="Chakra Petch" font-size="20" font-weight="700" font-style="normal" 
+>
+<text fill="#181416" fill-opacity="1" stroke="none" xml:space="preserve" x="5.46875" y="28.8281" font-family="Chakra Petch" font-size="20" font-weight="700" font-style="normal" 
+ >3937</text>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="QLabel_HOLD" data-name="QLabel · HOLD">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_3" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,24,53)"
+font-family="JetBrains Mono" font-size="9" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="58" height="15"/>
+</g>
+
+
+
+<g id="Shape_000000_4" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,24,53)"
+font-family="JetBrains Mono" font-size="9" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="58" height="15"/>
+</g>
+
+
+
+<g id="Text_HOLD" fill="none" stroke="#59595b" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,24,53)"
+font-family="JetBrains Mono" font-size="9" font-weight="400" font-style="normal" 
+>
+<text fill="#59595b" fill-opacity="1" stroke="none" xml:space="preserve" x="18.2188" y="10.7344" font-family="JetBrains Mono" font-size="9" font-weight="400" font-style="normal" 
+ >HOLD</text>
+</g>
+
+
+</g>
+</g>
+<g id="QLabel_BREAKAWAY" data-name="QLabel · BREAKAWAY">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_5" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,96,12)"
+font-family="Chakra Petch" font-size="20" font-weight="700" font-style="normal" 
+>
+<rect x="0" y="0" width="123" height="26"/>
+</g>
+
+
+
+<g id="Shape_000000_6" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,96,12)"
+font-family="Chakra Petch" font-size="20" font-weight="700" font-style="normal" 
+>
+<rect x="0" y="0" width="123" height="26"/>
+</g>
+
+
+
+<g id="Text_BREAKAWAY" fill="none" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,96,12)"
+font-family="Chakra Petch" font-size="20" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="19.8281" font-family="Chakra Petch" font-size="20" font-weight="700" font-style="normal" 
+ >BREAKAWAY</text>
+</g>
+
+
+</g>
+</g>
+<g id="QLabel_PIT_DISPLAY" data-name="QLabel · PIT DISPLAY">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_7" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,96,43)"
+font-family="JetBrains Mono" font-size="11" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="123" height="19"/>
+</g>
+
+
+
+<g id="Shape_000000_8" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,96,43)"
+font-family="JetBrains Mono" font-size="11" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="123" height="19"/>
+</g>
+
+
+
+<g id="Text_PIT_DISPLAY" fill="none" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,96,43)"
+font-family="JetBrains Mono" font-size="11" font-weight="400" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="11.2188" font-family="JetBrains Mono" font-size="11" font-weight="400" font-style="normal" 
+ >PIT DISPLAY</text>
+</g>
+
+
+</g>
+</g>
+<g id="ModeButton_STANDARD" data-name="ModeButton · STANDARD">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_272327" fill="#272327" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,245,14)"
+font-family="Chakra Petch" font-size="15" font-weight="500" font-style="normal" 
+>
+<rect x="0" y="0" width="124" height="46"/>
+</g>
+
+
+
+<g id="Shape_FAF9F8_2" fill="#faf9f8" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,245,14)"
+font-family="Chakra Petch" font-size="15" font-weight="500" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M0,10 C0,4.47715 4.47715,0 10,0 L114,0 C119.523,0 124,4.47715 124,10 L124,36 C124,41.5228 119.523,46 114,46 L10,46 C4.47715,46 0,41.5228 0,36 L0,10 Z "/>
+</g>
+
+<g id="Text_STANDARD" fill="#faf9f8" fill-opacity="1" stroke="#181416" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,245,14)"
+font-family="Chakra Petch" font-size="15" font-weight="500" font-style="normal" 
+>
+<text fill="#181416" fill-opacity="1" stroke="none" xml:space="preserve" x="20.7813" y="28.125" font-family="Chakra Petch" font-size="15" font-weight="500" font-style="normal" 
+ >STANDARD</text>
+</g>
+
+
+</g>
+</g>
+<g id="ModeButton_JUDGES" data-name="ModeButton · JUDGES">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_272327_2" fill="#272327" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,379,14)"
+font-family="Chakra Petch" font-size="15" font-weight="500" font-style="normal" 
+>
+<rect x="0" y="0" width="124" height="46"/>
+</g>
+
+
+
+<g id="Shape_443F3D" fill="none" stroke="#443f3d" stroke-opacity="1" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,379,14)"
+font-family="Chakra Petch" font-size="15" font-weight="500" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M0.75,10.75 C0.75,5.22715 5.22715,0.75 10.75,0.75 L113.25,0.75 C118.773,0.75 123.25,5.22715 123.25,10.75 L123.25,35.25 C123.25,40.7728 118.773,45.25 113.25,45.25 L10.75,45.25 C5.22715,45.25 0.75,40.7728 0.75,35.25 L0.75,10.75 Z "/>
+</g>
+
+<g id="Text_JUDGES" fill="none" stroke="#cfcbc9" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,379,14)"
+font-family="Chakra Petch" font-size="15" font-weight="500" font-style="normal" 
+>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="30.7656" y="28.125" font-family="Chakra Petch" font-size="15" font-weight="500" font-style="normal" 
+ >JUDGES</text>
+</g>
+
+
+</g>
+</g>
+<g id="ModeButton_LUNCH" data-name="ModeButton · LUNCH">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_272327_3" fill="#272327" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,513,14)"
+font-family="Chakra Petch" font-size="15" font-weight="500" font-style="normal" 
+>
+<rect x="0" y="0" width="124" height="46"/>
+</g>
+
+
+
+<g id="Shape_443F3D_2" fill="none" stroke="#443f3d" stroke-opacity="1" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,513,14)"
+font-family="Chakra Petch" font-size="15" font-weight="500" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M0.75,10.75 C0.75,5.22715 5.22715,0.75 10.75,0.75 L113.25,0.75 C118.773,0.75 123.25,5.22715 123.25,10.75 L123.25,35.25 C123.25,40.7728 118.773,45.25 113.25,45.25 L10.75,45.25 C5.22715,45.25 0.75,40.7728 0.75,35.25 L0.75,10.75 Z "/>
+</g>
+
+<g id="Text_LUNCH" fill="none" stroke="#cfcbc9" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,513,14)"
+font-family="Chakra Petch" font-size="15" font-weight="500" font-style="normal" 
+>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="35.5" y="28.125" font-family="Chakra Petch" font-size="15" font-weight="500" font-style="normal" 
+ >LUNCH</text>
+</g>
+
+
+</g>
+</g>
+<g id="QLabel_16_23_17" data-name="QLabel · 16:23:17">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_9" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,1297,28)"
+font-family="JetBrains Mono" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="63" height="18"/>
+</g>
+
+
+
+<g id="Shape_000000_10" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,1297,28)"
+font-family="JetBrains Mono" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="63" height="18"/>
+</g>
+
+
+
+<g id="Text_16_23_17" fill="none" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,1297,28)"
+font-family="JetBrains Mono" font-size="13" font-weight="400" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="13.25" font-family="JetBrains Mono" font-size="13" font-weight="400" font-style="normal" 
+ >16:23:17</text>
+</g>
+
+
+</g>
+</g>
+<g id="team_pill" data-name="team_pill">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_11" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,1386,14)"
+font-family="Chakra Petch" font-size="14" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="190" height="46"/>
+</g>
+
+
+
+<g id="Shape_000000_12" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,1386,14)"
+font-family="Chakra Petch" font-size="14" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M23,1 L167,1 C179.15,1 189,10.8497 189,23 C189,35.1503 179.15,45 167,45 L23,45 C10.8497,45 1,35.1503 1,23 C1,10.8497 10.8497,1 23,1 Z "/>
+</g>
+
+
+
+<g id="Shape_443F3D_3" fill="#443f3d" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,1386,14)"
+font-family="Chakra Petch" font-size="14" font-weight="600" font-style="normal" 
+>
+<rect x="23" y="44" width="144" height="2"/>
+</g>
+
+
+
+<g id="Shape_443F3D_4" fill="none" stroke="#443f3d" stroke-opacity="1" stroke-width="2" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,1386,14)"
+font-family="Chakra Petch" font-size="14" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M23,45 C16.9249,45 11.4249,42.5376 7.44365,38.5563 "/>
+<path vector-effect="none" fill-rule="evenodd" d="M167,45 C173.075,45 178.575,42.5376 182.556,38.5563 "/>
+</g>
+
+
+
+<g id="Shape_443F3D_5" fill="#443f3d" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,1386,14)"
+font-family="Chakra Petch" font-size="14" font-weight="600" font-style="normal" 
+>
+<rect x="188" y="23" width="2" height="0"/>
+</g>
+
+
+
+<g id="Shape_443F3D_6" fill="none" stroke="#443f3d" stroke-opacity="1" stroke-width="2" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,1386,14)"
+font-family="Chakra Petch" font-size="14" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M182.556,7.44365 C186.538,11.4249 189,16.9249 189,23 "/>
+<path vector-effect="none" fill-rule="evenodd" d="M182.556,38.5563 C186.538,34.5751 189,29.0751 189,23 "/>
+</g>
+
+
+
+<g id="Shape_443F3D_7" fill="#443f3d" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,1386,14)"
+font-family="Chakra Petch" font-size="14" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="23" width="2" height="0"/>
+</g>
+
+
+
+<g id="Shape_443F3D_8" fill="none" stroke="#443f3d" stroke-opacity="1" stroke-width="2" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,1386,14)"
+font-family="Chakra Petch" font-size="14" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M7.44365,7.44365 C3.46243,11.4249 1,16.9249 1,23 "/>
+<path vector-effect="none" fill-rule="evenodd" d="M1,23 C1,29.0751 3.46243,34.5751 7.44365,38.5563 "/>
+</g>
+
+
+
+<g id="Shape_443F3D_9" fill="#443f3d" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,1386,14)"
+font-family="Chakra Petch" font-size="14" font-weight="600" font-style="normal" 
+>
+<rect x="23" y="0" width="144" height="2"/>
+</g>
+
+
+
+<g id="Shape_443F3D_10" fill="none" stroke="#443f3d" stroke-opacity="1" stroke-width="2" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,1386,14)"
+font-family="Chakra Petch" font-size="14" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M7.44365,7.44365 C11.4249,3.46243 16.9249,1 23,1 "/>
+<path vector-effect="none" fill-rule="evenodd" d="M182.556,7.44365 C178.575,3.46243 173.075,1 167,1 "/>
+</g>
+
+
+
+
+
+<g id="Text_3937_Breakaway" fill="none" stroke="#faf9f8" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,1386,14)"
+font-family="Chakra Petch" font-size="14" font-weight="600" font-style="normal" 
+>
+<text fill="#faf9f8" fill-opacity="1" stroke="none" xml:space="preserve" x="22" y="27.7813" font-family="Chakra Petch" font-size="14" font-weight="600" font-style="normal" 
+ >3937 Breakaway</text>
+</g>
+
+
+
+
+</g>
+</g>
+</g>
+<g id="QScrollArea" data-name="QScrollArea">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013_7" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,76)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1600" height="984"/>
+</g>
+
+
+
+<g id="Shape_121013_8" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,76)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1600" height="984"/>
+</g>
+
+
+
+
+</g>
+<g id="QWidget_3" data-name="QWidget">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013_9" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,76)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1600" height="984"/>
+</g>
+
+
+
+
+</g>
+<g id="QWidget_2" data-name="QWidget">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013_10" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,76)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1600" height="984"/>
+</g>
+
+
+
+<g id="Shape_121013_11" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,76)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1600" height="984"/>
+</g>
+
+
+</g>
+<g id="sidebar" data-name="sidebar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_1A171A_3" fill="#1a171a" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,76)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="220" height="984"/>
+</g>
+
+
+
+<g id="Shape_1A171A_4" fill="#1a171a" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,76)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="220" height="984"/>
+</g>
+
+
+
+<g id="Shape_332F32_2" fill="#332f32" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,0,76)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="218" y="0" width="2" height="984"/>
+</g>
+
+
+
+
+
+
+</g>
+<g id="QLabel_SCREENS" data-name="QLabel · SCREENS">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_13" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,94)"
+font-family="JetBrains Mono" font-size="11" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="31"/>
+</g>
+
+
+
+<g id="Shape_000000_14" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,94)"
+font-family="JetBrains Mono" font-size="11" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="31"/>
+</g>
+
+
+
+<g id="Text_SCREENS" fill="none" stroke="#59595b" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,12,94)"
+font-family="JetBrains Mono" font-size="11" font-weight="400" font-style="normal" 
+>
+<text fill="#59595b" fill-opacity="1" stroke="none" xml:space="preserve" x="10" y="17.2188" font-family="JetBrains Mono" font-size="11" font-weight="400" font-style="normal" 
+ >SCREENS</text>
+</g>
+
+
+</g>
+</g>
+<g id="nav_row" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_15" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,131)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_16" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,131)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_17" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,131)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_18" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,131)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_Presentation_A" data-name="QPushButton · Presentation A">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_19" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,131)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="110" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_20" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,131)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L100,0 C105.523,0 110,4.47715 110,10 L110,46 C110,51.5228 105.523,56 100,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_Presentation_A" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,131)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >Presentation A</text>
+</g>
+
+
+</g>
+</g>
+<g id="ToggleSwitch" data-name="ToggleSwitch">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013_12" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,156,148)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="38" height="22"/>
+</g>
+
+
+
+<g id="Shape_443F3D_11" fill="#443f3d" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,156,148)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M0,11 C0,4.92487 4.92487,0 11,0 L27,0 C33.0751,0 38,4.92487 38,11 C38,17.0751 33.0751,22 27,22 L11,22 C4.92487,22 0,17.0751 0,11 Z "/>
+</g>
+
+<g id="Shape_FAF9F8_3" fill="#faf9f8" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,156,148)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<circle cx="11" cy="11" r="8.03"/>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="nav_row_2" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_21" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,193)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_22" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,193)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar_2" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_23" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,193)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_24" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,193)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_Presentation_B" data-name="QPushButton · Presentation B">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_25" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,193)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="110" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_26" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,193)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L100,0 C105.523,0 110,4.47715 110,10 L110,46 C110,51.5228 105.523,56 100,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_Presentation_B" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,193)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >Presentation B</text>
+</g>
+
+
+</g>
+</g>
+<g id="ToggleSwitch_2" data-name="ToggleSwitch">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013_13" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,156,210)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="38" height="22"/>
+</g>
+
+
+
+<g id="Shape_443F3D_12" fill="#443f3d" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,156,210)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M0,11 C0,4.92487 4.92487,0 11,0 L27,0 C33.0751,0 38,4.92487 38,11 C38,17.0751 33.0751,22 27,22 L11,22 C4.92487,22 0,17.0751 0,11 Z "/>
+</g>
+
+<g id="Shape_FAF9F8_4" fill="#faf9f8" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,156,210)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<circle cx="11" cy="11" r="8.03"/>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="nav_row_3" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_27" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,255)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_28" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,255)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar_3" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_29" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,255)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_30" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,255)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_Project" data-name="QPushButton · Project">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_31" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,255)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="110" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_32" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,255)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L100,0 C105.523,0 110,4.47715 110,10 L110,46 C110,51.5228 105.523,56 100,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_Project" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,255)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >Project</text>
+</g>
+
+
+</g>
+</g>
+<g id="ToggleSwitch_3" data-name="ToggleSwitch">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013_14" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,156,272)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="38" height="22"/>
+</g>
+
+
+
+<g id="Shape_443F3D_13" fill="#443f3d" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,156,272)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M0,11 C0,4.92487 4.92487,0 11,0 L27,0 C33.0751,0 38,4.92487 38,11 C38,17.0751 33.0751,22 27,22 L11,22 C4.92487,22 0,17.0751 0,11 Z "/>
+</g>
+
+<g id="Shape_FAF9F8_5" fill="#faf9f8" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,156,272)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<circle cx="11" cy="11" r="8.03"/>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="nav_row_4" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_33" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,317)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_34" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,317)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar_4" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_35" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,317)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_36" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,317)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_Control" data-name="QPushButton · Control">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_37" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,317)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="83" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_38" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,317)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L73,0 C78.5228,0 83,4.47715 83,10 L83,46 C83,51.5228 78.5228,56 73,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_Control" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,317)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >Control</text>
+</g>
+
+
+</g>
+</g>
+<g id="stat_label_ALWAYS_ON" data-name="stat_label · ALWAYS ON">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_39" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,129,337)"
+font-family="JetBrains Mono" font-size="12" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="65" height="16"/>
+</g>
+
+
+
+<g id="Shape_000000_40" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,129,337)"
+font-family="JetBrains Mono" font-size="12" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="65" height="16"/>
+</g>
+
+
+
+<g id="Text_ALWAYS_ON" fill="none" stroke="#2e8b7f" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,129,337)"
+font-family="JetBrains Mono" font-size="12" font-weight="400" font-style="normal" 
+>
+<text fill="#2e8b7f" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="12.2344" font-family="JetBrains Mono" font-size="12" font-weight="400" font-style="normal" 
+ >ALWAYS ON</text>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="QLabel_PIT_SYSTEMS" data-name="QLabel · PIT SYSTEMS">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_41" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,393)"
+font-family="JetBrains Mono" font-size="11" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="31"/>
+</g>
+
+
+
+<g id="Shape_000000_42" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,393)"
+font-family="JetBrains Mono" font-size="11" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="31"/>
+</g>
+
+
+
+<g id="Text_PIT_SYSTEMS" fill="none" stroke="#59595b" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,12,393)"
+font-family="JetBrains Mono" font-size="11" font-weight="400" font-style="normal" 
+>
+<text fill="#59595b" fill-opacity="1" stroke="none" xml:space="preserve" x="10" y="17.2188" font-family="JetBrains Mono" font-size="11" font-weight="400" font-style="normal" 
+ >PIT SYSTEMS</text>
+</g>
+
+
+</g>
+</g>
+<g id="nav_row_5" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_43" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,430)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_44" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,430)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar_5" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_45" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,430)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_46" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,430)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_LED_Strips" data-name="QPushButton · LED Strips">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_47" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,430)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="110" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_48" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,430)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L100,0 C105.523,0 110,4.47715 110,10 L110,46 C110,51.5228 105.523,56 100,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_LED_Strips" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,430)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >LED Strips</text>
+</g>
+
+
+</g>
+</g>
+<g id="ToggleSwitch_4" data-name="ToggleSwitch">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013_15" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,156,447)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="38" height="22"/>
+</g>
+
+
+
+<g id="Shape_2E8B7F" fill="#2e8b7f" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,156,447)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M0,11 C0,4.92487 4.92487,0 11,0 L27,0 C33.0751,0 38,4.92487 38,11 C38,17.0751 33.0751,22 27,22 L11,22 C4.92487,22 0,17.0751 0,11 Z "/>
+</g>
+
+<g id="Shape_FAF9F8_6" fill="#faf9f8" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,156,447)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<circle cx="27" cy="11" r="8.03"/>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="nav_row_6" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_49" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,492)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_50" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,492)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar_6" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_51" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,492)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_52" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,492)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_Music" data-name="QPushButton · Music">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_53" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,492)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="158" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_54" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,492)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L148,0 C153.523,0 158,4.47715 158,10 L158,46 C158,51.5228 153.523,56 148,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_Music" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,492)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >Music</text>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="nav_row_7" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_55" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,554)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_56" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,554)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar_7" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_57" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,554)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_58" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,554)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_Batteries" data-name="QPushButton · Batteries">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_59" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,554)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="158" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_60" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,554)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L148,0 C153.523,0 158,4.47715 158,10 L158,46 C158,51.5228 153.523,56 148,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_Batteries" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,554)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >Batteries</text>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="nav_row_8" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_61" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,616)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_62" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,616)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar_8" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_63" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,616)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_64" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,616)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_Telemetry" data-name="QPushButton · Telemetry">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_65" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,616)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="158" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_66" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,616)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L148,0 C153.523,0 158,4.47715 158,10 L158,46 C158,51.5228 153.523,56 148,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_Telemetry" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,616)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >Telemetry</text>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="nav_row_9" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_67" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,678)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_68" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,678)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar_9" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_69" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,678)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_70" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,678)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_Analysis" data-name="QPushButton · Analysis">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_71" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,678)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="158" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_72" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,678)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L148,0 C153.523,0 158,4.47715 158,10 L158,46 C158,51.5228 153.523,56 148,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_Analysis" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,678)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >Analysis</text>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="nav_row_10" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_73" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,740)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_74" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,740)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar_10" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_75" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,740)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_76" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,740)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_Ask_the_Pit" data-name="QPushButton · Ask the Pit">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_77" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,740)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="158" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_78" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,740)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L148,0 C153.523,0 158,4.47715 158,10 L158,46 C158,51.5228 153.523,56 148,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_Ask_the_Pit" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,740)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >Ask the Pit</text>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="nav_row_11" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_79" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,802)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_80" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,802)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar_11" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_81" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,802)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_82" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,802)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_Event_Feed" data-name="QPushButton · Event Feed">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_83" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,802)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="158" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_84" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,802)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L148,0 C153.523,0 158,4.47715 158,10 L158,46 C158,51.5228 153.523,56 148,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_Event_Feed" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,802)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >Event Feed</text>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="nav_row_12" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_262227" fill="#262227" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,12,864)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_262227_2" fill="#262227" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,12,864)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar_12" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_FFFFFF" fill="#ffffff" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,23,864)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_FFFFFF_2" fill="#ffffff" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,23,864)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="15" width="3" height="26"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_Screen_Wording" data-name="QPushButton · Screen Wording">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_85" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,864)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="158" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_86" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,864)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L148,0 C153.523,0 158,4.47715 158,10 L158,46 C158,51.5228 153.523,56 148,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_Screen_Wording" fill="none" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,864)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >Screen Wording</text>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="nav_row_13" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_87" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,926)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_88" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,926)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar_13" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_89" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,926)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_90" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,926)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_Diagnostics" data-name="QPushButton · Diagnostics">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_91" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,926)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="158" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_92" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,926)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L148,0 C153.523,0 158,4.47715 158,10 L158,46 C158,51.5228 153.523,56 148,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_Diagnostics" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,926)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >Diagnostics</text>
+</g>
+
+
+</g>
+</g>
+</g>
+<g id="nav_row_14" data-name="nav_row">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_93" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,988)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="194" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_94" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,12,988)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L184,0 C189.523,0 194,4.47715 194,10 L194,46 C194,51.5228 189.523,56 184,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+
+
+
+</g>
+<g id="nav_bar_14" data-name="nav_bar">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_95" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,988)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_96" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,23,988)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="3" height="56"/>
+</g>
+
+
+
+
+</g>
+</g>
+<g id="QPushButton_Software_Updates" data-name="QPushButton · Software Updates">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_97" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,988)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="158" height="56"/>
+</g>
+
+
+
+<g id="Shape_000000_98" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,36,988)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<path vector-effect="none" fill-rule="evenodd" d="M10,0 L148,0 C153.523,0 158,4.47715 158,10 L158,46 C158,51.5228 153.523,56 148,56 L10,56 C4.47715,56 0,51.5228 0,46 L0,10 C0,4.47715 4.47715,0 10,0 Z "/>
+</g>
+
+<g id="Text_Software_Updates" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,36,988)"
+font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="33.125" font-family="Chakra Petch" font-size="15" font-weight="600" font-style="normal" 
+ >Software Updates</text>
+</g>
+
+
+</g>
+</g>
+</g>
+</g>
+<g id="QWidget" data-name="QWidget">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013_16" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,220,76)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1380" height="984"/>
+</g>
+
+
+
+<g id="Shape_121013_17" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,220,76)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1380" height="984"/>
+</g>
+
+
+</g>
+<g id="SystemSettingsPanel" data-name="SystemSettingsPanel">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013_18" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,220,76)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1380" height="492"/>
+</g>
+
+
+</g>
+<g id="PanelHeader" data-name="PanelHeader">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013_19" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,250,102)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1320" height="82"/>
+</g>
+
+
+</g>
+<g id="QLabel_PIT_SYSTEM" data-name="QLabel · PIT SYSTEM">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_99" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,250,102)"
+font-family="Chakra Petch" font-size="12" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="1320" height="16"/>
+</g>
+
+
+
+<g id="Shape_000000_100" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,250,102)"
+font-family="Chakra Petch" font-size="12" font-weight="600" font-style="normal" 
+>
+<rect x="0" y="0" width="1320" height="16"/>
+</g>
+
+
+
+<g id="Text_PIT_SYSTEM" fill="none" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,250,102)"
+font-family="Chakra Petch" font-size="12" font-weight="600" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="12.0938" font-family="Chakra Petch" font-size="12" font-weight="600" font-style="normal" 
+ >PIT SYSTEM</text>
+</g>
+
+
+</g>
+</g>
+<g id="screen_title_Screen_Wording" data-name="screen_title · Screen Wording">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_101" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,250,128)"
+font-family="Chakra Petch" font-size="22" font-weight="700" font-style="normal" 
+>
+<rect x="0" y="0" width="165" height="38"/>
+</g>
+
+
+
+<g id="Shape_000000_102" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,250,128)"
+font-family="Chakra Petch" font-size="22" font-weight="700" font-style="normal" 
+>
+<rect x="0" y="0" width="165" height="38"/>
+</g>
+
+
+
+<g id="Text_Screen_Wording_2" fill="none" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,250,128)"
+font-family="Chakra Petch" font-size="22" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="21.8125" font-family="Chakra Petch" font-size="22" font-weight="700" font-style="normal" 
+ >Screen Wording</text>
+</g>
+
+
+</g>
+</g>
+<g id="stat_label_What_the_pit_front_panel_and_the_overhea" data-name="stat_label · What the pit-front panel and the overhea">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_103" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,431,149)"
+font-family="Roboto" font-size="14" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1139" height="17"/>
+</g>
+
+
+
+<g id="Shape_000000_104" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,431,149)"
+font-family="Roboto" font-size="14" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1139" height="17"/>
+</g>
+
+
+
+<g id="Text_What_the_pit_front_panel_and_the_overhea" fill="none" stroke="#6a6462" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,431,149)"
+font-family="Roboto" font-size="14" font-weight="400" font-style="normal" 
+>
+<text fill="#6a6462" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="12.9844" font-family="Roboto" font-size="14" font-weight="400" font-style="normal" 
+ >What the pit-front panel and the overhead slides say. Edits show at once and reach every pit. Admin only.</text>
+</g>
+
+
+</g>
+</g>
+<g id="section_rule" data-name="section_rule">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_332F32_3" fill="#332f32" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,250,182)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1320" height="2"/>
+</g>
+
+
+
+<g id="Shape_332F32_4" fill="#332f32" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,250,182)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1320" height="2"/>
+</g>
+
+
+
+
+</g>
+</g>
+</g>
+<g id="WordingPanel" data-name="WordingPanel">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_121013_20" fill="#121013" fill-opacity="1" stroke="none" transform="matrix(1,0,0,1,250,204)"
+font-family="Roboto" font-size="13" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1320" height="15"/>
+</g>
+
+
+</g>
+<g id="stat_label_Screen_wording_is_admin_only_unlock_wit" data-name="stat_label · Screen wording is admin-only: unlock wit">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+
+
+<g id="Shape_000000_105" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,250,204)"
+font-family="Roboto" font-size="12" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1320" height="15"/>
+</g>
+
+
+
+<g id="Shape_000000_106" fill="#000000" fill-opacity="0" stroke="none" transform="matrix(1,0,0,1,250,204)"
+font-family="Roboto" font-size="12" font-weight="400" font-style="normal" 
+>
+<rect x="0" y="0" width="1320" height="15"/>
+</g>
+
+
+
+<g id="Text_Screen_wording_is_admin_only_unlock_wit" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,250,204)"
+font-family="Roboto" font-size="12" font-weight="400" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="0" y="11.125" font-family="Roboto" font-size="12" font-weight="400" font-style="normal" 
+ >Screen wording is admin-only: unlock with the Breakaway mark, top left.</text>
+</g>
+
+
+</g>
+</g>
+</g>
+</g>
+</g>
+</g>
+</g>
+</g>
+</g>
+</g>
+</svg>

@@ -36,7 +36,7 @@ from __future__ import annotations
 from PyQt6.QtCore import (
     Qt, QRectF, QPointF, QVariantAnimation, QEasingCurve, pyqtSignal,
 )
-from PyQt6.QtGui import QPainter, QColor, QPen, QFontMetricsF
+from PyQt6.QtGui import QPainter, QColor, QPen, QFontMetricsF, QImage
 
 from app import brand
 from app.rotation import rotation
@@ -52,6 +52,11 @@ _HOLD_MS  = 80
 _IN_MS    = 420
 _TRACE_MS = 900
 _TOTAL_MS = _OUT_MS + _HOLD_MS + max(_IN_MS, _TRACE_MS)
+# Within one section of the Slides (app/deck.py) the layout stays put: an
+# identical Description doesn't move at all, a changed one dissolves in place
+# (no lift, the Trace already drawn), additively, so what the two share
+# (eyebrow, Trace, often the headline) never dims mid-way.
+_SOFT_MS  = 650
 
 _OUT_LIFT   = -22.0   # design px the outgoing slide rises
 _IN_DROP    = 26.0    # design px the incoming slide rises from
@@ -59,6 +64,12 @@ _IN_DROP    = 26.0    # design px the incoming slide rises from
 _EASE_IN_CUBIC  = QEasingCurve(QEasingCurve.Type.InCubic)
 _EASE_OUT_CUBIC = QEasingCurve(QEasingCurve.Type.OutCubic)
 _EASE_OUT_EXPO  = QEasingCurve(QEasingCurve.Type.OutExpo)
+
+
+def _same_words(a: Slide, b: Slide) -> bool:
+    """Two slides that would paint the same stage."""
+    return (a.kind, a.eyebrow, a.title, a.body, a.figure, a.unit, tuple(a.items)) == \
+        (b.kind, b.eyebrow, b.title, b.body, b.figure, b.unit, tuple(b.items))
 
 
 class SlidePanel(Chassis):
@@ -78,6 +89,7 @@ class SlidePanel(Chassis):
         self._index = 0
         self._outgoing: Slide | None = None
         self._t = float(_TOTAL_MS)          # settled: no transition in flight
+        self._soft: tuple | None = None     # (old, new) stage pictures while dissolving
 
         # The rail advances about 2% a second, so a half-second tick is smooth
         # at fifteen feet and costs one repaint. (The chassis' own light-fall
@@ -120,14 +132,62 @@ class SlidePanel(Chassis):
         if index == self._index:
             return
         prev = self._slides[self._index]
-        # A face stop's placeholder was never on screen (the face's own page
-        # was): nothing to fade out.
-        self._outgoing = None if prev.face else prev
-        self._index = index
+        new = self._slides[index]
         self._anim.stop()
-        self._anim.start()
+        self._soft = None
+        if not prev.face and not new.face and _same_words(prev, new):
+            # The same Description, the next Slide of its section: nothing moves.
+            self._outgoing = None
+            self._index = index
+            self._t = float(_TOTAL_MS)
+            self.update()
+        elif (not prev.face and not new.face and self.isVisible()
+              and prev.kind == new.kind and prev.eyebrow == new.eyebrow):
+            # One section, new words: dissolve in place.
+            self._soft = (self._stage_picture(prev), self._stage_picture(new))
+            self._outgoing = None
+            self._index = index
+            self._start(_SOFT_MS)
+        else:
+            # A face stop's placeholder was never on screen (the face's own
+            # page was): nothing to fade out.
+            self._outgoing = None if prev.face else prev
+            self._index = index
+            self._start(_TOTAL_MS)
         self._place_rail()
         self.slide_changed.emit(index)
+
+    def settle_on(self, index: int) -> None:
+        """Show stop `index` as if it had always been there: no transition.
+        For a rebuilt panel taking over from the one on screen."""
+        if self._slides:
+            self._anim.stop()
+            self._soft = None
+            self._outgoing = None
+            self._index = index % len(self._slides)
+            self._t = float(_TOTAL_MS)
+            self._place_rail()
+            self.update()
+
+    def _start(self, total_ms: int) -> None:
+        self._t = 0.0
+        self._anim.setDuration(total_ms)
+        self._anim.setEndValue(float(total_ms))
+        self._anim.start()
+
+    def _stage_picture(self, slide: Slide) -> QImage:
+        """One slide's stage, Trace drawn, on a transparent picture."""
+        dpr = self.devicePixelRatioF()
+        img = QImage(int(self.width() * dpr), int(self.height() * dpr),
+                     QImage.Format.Format_ARGB32_Premultiplied)
+        img.setDevicePixelRatio(dpr)
+        img.fill(Qt.GlobalColor.transparent)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        self._paint_slide(p, self.stage_rect(), slide, trace=1.0)
+        p.end()
+        return img
 
     def reset(self):
         self.set_slide(0)
@@ -159,6 +219,7 @@ class SlidePanel(Chassis):
 
     def _on_anim_done(self):
         self._outgoing = None
+        self._soft = None
         self._t = float(_TOTAL_MS)
         self.update()
 
@@ -287,6 +348,22 @@ class SlidePanel(Chassis):
 
     def paint_stage(self, p: QPainter, rect: QRectF):
         if not self._slides:
+            return
+        if self._soft is not None:
+            # old × (1 − k) + new × k, added: a true dissolve, shared pixels exact.
+            old, new = self._soft
+            k = _EASE_OUT_CUBIC.valueForProgress(min(1.0, self._t / _SOFT_MS))
+            mix = QImage(old.size(), QImage.Format.Format_ARGB32_Premultiplied)
+            mix.setDevicePixelRatio(old.devicePixelRatio())
+            mix.fill(Qt.GlobalColor.transparent)
+            q = QPainter(mix)
+            q.setOpacity(1.0 - k)
+            q.drawImage(0, 0, old)
+            q.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
+            q.setOpacity(k)
+            q.drawImage(0, 0, new)
+            q.end()
+            p.drawImage(0, 0, mix)
             return
 
         out_alpha, out_dy = self._outgoing_phase()

@@ -7,15 +7,15 @@ each screen shows its half:
 
 | set | Screen A | Screen B |
 |---|---|---|
-| `rotation` | A's half of each program stop | B's half, in step (`app/program.py`) |
+| `rotation` (**Slides**) | each Slide's Description or Detail | the other half, sides alternating (`app/deck.py`) |
 | `next_match` | Nexus queue info (Next Match board) | Breakaway's matches today, results and our record |
 | `robot` | Robot Diagnostics | Robot Info |
 | `checklist` | a checklist | a checklist (each screen picks its own list) |
-| `facts` | Breakaway's facts | Arkansas's facts |
 | `analysis` | the newest analysis board | Robot Info (the same log, motor by motor) |
-| `stats` | the Quality Award leaderboard | Breakaway season by season |
-| `fun` | a Breakaway record, as a figure card | a "Did you know?" sentence, as a card (turning together) |
-| `datasets` | home's datasets, the first of each pair | the second, turning together |
+
+**Everything visitors are told is a Slide** (Brayden, 2026-11-17): facts,
+team stats, records and home's datasets used to be sets of their own; they
+are Slides now, in the one rotation. The rest are the crew's screens.
 
 **Shared: the set, and the rotation's position. Per screen: everything
 else** — power, theme, monitor, network publishing, which checklist. A screen
@@ -38,22 +38,14 @@ SETS: dict[str, tuple[str, str]] = {
     "next_match": ("next_match",  "schedule"),
     "robot":      ("diagnostics", "robot_info"),
     "checklist":  ("checklist",   "checklist"),
-    "facts":      ("facts",       "facts"),
     "analysis":   ("analysis",    "robot_info"),
-    "stats":      ("quality",     "bk_seasons"),
-    "fun":        ("fact_card",   "fact_card"),
-    "datasets":   ("dataset",     "dataset"),
 }
 LABELS = {
-    "rotation":   "Slide rotation",
+    "rotation":   "Slides",
     "next_match": "Next match",
     "robot":      "Robot diagnostics",
     "checklist":  "Checklists",
-    "facts":      "Did you know?",
     "analysis":   "Analysis board",
-    "stats":      "Team stats",
-    "fun":        "Fun facts",
-    "datasets":   "Datasets",
 }
 
 

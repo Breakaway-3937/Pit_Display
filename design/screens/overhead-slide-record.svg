@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg width="3960px" height="1080px" viewBox="0 0 3960 1080" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:i="http://ns.adobe.com/AdobeIllustrator/10.0/" version="1.2" baseProfile="tiny">
+<title>Pit Display overhead:slide:record</title>
+<desc>design.py target=overhead:slide:record theme=dark mode=standard size=3960x1080</desc>
+<g id="Screen_A" data-name="Screen A" i:layer="yes">
+<g id="FactCardOverlay" data-name="FactCardOverlay">
+<g id="Reference_the_frame_a_picture_edit_it_in_overhead_master_svg" data-name="Reference: the frame (a picture; edit it in overhead-master.svg)">
+<image x="0" y="0" width="1920" height="1080" xlink:href="refs/overhead-slide-record.frame-a.png"/>
+</g>
+<g id="Stage" data-name="Stage">
+
+
+
+<defs>
+</defs>
+<g fill="none" stroke="black" stroke-width="1" fill-rule="evenodd" stroke-linecap="square" stroke-linejoin="bevel" >
+
+<g id="Text_BREAKAWAY_S_RECORDS" fill="none" stroke="#a6a19e" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="24" font-weight="600" font-style="normal" 
+>
+<text fill="#a6a19e" fill-opacity="1" stroke="none" xml:space="preserve" x="64" y="240" font-family="Chakra Petch" font-size="24" font-weight="600" font-style="normal" 
+ >BREAKAWAY'S RECORDS</text>
+</g>
+
+<g id="Text_21" fill="none" stroke="#ffffff" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="300" font-weight="700" font-style="normal" 
+>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="58" y="520.28" font-family="Chakra Petch" font-size="300" font-weight="700" font-style="normal" 
+ >21</text>
+<text fill="#ffffff" fill-opacity="1" stroke="none" xml:space="preserve" x="64" y="619.75" font-family="Chakra Petch" font-size="64" font-weight="700" font-style="normal" 
+ >Longest match win streak</text>
+</g>
+
+<g id="Text_2024arli_to_2024mosl_133_all_time" fill="none" stroke="#cfcbc9" stroke-opacity="1" stroke-width="1" stroke-linecap="square" stroke-linejoin="bevel" transform="matrix(1,0,0,1,0,0)"
+font-family="Chakra Petch" font-size="300" font-weight="700" font-style="normal" 
+>
+<text fill="#cfcbc9" fill-opacity="1" stroke="none" xml:space="preserve" x="64" y="694.984" font-family="Roboto" font-size="34" font-weight="400" font-style="normal" 
+ >2024arli to 2024mosl; #133 all-time</text>
+</g>
+</g>
+</g>
+</g>
+</g>
+<g id="Screen_B" data-name="Screen B" i:layer="yes" transform="translate(2040,0)">
+<g id="Reference_this_half_is_edited_in_overhead_slide_description_" data-name="Reference: this half is edited in overhead-slide-description.svg (a picture)">
+<image x="0" y="0" width="1920" height="1080" xlink:href="refs/overhead-slide-record.screen-b.png"/>
+</g>
+</g>
+</svg>

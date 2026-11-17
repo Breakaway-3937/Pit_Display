@@ -95,11 +95,36 @@ def main() -> int:
     rotation.refresh()
     stops = program.stops()
     keys = [s.key for s in stops]
-    print("\nThe program")
+    print("\nThe program: the Slides (app/deck.py)")
     print("   ", " · ".join(keys))
-    check("the robot stop is in (a log exists)", "robot" in keys)
-    check("the event stop is in (our matches exist)", "event" in keys)
-    check("one \"Did you know?\" pair is in (examples only)", sum(k.startswith("fact:") for k in keys) == 1)
+    check("our team's Slides are in (welcome; robot, a log exists)", "welcome" in keys and "robot" in keys)
+    check("every fact is a Slide of its own", sum(k.startswith("fact:") for k in keys) == 4)
+    check("the crew's screens aren't Slides (no robot board, no next match)",
+          not any(s.a.face in ("diagnostics", "robot_info", "next_match", "schedule")
+                  or s.b.face in ("diagnostics", "robot_info", "next_match", "schedule") for s in stops))
+    check("every Slide is one Description and one Detail",
+          all(bool(s.a.face) != bool(s.b.face) for s in stops))
+    def layout_ok(stops) -> bool:
+        """The screens swap every Slide, except when the Description is the
+        same as the one before (it holds still); each section in one run."""
+        prev = None
+        sections = []
+        for st in stops:
+            d = st.a if not st.a.face else st.b
+            on_a = not st.a.face
+            if prev is not None:
+                same = (d.eyebrow, d.title, d.body) == (prev[0].eyebrow, prev[0].title, prev[0].body)
+                if same != (on_a == prev[1]):
+                    return False
+            if not sections or sections[-1] != d.section:
+                sections.append(d.section)
+            prev = (d, on_a)
+        return len(sections) == len(set(sections))
+    check("the screens swap every Slide, except under an unchanged Description",
+          layout_ok(stops), " ".join(("A" if not s.a.face else "B") + ":" + s.key for s in stops))
+    check("each half knows its section (the facts: Breakaway's, then Arkansas's)",
+          [s.a.section for s in stops if s.key.startswith("fact:")]
+          == ["Did you know? · Breakaway"] * 2 + ["Did you know? · Across Arkansas"] * 2)
 
     from app.windows.presentation_a import PresentationScreenA
     from app.windows.presentation_b import PresentationScreenB
@@ -116,6 +141,12 @@ def main() -> int:
             return "slide:" + (w._slides.current_slide.title if w._slides.current_slide else "")
         return next((k for k, v in w._CONTENT_PAGES.items() if v == cur), f"page{cur}")
 
+    def want(stop) -> tuple[str, str]:
+        return (stop.a.face or "slide:" + stop.a.title, stop.b.face or "slide:" + stop.b.title)
+
+    def at(key: str) -> int:
+        return program.keys().index(key)
+
     print("\nEvery stop, both screens")
     check("both screens have the same number of stops",
           a._slides.count == b._slides.count == len(stops),
@@ -124,8 +155,7 @@ def main() -> int:
     qapp.processEvents()
     for n in range(len(stops)):
         stop = stops[rotation.index]
-        want_a = stop.a.face or "slide:" + stop.a.title
-        want_b = stop.b.face or "slide:" + stop.b.title
+        want_a, want_b = want(stop)
         got_a, got_b = page_of(a), page_of(b)
         check(f"stop {rotation.index + 1} {stop.key}: A {want_a[:34]} | B {want_b[:34]}",
               got_a == want_a and got_b == want_b
@@ -136,12 +166,74 @@ def main() -> int:
     check("a full pass comes back round to the first stop on both", rotation.index == 0
           and a._slides.current_index == b._slides.current_index == 0)
 
+    print("\nA Detail shows its one item")
+    fact_keys = [k for k in program.keys() if k.startswith("fact:")]
+    for k in fact_keys[:2]:
+        rotation._set(at(k))
+        qapp.processEvents()
+        stop = program.stops()[at(k)]
+        detail_w = a if stop.a.face else b
+        card = detail_w._fact_card._card()
+        text = next(f.text for f in __import__("app.tba_facts", fromlist=["x"]).facts()
+                    if f"fact:{f.key}" == k)
+        sid = detail_w.SCREEN_ID
+        net = __import__("app.webcast.state", fromlist=["x"]).screen_state(sid)
+        deck_sent = net["rotation"].get("fact_card", {}).get("deck", [])
+        check(f"{k}: the Detail is that fact, natively and on the network",
+              card and card["text"] == text and [c["text"] for c in deck_sent] == [text],
+              f"{card and card['text'][:30]} | {deck_sent[:1]}")
+    print("\nQuiet transitions within a section")
+    from PyQt6.QtCore import QAbstractAnimation
+    from app.windows.presentation_base import _Dissolve
+    rotation._set(at(fact_keys[0]))
+    qapp.processEvents()
+    for w in (a, b):
+        for d in w.findChildren(_Dissolve):
+            d.setParent(None)              # (deleteLater waits for the event loop)
+    qapp.processEvents()
+    rotation._set(at(fact_keys[1]))                    # the next fact, same section
+    qapp.processEvents()
+    stop = program.stops()[at(fact_keys[1])]
+    desc_w, detail_w = (b, a) if stop.a.face else (a, b)
+    check("the same Description, the next Slide: it doesn't move at all",
+          desc_w._slides._anim.state() != QAbstractAnimation.State.Running
+          and desc_w._slides._soft is None and not desc_w.findChildren(_Dissolve))
+    check("the Detail changes in place by dissolving, not cutting",
+          len(detail_w.findChildren(_Dissolve)) == 1 and page_of(detail_w) == "fact_card")
+    # A rebuild (a sync, a wording edit, a log) must be invisible: it used to
+    # flash Lunch (the stack showed the next page while swapping its slide
+    # page out) and the Detail dissolve faded that Lunch picture out.
+    for w in (a, b):
+        for d in w.findChildren(_Dissolve):
+            d.setParent(None)
+    seen = []
+    for w in (a, b):
+        w._stack.currentChanged.connect(seen.append)
+    for w in (a, b):
+        w.reload_slides()
+    qapp.processEvents()
+    check("a rebuild never shows another page (no Lunch flash) and dissolves nothing",
+          all(i in (a._PAGE_NORMAL, a._CONTENT_PAGES["fact_card"]) for i in seen)
+          and not a.findChildren(_Dissolve) and not b.findChildren(_Dissolve)
+          and a._slides._anim.state() != QAbstractAnimation.State.Running
+          and b._slides._anim.state() != QAbstractAnimation.State.Running,
+          f"pages {seen}")
+    for w in (a, b):
+        w._stack.currentChanged.disconnect(seen.append)
+
+    rotation._set(at("welcome"))
+    qapp.processEvents()
+    check("welcome: our reach as figures opposite the Description",
+          page_of(a) == "slide:Welcome to Breakaway" and page_of(b) == "fact_card"
+          and b._fact_card._card()["kind"] == "figures"
+          and [f["value"] for f in b._fact_card._card()["figures"]][:1] == ["9K+"])
+
     print("\nOperator actions")
-    robot = keys.index("robot")
+    robot = at("robot")
     config.set("presentation_b", "slide_index", robot)       # B's picker
     qapp.processEvents()
     check("a jump on B's picker moves A too",
-          page_of(a) == "diagnostics" and page_of(b) == "robot_info", f"{page_of(a)} | {page_of(b)}")
+          (page_of(a), page_of(b)) == want(program.stops()[robot]), f"{page_of(a)} | {page_of(b)}")
     # A matched set at all times (app/overhead.py): choosing checklists on
     # either screen puts both on a checklist; the program keeps its place.
     config.set("presentation_b", "content", "checklist")
@@ -152,49 +244,45 @@ def main() -> int:
           page_of(a) == page_of(b) == "checklist", f"{page_of(a)} | {page_of(b)}")
     config.set("presentation_b", "content", "rotation")
     qapp.processEvents()
-    check("back to the rotation: both rejoin on the same stop",
-          page_of(a) == "next_match" and page_of(b) == "schedule", f"{page_of(a)} | {page_of(b)}")
+    check("back to the Slides: both rejoin on the same stop",
+          (page_of(a), page_of(b)) == want(program.stops()[rotation.index]),
+          f"{page_of(a)} | {page_of(b)}")
 
     print("\nThe pit network agrees")
     from app.webcast import state
     sa, sb = state.screen_state("presentation_a"), state.screen_state("presentation_b")
+    stop = program.stops()[rotation.index]
     check("network A and B are on the same stop as the screens",
           sa["rotation"]["index"] == sb["rotation"]["index"] == rotation.index
-          and sa["rotation"]["face"] == "next_match" and sb["rotation"]["face"] == "schedule",
+          and sa["rotation"]["face"] == stop.a.face and sb["rotation"]["face"] == stop.b.face,
           f"{sa['rotation'].get('face')} | {sb['rotation'].get('face')}")
-    check("network B's schedule carries our matches and the Nexus credit",
-          not sb["rotation"]["schedule"]["empty"] and "FRC.NEXUS" in sb["ledger_right"],
-          sb.get("ledger_right", ""))
-    fact = next(i for i, k in enumerate(program.keys()) if k.startswith("fact:"))
-    rotation._set(fact)
+    rotation._set(at(fact_keys[0]))
     qapp.processEvents()
-    fa = state.screen_state("presentation_a")
-    check("a fact stop credits The Blue Alliance (native and network)",
+    fa, fb = state.screen_state("presentation_a"), state.screen_state("presentation_b")
+    check("a fact Slide credits The Blue Alliance on both halves (native and network)",
           a._slides.current_slide.credit.startswith("Powered by")
-          and "BLUE ALLIANCE" in fa["ledger_right"], fa["ledger_right"])
+          and "BLUE ALLIANCE" in fa["ledger_right"] and "BLUE ALLIANCE" in fb["ledger_right"],
+          f"{fa['ledger_right']} | {fb['ledger_right']}")
 
     print("\nMatched sets: one choice, both screens")
     from app import overhead
+    check("the sets are Slides and the crew's screens (facts, stats, fun, datasets are Slides now)",
+          list(overhead.SETS) == ["rotation", "next_match", "robot", "checklist", "analysis"]
+          and overhead.LABELS["rotation"] == "Slides")
     config.set("presentation_b", "content", "rotation")
-    want = {
+    want_sets = {
         "next_match": ("next_match", "schedule"),
         "robot":      ("diagnostics", "robot_info"),
         "checklist":  ("checklist", "checklist"),
-        "facts":      ("facts", "facts"),
         "analysis":   ("analysis", "robot_info"),
     }
-    for name, (wa, wb) in want.items():
+    for name, (wa, wb) in want_sets.items():
         overhead.choose(name)
         qapp.processEvents()
         check(f"{overhead.LABELS[name]}: A {wa} | B {wb}",
               page_of(a) == wa and page_of(b) == wb and overhead.current() == name,
               f"got {page_of(a)} | {page_of(b)}")
-    overhead.choose("facts")
-    qapp.processEvents()
-    check("facts split: A Breakaway's only, B Arkansas's only",
-          a._facts._column("3937") and b._facts._column("league")
-          and state.facts_state("presentation_a")["league"] == []
-          and state.facts_state("presentation_b")["ours"] == [])
+    overhead.choose("robot")
     config.set("presentation_b", "content", "robot_info")        # any path, one screen
     qapp.processEvents()
     check("changing one screen's content brings its partner along",
@@ -239,7 +327,7 @@ def main() -> int:
           sb["record"] == list(d1["record"]) and sb["has_results"],
           str(sb["record"]))
 
-    print("\nHome's datasets (R10/R11)")
+    print("\nHome's datasets become Slides (R10/R11)")
     sys.path.insert(0, str(ROOT / "tools"))
     from sync_check import HOME_DATASETS
     from app import dataset_settings, datasets
@@ -256,16 +344,29 @@ def main() -> int:
     dataset_settings.save(enabled=["fun_facts"])
     check("cleared, facts come from home's fun_facts dataset (tba_fact is empty)",
           [f.key for f in tf.facts()] == ["our_streak", "ar_teams"])
+    overhead.choose("rotation")
     dataset_settings.save(enabled=["quality", "bk_seasons", "bk_records", "ar_leaderboard",
                                    "fun_facts"])
     rotation.refresh()
     qapp.processEvents()
-    check("cleared: the program gains the Team stats stop (A quality | B seasons)",
-          "stats" in program.keys())
-    overhead.choose("stats")
+    keys = program.keys()
+    check("cleared: each becomes Slides (quality, seasons, awards, every record, the table)",
+          {"quality", "bk_seasons", "awards", "dataset:ar_leaderboard"} <= set(keys)
+          and sum(k.startswith("record:") for k in keys) == 2, " · ".join(keys))
+    check("section by section: our team, team stats, records, facts, datasets",
+          [k.split(":")[0] for k in keys] == ["welcome", "awards", "robot", "quality", "bk_seasons",
+                                              "record", "record", "fact", "fact", "dataset"]
+          and layout_ok(program.stops()), " · ".join(keys))
+    from app import deck
+    q_item = next(i for i in deck.items() if i.key == "quality")
+    check("Quality's catch is home's own row: 10 awards, #5 of 1,186",
+          q_item.catch == "Breakaway: 10 Quality Awards · #5 of 1,186 teams", q_item.catch)
+    rotation._set(at("quality"))
     qapp.processEvents()
-    check("Team stats: A the Quality leaderboard | B season by season",
-          page_of(a) == "quality" and page_of(b) == "bk_seasons", f"{page_of(a)} | {page_of(b)}")
+    stop = program.stops()[at("quality")]
+    check("the Quality Slide: its leaderboard opposite its Description, nothing else",
+          {page_of(a), page_of(b)} == {"quality", "slide:" + q_item.headline},
+          f"{page_of(a)} | {page_of(b)}")
     qs = state.quality_state()
     check("Quality: ties read T-1, Breakaway flagged by home's highlight, 'Showing 6 of 1,186'",
           [r["rank"] for r in qs["rows"][:2]] == ["T-1", "T-1"]
@@ -276,37 +377,37 @@ def main() -> int:
     check("Seasons: oldest first, 2021 a gap (no record), robot names kept",
           [x["year"] for x in ss] == list(range(2012, 2027)) and gap["wins"] is None
           and next(x for x in ss if x["year"] == 2017)["robot"] == "Dreadnought")
-    sa = state.screen_state("presentation_a")
-    check("both credit The Blue Alliance (native ledger and network)",
+    sa, sb = state.screen_state("presentation_a"), state.screen_state("presentation_b")
+    check("both halves credit The Blue Alliance (native ledger and network)",
           a._quality.footer_items()[1].startswith("POWERED BY")
-          and b._seasons.footer_items()[1].startswith("POWERED BY")
-          and "BLUE ALLIANCE" in sa["ledger_right"], sa["ledger_right"])
-    overhead.choose("datasets")
+          and "BLUE ALLIANCE" in sa["ledger_right"] and "BLUE ALLIANCE" in sb["ledger_right"],
+          f"{sa['ledger_right']} | {sb['ledger_right']}")
+    rotation._set(at("dataset:ar_leaderboard"))
     qapp.processEvents()
-    from app.widgets.dataset_overlay import side_dataset
-    da, dbb = side_dataset("presentation_a", 0), side_dataset("presentation_b", 0)
-    check("Datasets: the generic set is every other cleared one (records have cards)",
-          page_of(a) == page_of(b) == "dataset" and da and da.key == "ar_leaderboard",
-          f"{da and da.key} | {dbb and dbb.key}")
-    wd = state.dataset_state("presentation_b")
-    ar = next(x for x in wd["sets"] if x["key"] == "ar_leaderboard")
+    stop = program.stops()[at("dataset:ar_leaderboard")]
+    dw = a if stop.a.face else b
+    net = state.screen_state(dw.SCREEN_ID)["rotation"]["dataset"]
+    check("a table Slide shows that dataset, natively and on the network",
+          page_of(dw) == "dataset" and dw._dataset._current().key == "ar_leaderboard"
+          and [x["key"] for x in net["sets"]] == ["ar_leaderboard"],
+          f"{dw._dataset._current() and dw._dataset._current().key} | {[x['key'] for x in net['sets']]}")
+    ar = net["sets"][0]
     check("generic: team_key hidden beside team_number, our row flagged",
           "Team key" not in ar["headers"] and [r["ours"] for r in ar["rows"]] == [False, True],
           str(ar["headers"]))
-    overhead.choose("fun")
+    rec = next(k for k in program.keys() if k.startswith("record:"))
+    rotation._set(at(rec))
     qapp.processEvents()
-    ca, cb = datasets.card("presentation_a", 0), datasets.card("presentation_b", 0)
-    check("Fun facts: A a Breakaway record card | B a 'Did you know?' card",
-          page_of(a) == page_of(b) == "fact_card" and ca["kind"] == "record"
-          and ca["value"] == "21" and cb["kind"] == "fact"
-          and cb["text"].startswith("Breakaway has brought"), f"{ca} | {cb}")
-    check("cards turn together by the clock (15 s)",
-          datasets.card("presentation_a", 15)["record"] != ca["record"]
-          and datasets.card("presentation_b", 15)["text"] != cb["text"])
-    fc = state.screen_state("presentation_b")
-    check("network: B's deck and the TBA credit",
-          len(fc["fact_card"]["deck"]) == 2 and "BLUE ALLIANCE" in fc["ledger_right"])
-    # Paint every new face once, on both screens: a paint error is a crash.
+    stop = program.stops()[at(rec)]
+    dw = a if stop.a.face else b
+    c = dw._fact_card._card()
+    check("a record Slide: its value on the Detail, its name on the Description",
+          c["kind"] == "record" and c["value"] == "21"
+          and (stop.b if stop.a.face else stop.a).title == "Longest match win streak", str(c))
+    aw = deck.card("card:seasons")
+    check("Awards & Milestones: totals summed from home's seasons, never invented",
+          aw and aw["figures"][0] == {"value": "15", "label": "Seasons"}, str(aw))
+    # Paint every face once, on both screens: a paint error is a crash.
     painted = []
     for page in ("quality", "bk_seasons", "dataset", "fact_card", "schedule", "facts"):
         for w in (a, b):
@@ -314,7 +415,12 @@ def main() -> int:
             face.resize(1920, 1080)
             face.grab()
             painted.append(page)
-    check("every new face paints on both screens", len(painted) == 12)
+    for ref in ("card:reach", "card:seasons", "card:robot", rec and "record:0", "fact:our_streak"):
+        a._fact_card.show_item(ref)
+        a._fact_card.grab()
+        painted.append(ref)
+    a._fact_card.show_item("")
+    check("every face and every kind of Detail card paints", len(painted) == 17)
 
     print("\nScreen wording (admins edit it in the app)")
     from app import wording
@@ -325,17 +431,24 @@ def main() -> int:
     qapp.processEvents()
     keys_before = program.keys()
     first = page_of(a)
-    wording.set_texts({"slide/welcome/title": "Hello from the pit",
-                       "slide/ask/body": "Ask the crew anything at all."})
+    wording.set_texts({"deck/welcome/headline": "Hello from the pit",
+                       "deck/quality/catch": "Ten Quality Awards and counting."})
     qapp.processEvents()
-    check("an edited slide headline shows on A at once, still paired",
+    check("an edited Slide headline shows at once, still paired",
           page_of(a) == "slide:Hello from the pit" and a._slides.count == b._slides.count,
           f"{first} → {page_of(a)}")
-    check("B's edited sentence is on its slide",
-          b._slides.current_slide is not None
-          and b._slides.current_slide.body == "Ask the crew anything at all.")
+    check("an edited catch line is on its Description",
+          next(i for i in deck.items() if i.key == "quality").catch == "Ten Quality Awards and counting.")
     check("the program's stops don't move for a wording edit",
           program.keys() == keys_before)
+    qs_stop = program.stops()[at("quality")]
+    default_on_a = not qs_stop.a.face
+    wording.set_texts({"deck/quality/side": "B" if default_on_a else "A"})
+    qapp.processEvents()
+    qs_stop = program.stops()[at("quality")]
+    check("an admin pins a Slide's Description to the other screen",
+          (not qs_stop.a.face) != default_on_a, f"{qs_stop.a.face} | {qs_stop.b.face}")
+    wording.set_texts({"deck/quality/side": ""})
     from app.widgets.interactive_board import InteractiveBoard
     board = InteractiveBoard()
     board.resize(1080, 1920)
@@ -349,36 +462,36 @@ def main() -> int:
     check("board edits land in place (labels updated, nothing rebuilt)",
           {"Act 472 (2025)", "Ten weeks of LEGO robots for K–6."} <= texts()
           and id(board.layout()) == before)
-    wording.set_texts({"board/act/title": "", "slide/welcome/title": "Welcome to Breakaway"})
+    wording.set_texts({"board/act/title": "", "deck/welcome/headline": "Welcome to Breakaway"})
     qapp.processEvents()
     check("emptied or set back to shipped, a field falls back (and isn't stored)",
           "Act 472" in texts() and not wording.is_edited("board/act/title")
-          and not wording.is_edited("slide/welcome/title")
+          and not wording.is_edited("deck/welcome/headline")
           and page_of(a) == "slide:Welcome to Breakaway")
     check("too long is capped at the field's limit",
-          len(wording.text("slide/ask/body")) <= 160)
+          len(wording.text("deck/quality/catch")) <= 160)
     check("wording is a team setting (syncs to every pit)",
           SETTING_DOCS.get("wording") == ("app.wording", ("texts",))
-          and "slide/ask/body" in wording.load()["texts"])
+          and "deck/quality/catch" in wording.load()["texts"])
     from app.admin import init_admin, admin
     init_admin()
     from app.widgets.wording_panel import WordingPanel
     panel = WordingPanel()
     groups = [panel._groups.itemText(i) for i in range(panel._groups.count())]
-    check("the editor lists the front panel and both screens' slides",
+    check("the editor lists the front panel and every group of Slides",
           any(g.startswith("Front panel") for g in groups)
-          and "Overhead slides · Screen A" in groups and "Overhead slides · Screen B" in groups,
-          f"{len(groups)} groups, {len(wording.fields())} fields")
+          and {"Slides · Breakaway", "Slides · Team stats", "Slides · Did you know?"} <= set(groups),
+          f"{groups}")
     check("hidden while the admin lock is closed",
           not panel._body.isVisibleTo(panel) and panel._locked.isVisibleTo(panel))
-    panel._groups.setCurrentText("Overhead slides · Screen A")
-    row = next(r for r in panel._field_rows if r.field.key == "slide/robot/title")
+    panel._groups.setCurrentText("Slides · Breakaway")
+    row = next(r for r in panel._field_rows if r.field.key == "deck/robot/headline")
     row.editor.setText("Meet the robot")
     panel._on_save()
     qapp.processEvents()
     check("saving from the editor reaches the screens",
-          wording.text("slide/robot/title") == "Meet the robot"
-          and program._authored()["robot"].title == "Meet the robot",
+          wording.text("deck/robot/headline") == "Meet the robot"
+          and any(x.title == "Meet the robot" for st in program.stops() for x in (st.a, st.b)),
           panel._status.text())
     wording.set_texts({k: "" for k in wording.load()["texts"]})
 
@@ -441,12 +554,13 @@ def main() -> int:
                & _Qt.WindowType.WindowStaysOnTopHint))
 
     print("\nData goes away")
-    nexus._status = None
+    dataset_settings.save(enabled=["fun_facts"])
     rotation.refresh()
     qapp.processEvents()
-    check("no event: the event stop leaves both screens, still paired",
-          "event" not in program.keys() and a._slides.count == b._slides.count
-          == len(program.keys()), f"A {a._slides.count}, B {b._slides.count}")
+    keys = program.keys()
+    check("a dataset turned off: its Slides leave both screens, still paired",
+          "quality" not in keys and not any(k.startswith("record:") for k in keys)
+          and a._slides.count == b._slides.count == len(keys), " · ".join(keys))
 
     for w in (a, b):
         w.close()
